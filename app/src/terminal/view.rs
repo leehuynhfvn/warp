@@ -1380,6 +1380,8 @@ pub enum ContextMenuAction {
     CopySelectedText,
     /// Downloads the selected remote path into the local Warp Sync mirror.
     WarpSyncDownload,
+    /// Uploads the selected remote path's local Warp Sync mirror back to the server.
+    WarpSyncUpload,
     CopyUrl {
         url_content: String,
     },
@@ -1520,6 +1522,7 @@ impl fmt::Debug for ContextMenuAction {
             InsertSelectedText => f.write_str("InsertSelectedText"),
             CopySelectedText => f.write_str("CopySelectedText"),
             WarpSyncDownload => f.write_str("WarpSyncDownload"),
+            WarpSyncUpload => f.write_str("WarpSyncUpload"),
             CopyBlocks => f.write_str("CopyBlocks"),
             CopyBlockCommands => f.write_str("CopyBlockCommands"),
             CopyBlockOutputs => f.write_str("CopyBlockOutputs"),
@@ -17440,6 +17443,11 @@ impl TerminalView {
                                 ContextMenuAction::WarpSyncDownload,
                             ))
                             .into_item(),
+                        MenuItemFields::new("Warp Sync: Upload from local mirror")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::WarpSyncUpload,
+                            ))
+                            .into_item(),
                     ]);
                 }
                 fields
@@ -22109,7 +22117,11 @@ impl TerminalView {
         })
     }
 
-    fn context_menu_warp_sync_download(&mut self, ctx: &mut ViewContext<Self>) {
+    /// The remote session and normalized remote path that the current text selection names.
+    fn warp_sync_selection_request(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<(Arc<Session>, String), WarpSyncError> {
         let (selected_text, target) = {
             let semantic_selection = SemanticSelection::as_ref(ctx);
             let model = self.model.lock();
@@ -22119,17 +22131,29 @@ impl TerminalView {
         };
         self.close_context_menu(ctx, true);
 
+        let target = target.ok_or(WarpSyncError::NotRemoteSession)?;
+        let remote_path =
+            selection_to_remote_path(selected_text.as_deref(), target.pwd.as_deref())?;
+        Ok((target.session, remote_path))
+    }
+
+    fn context_menu_warp_sync_download(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let request = target
-            .ok_or(WarpSyncError::NotRemoteSession)
-            .and_then(|target| {
-                let remote_path =
-                    selection_to_remote_path(selected_text.as_deref(), target.pwd.as_deref())?;
-                Ok((target.session, remote_path))
-            });
+        let request = self.warp_sync_selection_request(ctx);
         WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
             Ok((session, remote_path)) => {
                 warp_sync.start_download(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
+    fn context_menu_warp_sync_upload(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request = self.warp_sync_selection_request(ctx);
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_upload(session, remote_path, window_id, ctx)
             }
             Err(error) => warp_sync.report_failure(window_id, error, ctx),
         });
@@ -25854,6 +25878,7 @@ impl TerminalView {
             InsertSelectedText => self.context_menu_insert_selected_text(ctx),
             CopySelectedText => self.context_menu_copy_selected_text(ctx),
             WarpSyncDownload => self.context_menu_warp_sync_download(ctx),
+            WarpSyncUpload => self.context_menu_warp_sync_upload(ctx),
             CopyUrl { url_content } => self.context_menu_copy_url(url_content, ctx),
             CopyBlocks => self.context_menu_copy_blocks(ctx),
             CopyBlockCommands => self.context_menu_copy_block_commands(ctx),

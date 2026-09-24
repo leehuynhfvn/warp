@@ -18838,22 +18838,38 @@ impl Workspace {
         }
     }
 
+    /// The active remote session and its normalized working directory.
+    fn warp_sync_current_directory(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<(Arc<Session>, String), WarpSyncError> {
+        let (session, pwd) = self.active_warp_sync_session(ctx)?;
+        let remote_path = pwd
+            .as_deref()
+            .ok_or_else(|| {
+                WarpSyncError::InvalidPath("the working directory is unknown".to_owned())
+            })
+            .and_then(|pwd| normalize_remote_path(pwd, None))?;
+        Ok((session, remote_path))
+    }
+
     fn warp_sync_download_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let request = self
-            .active_warp_sync_session(ctx)
-            .and_then(|(session, pwd)| {
-                let remote_path = pwd
-                    .as_deref()
-                    .ok_or_else(|| {
-                        WarpSyncError::InvalidPath("the working directory is unknown".to_owned())
-                    })
-                    .and_then(|pwd| normalize_remote_path(pwd, None))?;
-                Ok((session, remote_path))
-            });
+        let request = self.warp_sync_current_directory(ctx);
         WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
             Ok((session, remote_path)) => {
                 warp_sync.start_download(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
+    fn warp_sync_upload_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request = self.warp_sync_current_directory(ctx);
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_upload(session, remote_path, window_id, ctx)
             }
             Err(error) => warp_sync.report_failure(window_id, error, ctx),
         });
@@ -25328,6 +25344,7 @@ impl TypedActionView for Workspace {
                 ctx.open_file_path(path);
             }
             WarpSyncDownloadCurrentDirectory => self.warp_sync_download_current_directory(ctx),
+            WarpSyncUploadCurrentDirectory => self.warp_sync_upload_current_directory(ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             NewTabInAgentMode {
                 entrypoint,

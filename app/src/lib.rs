@@ -98,7 +98,6 @@ mod vim_registers;
 mod voice;
 mod voltron;
 mod warp_managed_paths_watcher;
-#[allow(dead_code)]
 mod warp_sync;
 #[cfg(target_family = "wasm")]
 mod wasm_nux_dialog;

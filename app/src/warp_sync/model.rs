@@ -394,8 +394,9 @@ fn paths_overlap(a: &str, b: &str) -> bool {
 
 fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {
     let mut message = format!(
-        "Downloaded {} ({}) from {remote_path} as {}",
+        "Downloaded {} and {} ({}) from {remote_path} as {}",
         pluralize_count(outcome.files, "file"),
+        pluralize_count(outcome.dirs, "folder"),
         format_size(outcome.total_bytes),
         outcome.remote_user
     );
@@ -410,8 +411,10 @@ fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {
 
 fn upload_message(remote_path: &str, outcome: &UploadOutcome) -> String {
     let mut message = format!(
-        "Uploaded {} to {remote_path} as {}",
+        "Uploaded {} and {} ({}) to {remote_path} as {}",
         pluralize_count(outcome.files, "file"),
+        pluralize_count(outcome.dirs, "folder"),
+        format_size(outcome.content_bytes),
         outcome.remote_user
     );
     if let Some(backup_path) = &outcome.backup_path {

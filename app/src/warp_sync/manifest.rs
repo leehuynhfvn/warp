@@ -137,6 +137,7 @@ impl Manifest {
         self.machine_id = machine_id;
     }
 
+    #[cfg(test)]
     pub fn entry(&self, path: &str) -> Option<&EntryMeta> {
         self.entries.get(path)
     }
@@ -161,6 +162,7 @@ impl Manifest {
         self.last_sync.insert(root.to_owned(), record);
     }
 
+    #[cfg(test)]
     pub fn last_sync(&self, root: &str) -> Option<&SyncRecord> {
         self.last_sync.get(root)
     }
