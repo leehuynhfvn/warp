@@ -5,12 +5,16 @@
 mod archive;
 mod error;
 mod manifest;
+mod model;
 mod paths;
 mod remote_script;
+mod remote_shell;
+mod transfer;
 
 use std::time::Duration;
 
 pub use error::WarpSyncError;
+pub use model::WarpSyncModel;
 
 /// Upper bound on the remote size (`du -sk`) of a download. Output travels through the PTY
 /// hex-encoded, which doubles its size.

@@ -106,6 +106,11 @@ impl Manifest {
         self.entries.extend(entries);
     }
 
+    /// Adds or overwrites `entries`, leaving every other entry in place.
+    pub fn upsert_entries(&mut self, entries: BTreeMap<String, EntryMeta>) {
+        self.entries.extend(entries);
+    }
+
     pub fn entries_under(&self, root: &str) -> BTreeMap<String, EntryMeta> {
         self.entries
             .iter()

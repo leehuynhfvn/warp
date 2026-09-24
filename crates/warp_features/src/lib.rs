@@ -1001,6 +1001,10 @@ pub enum FeatureFlag {
     /// replace inline computer-use screenshot bytes with references to
     /// Warp-managed object storage.
     StoredScreenshots,
+
+    /// Gates Warp Sync, which mirrors remote files and directories to a local directory and
+    /// uploads edits back through the active remote session.
+    WarpSync,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =
@@ -1078,6 +1082,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::WarpingModelName,
     FeatureFlag::LrcActivitySignal,
     FeatureFlag::StoredScreenshots,
+    FeatureFlag::WarpSync,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).

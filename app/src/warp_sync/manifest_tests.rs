@@ -68,6 +68,37 @@ fn replace_subtree_removes_old_entries_and_keeps_siblings() {
 }
 
 #[test]
+fn upsert_overwrites_and_keeps_other_entries() {
+    let mut manifest = Manifest::new("h");
+    manifest.replace_subtree(
+        "/etc/nginx",
+        entries(&[
+            ("/etc/nginx", EntryKind::Dir, 0),
+            ("/etc/nginx/a.conf", EntryKind::File, 0),
+            ("/etc/nginx/gone-locally.conf", EntryKind::File, 0),
+        ]),
+    );
+
+    manifest.upsert_entries(entries(&[
+        ("/etc/nginx/a.conf", EntryKind::File, 7),
+        ("/etc/nginx/new.conf", EntryKind::File, 7),
+    ]));
+
+    let all: Vec<String> = manifest.entries_under("/etc/nginx").into_keys().collect();
+    assert_eq!(
+        all,
+        [
+            "/etc/nginx",
+            "/etc/nginx/a.conf",
+            "/etc/nginx/gone-locally.conf",
+            "/etc/nginx/new.conf"
+        ]
+    );
+    assert_eq!(manifest.entry("/etc/nginx/a.conf").unwrap().uid, 7);
+    assert_eq!(manifest.entry("/etc/nginx/gone-locally.conf").unwrap().uid, 0);
+}
+
+#[test]
 fn entries_under_a_file_is_just_the_file() {
     let mut manifest = Manifest::new("h");
     manifest.replace_subtree("/etc/hosts", entries(&[("/etc/hosts", EntryKind::File, 0)]));

@@ -105,6 +105,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::WorkflowAliases,
         #[cfg(feature = "ssh_drag_and_drop")]
         FeatureFlag::SshDragAndDrop,
+        #[cfg(feature = "warp_sync")]
+        FeatureFlag::WarpSync,
         #[cfg(feature = "drag_tabs_to_windows")]
         FeatureFlag::DragTabsToWindows,
         #[cfg(feature = "cycle_next_command_suggestion")]
