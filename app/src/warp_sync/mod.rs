@@ -3,6 +3,7 @@
 //! privileges as the shell the user is looking at.
 
 mod error;
+mod manifest;
 mod paths;
 mod remote_script;
 
