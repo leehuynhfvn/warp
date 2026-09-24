@@ -524,7 +524,7 @@ Upload:
 ### Tiến độ
 
 - [x] Phase 0 — Làm sạch nền
-- [x] 1.1 Dependencies · [ ] 1.2 mod/error · [ ] 1.3 paths · [ ] 1.4 remote_script · [ ] 1.5 manifest · [ ] 1.6 archive
+- [x] 1.1 Dependencies · [x] 1.2 mod/error · [x] 1.3 paths · [x] 1.4 remote_script · [ ] 1.5 manifest · [ ] 1.6 archive
 - [ ] 2.1 Feature flag · [ ] 2.2 transfer · [ ] 2.3 model
 - [ ] 3.1 Toast · [ ] 3.2 Confirm dialog · [ ] 3.3 Context menu · [ ] 3.4 Palette · [ ] 3.5 Review
 - [ ] ⛔ CHECKPOINT A (user) — kết quả đo: _chưa có_
@@ -547,3 +547,4 @@ Upload:
 - 2026-09-24 — Plan v2 được viết sau khi review v1 + POC (Claude Opus). Chưa bắt đầu Phase 0.
 - 2026-09-24 — Phase 0 xong: xoá 4 file `tmp_sync_*.rs`, stash POC (`stash@{0}` "warp-sync POC wip"), tạo `feature/warp-sync` từ master (f4f9b8838), đánh dấu spec v1 SUPERSEDED, `cargo check -p warp` pass.
 - 2026-09-24 — 1.1 xong: thêm `flate2`, `tar` vào workspace deps + `app/Cargo.toml` (không đụng `node_runtime`); `cargo check -p warp` pass.
+- 2026-09-24 — 1.2–1.4 xong (gộp một commit): `error.rs`, `paths.rs`, `remote_script.rs` + test (55 test pass, gồm test chạy `sh` thật). `mod warp_sync` tạm có `#[allow(dead_code)]` trong `lib.rs` — **gỡ ở Task 2.3** khi module đã được dùng. Bổ sung so với plan: `host_key` chặn `.`/`..`/`.warp-sync` (thay dấu `.` đầu bằng `_`); `validate_tmp_dir` trả newtype `RemoteTmpDir` và từ chối `..`; commit script chỉ in `backup=` khi thực sự có backup; `nextest` chưa cài → dùng `cargo test -p warp --lib warp_sync`.
