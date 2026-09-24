@@ -2,6 +2,7 @@
 //! using the active session's own command executor so that the transfer runs with the same
 //! privileges as the shell the user is looking at.
 
+mod archive;
 mod error;
 mod manifest;
 mod paths;

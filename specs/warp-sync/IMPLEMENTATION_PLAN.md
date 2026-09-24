@@ -524,7 +524,7 @@ Upload:
 ### Tiến độ
 
 - [x] Phase 0 — Làm sạch nền
-- [x] 1.1 Dependencies · [x] 1.2 mod/error · [x] 1.3 paths · [x] 1.4 remote_script · [x] 1.5 manifest · [ ] 1.6 archive
+- [x] 1.1 Dependencies · [x] 1.2 mod/error · [x] 1.3 paths · [x] 1.4 remote_script · [x] 1.5 manifest · [x] 1.6 archive
 - [ ] 2.1 Feature flag · [ ] 2.2 transfer · [ ] 2.3 model
 - [ ] 3.1 Toast · [ ] 3.2 Confirm dialog · [ ] 3.3 Context menu · [ ] 3.4 Palette · [ ] 3.5 Review
 - [ ] ⛔ CHECKPOINT A (user) — kết quả đo: _chưa có_
@@ -549,3 +549,4 @@ Upload:
 - 2026-09-24 — 1.1 xong: thêm `flate2`, `tar` vào workspace deps + `app/Cargo.toml` (không đụng `node_runtime`); `cargo check -p warp` pass.
 - 2026-09-24 — 1.2–1.4 xong (gộp một commit): `error.rs`, `paths.rs`, `remote_script.rs` + test (55 test pass, gồm test chạy `sh` thật). `mod warp_sync` tạm có `#[allow(dead_code)]` trong `lib.rs` — **gỡ ở Task 2.3** khi module đã được dùng. Bổ sung so với plan: `host_key` chặn `.`/`..`/`.warp-sync` (thay dấu `.` đầu bằng `_`); `validate_tmp_dir` trả newtype `RemoteTmpDir` và từ chối `..`; commit script chỉ in `backup=` khi thực sự có backup; `nextest` chưa cài → dùng `cargo test -p warp --lib warp_sync`.
 - 2026-09-24 — 1.5 xong: `manifest.rs` + 11 test. `load_or_default` nhận thêm `host_key` (cần để tạo manifest rỗng); thêm `entry`, `record_sync`, `last_sync`.
+- 2026-09-24 — 1.6 xong: `archive.rs` + 25 test (tổng Phase 1: 91 test pass, clippy `-D warnings` sạch). Lưu ý: clippy cấm `std::process::Command` → dùng `command::blocking::Command` (kể cả trong test). Khác plan: `locally_modified_files` nhận thêm tham số `root` và tính cả file local **chưa có trong manifest** (nếu không, swap sẽ xoá file mới của user); `UploadArchive` có `content_bytes` thay cho `total_len`; `verify_gzip_trailer` đọc hết stream để kiểm CRC (tar dừng trước trailer).

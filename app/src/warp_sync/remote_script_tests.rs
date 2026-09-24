@@ -271,7 +271,9 @@ mod with_sh {
     use std::fs;
     use std::io::Read as _;
     use std::path::Path;
-    use std::process::{Command, Output};
+    use std::process::Output;
+
+    use command::blocking::Command;
 
     use super::*;
 
