@@ -4,28 +4,40 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use uuid::Uuid;
 use warp_core::{safe_info, safe_warn};
 
 use super::archive::{
-    build_upload, extract_download, locally_modified_files, SkipReason, UploadArchive,
+    SkipReason, UploadArchive, build_upload, extract_download, locally_modified_files,
 };
 use super::manifest::{Manifest, SyncRecord};
-use super::paths::{local_path_for, manifest_path, split_parent_name, staging_dir};
+use super::paths::{
+    create_private_dir_all, local_path_for, manifest_path, recovery_dir, split_parent_name,
+    staging_dir,
+};
 use super::remote_script::{
-    cleanup_command, download_script, parse_probe_output, probe_script, upload_begin_command,
-    upload_chunk_commands, upload_commit_script, validate_tmp_dir, wrap_for_any_shell, ExtractMode,
-    ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit,
+    ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, cleanup_command,
+    download_script, parse_probe_output, probe_script, upload_begin_command, upload_chunk_commands,
+    upload_commit_script, validate_tmp_dir, wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
-use super::{WarpSyncError, MAX_DOWNLOAD_KIB};
+use super::{MAX_DOWNLOAD_KIB, WarpSyncError};
 
 const MAX_BACKUP_STEM_CHARS: usize = 150;
+const BACKUP_NONCE_CHARS: usize = 8;
+const BYTES_PER_KIB: u64 = 1024;
 
-/// Where the previous local copy is parked, inside the staging directory, while the new one is
-/// moved into place.
+/// Subdirectories of a staging directory. They are siblings, so that no remote file name can make
+/// one collide with the other.
+const NEW_COPY_DIR: &str = "new";
 const PREVIOUS_COPY_DIR: &str = "previous";
+
+/// Manifests are read, modified and rewritten as a whole, so concurrent syncs of unrelated paths
+/// on the same host would otherwise lose each other's entries.
+static MANIFEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone)]
 pub struct DownloadRequest {
@@ -51,7 +63,9 @@ pub struct DownloadOutcome {
 pub enum DownloadResult {
     Done(DownloadOutcome),
     /// Nothing was changed: replacing the mirror would discard these local edits.
-    NeedsConfirmation { modified_files: Vec<String> },
+    NeedsConfirmation {
+        modified_files: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -107,16 +121,21 @@ pub async fn download(
     let tgz = shell
         .run(&wrap_for_any_shell(&download_script(&parent, &name)))
         .await?;
+    // `du` can under-report (sparse files) or fail, so the size check above is not enough.
+    ensure_received_size(tgz.len())?;
 
+    ensure_mirror_root(&request.mirror_root)?;
     let staging = staging_dir(&request.mirror_root);
-    let applied = apply_download(&tgz, request, &probe, manifest, &staging);
+    let applied = apply_download(&tgz, request, &probe, &staging);
     remove_staging(&staging);
-    let outcome = applied?;
-    safe_info!(
-        safe: ("Warp Sync: downloaded {} files", outcome.files),
-        full: ("Warp Sync: downloaded {} files from {}", outcome.files, request.remote_path)
-    );
-    Ok(DownloadResult::Done(outcome))
+    let result = applied?;
+    if let DownloadResult::Done(outcome) = &result {
+        safe_info!(
+            safe: ("Warp Sync: downloaded {} files", outcome.files),
+            full: ("Warp Sync: downloaded {} files from {}", outcome.files, request.remote_path)
+        );
+    }
+    Ok(result)
 }
 
 pub async fn prepare_upload(
@@ -206,6 +225,27 @@ fn ensure_download_size(probe: &ProbeResult) -> Result<(), WarpSyncError> {
     }
 }
 
+fn ensure_received_size(received_bytes: usize) -> Result<(), WarpSyncError> {
+    let limit_bytes = MAX_DOWNLOAD_KIB * BYTES_PER_KIB;
+    if received_bytes as u64 > limit_bytes {
+        return Err(WarpSyncError::TooLarge {
+            limit_desc: format!(
+                "the remote host sent {} KiB; the limit is {MAX_DOWNLOAD_KIB} KiB",
+                received_bytes as u64 / BYTES_PER_KIB
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_mirror_root(mirror_root: &Path) -> Result<(), WarpSyncError> {
+    create_private_dir_all(mirror_root).map_err(|err| local_io("create", mirror_root, &err))
+}
+
+fn lock_manifests() -> MutexGuard<'static, ()> {
+    MANIFEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn load_manifest(mirror_root: &Path, host_key: &str) -> Result<Manifest, WarpSyncError> {
     Manifest::load_or_default(&manifest_path(mirror_root, host_key), host_key)
 }
@@ -214,11 +254,11 @@ fn apply_download(
     tgz: &[u8],
     request: &DownloadRequest,
     probe: &ProbeResult,
-    mut manifest: Manifest,
     staging: &Path,
-) -> Result<DownloadOutcome, WarpSyncError> {
+) -> Result<DownloadResult, WarpSyncError> {
     let (parent, name) = split_parent_name(&request.remote_path);
-    let report = extract_download(tgz, &name, &parent, staging)?;
+    let extracted = staging.join(NEW_COPY_DIR);
+    let report = extract_download(tgz, &name, &parent, &extracted)?;
     if report.entries.is_empty() {
         return Err(WarpSyncError::InvalidPath(format!(
             "{} is a symbolic link or special file, which Warp Sync skips",
@@ -226,13 +266,41 @@ fn apply_download(
         )));
     }
 
-    let local_path = local_path_for(&request.mirror_root, &request.host_key, &request.remote_path);
-    swap_into_place(
-        &staging.join(&name),
+    let _manifests = lock_manifests();
+    let mut manifest = load_manifest(&request.mirror_root, &request.host_key)?;
+    if !request.allow_overwrite_local_changes {
+        // The mirror may have been edited while the download was running.
+        let modified_files = locally_modified_files(
+            &request.remote_path,
+            &manifest.entries_under(&request.remote_path),
+            &request.mirror_root,
+            &request.host_key,
+        )?;
+        if !modified_files.is_empty() {
+            return Ok(DownloadResult::NeedsConfirmation { modified_files });
+        }
+    }
+
+    let local_path = local_path_for(
+        &request.mirror_root,
+        &request.host_key,
+        &request.remote_path,
+    );
+    let undo = swap_into_place(
+        &extracted.join(&name),
         &local_path,
         &staging.join(PREVIOUS_COPY_DIR),
+        &recovery_dir(&request.mirror_root),
     )?;
 
+    let outcome = DownloadOutcome {
+        local_path,
+        files: report.files,
+        dirs: report.dirs,
+        total_bytes: report.total_bytes,
+        skipped: report.skipped,
+        remote_user: probe.user.clone(),
+    };
     manifest.replace_subtree(&request.remote_path, report.entries);
     manifest.record_sync(
         &request.remote_path,
@@ -241,23 +309,54 @@ fn apply_download(
             at_unix: now_unix(),
         },
     );
-    manifest.save_atomic(&manifest_path(&request.mirror_root, &request.host_key))?;
-
-    Ok(DownloadOutcome {
-        local_path,
-        files: report.files,
-        dirs: report.dirs,
-        total_bytes: report.total_bytes,
-        skipped: report.skipped,
-        remote_user: probe.user.clone(),
-    })
+    if let Err(err) = manifest.save_atomic(&manifest_path(&request.mirror_root, &request.host_key))
+    {
+        undo.undo();
+        return Err(err);
+    }
+    Ok(DownloadResult::Done(outcome))
 }
 
-/// Replaces `target` with `new`, keeping the old copy in `previous` until the move succeeds so
-/// that a failure cannot lose the mirror.
-fn swap_into_place(new: &Path, target: &Path, previous: &Path) -> Result<(), WarpSyncError> {
+/// How to put the previous mirror back after [`swap_into_place`].
+struct SwapUndo {
+    target: PathBuf,
+    new_copy: PathBuf,
+    previous: Option<PathBuf>,
+}
+
+impl SwapUndo {
+    fn undo(self) {
+        if let Err(err) = fs::rename(&self.target, &self.new_copy) {
+            safe_warn!(
+                safe: ("Warp Sync: could not undo the mirror swap: {err}"),
+                full: ("Warp Sync: could not move {} back to {}: {err}",
+                    self.target.display(), self.new_copy.display())
+            );
+            return;
+        }
+        if let Some(previous) = &self.previous
+            && let Err(err) = fs::rename(previous, &self.target)
+        {
+            safe_warn!(
+                safe: ("Warp Sync: could not restore the previous mirror: {err}"),
+                full: ("Warp Sync: could not restore {} from {}: {err}",
+                    self.target.display(), previous.display())
+            );
+        }
+    }
+}
+
+/// Replaces `target` with `new`, keeping the old copy in `previous` until the caller is done so
+/// that a failure cannot lose the mirror. If the old copy cannot be put back after a failed move,
+/// it is kept in `recovery`.
+fn swap_into_place(
+    new: &Path,
+    target: &Path,
+    previous: &Path,
+    recovery: &Path,
+) -> Result<SwapUndo, WarpSyncError> {
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|err| local_io("create", parent, &err))?;
+        create_private_dir_all(parent).map_err(|err| local_io("create", parent, &err))?;
     }
     let had_previous = match fs::symlink_metadata(target) {
         Ok(_) => true,
@@ -274,10 +373,29 @@ fn swap_into_place(new: &Path, target: &Path, previous: &Path) -> Result<(), War
                 full: ("Warp Sync: could not restore {} from {}: {restore_err}",
                     target.display(), previous.display())
             );
+            return Err(match preserve_previous(previous, recovery) {
+                Some(kept_at) => WarpSyncError::LocalIo(format!(
+                    "could not move the new copy into place ({err}); the previous copy is kept \
+                     at {}",
+                    kept_at.display()
+                )),
+                None => local_io("move into place", target, &err),
+            });
         }
         return Err(local_io("move into place", target, &err));
     }
-    Ok(())
+    Ok(SwapUndo {
+        target: target.to_owned(),
+        new_copy: new.to_owned(),
+        previous: had_previous.then(|| previous.to_owned()),
+    })
+}
+
+fn preserve_previous(previous: &Path, recovery: &Path) -> Option<PathBuf> {
+    let dir = recovery.parent()?;
+    fs::create_dir_all(dir).ok()?;
+    fs::rename(previous, recovery).ok()?;
+    Some(recovery.to_owned())
 }
 
 fn remove_staging(staging: &Path) {
@@ -319,7 +437,7 @@ async fn send_and_commit(
 async fn remove_remote_tmp_dir(shell: &dyn RemoteShell, tmp_dir: &RemoteTmpDir) {
     if let Err(err) = shell.run(&cleanup_command(tmp_dir)).await {
         safe_warn!(
-            safe: ("Warp Sync: could not remove the remote scratch directory: {err}"),
+            safe: ("Warp Sync: could not remove the remote scratch directory"),
             full: ("Warp Sync: could not remove {}: {err}", tmp_dir.as_str())
         );
     }
@@ -329,11 +447,13 @@ async fn remove_remote_tmp_dir(shell: &dyn RemoteShell, tmp_dir: &RemoteTmpDir) 
 /// kept, since they still exist on the remote host.
 fn record_upload(prepared: &PreparedUpload) -> Result<(), WarpSyncError> {
     let (parent, name) = split_parent_name(&prepared.remote_path);
+    ensure_mirror_root(&prepared.mirror_root)?;
     let staging = staging_dir(&prepared.mirror_root);
     let report = extract_download(&prepared.archive.bytes, &name, &parent, &staging);
     remove_staging(&staging);
     let report = report?;
 
+    let _manifests = lock_manifests();
     let mut manifest = load_manifest(&prepared.mirror_root, &prepared.host_key)?;
     manifest.upsert_entries(report.entries);
     manifest.record_sync(
@@ -363,7 +483,9 @@ fn backup_name(host_key: &str, remote_path: &str, at_unix: u64) -> String {
         .chars()
         .take(MAX_BACKUP_STEM_CHARS)
         .collect();
-    format!("{stem}-{at_unix}")
+    // Two uploads within the same second must not overwrite each other's backup.
+    let nonce = Uuid::new_v4().simple().to_string();
+    format!("{stem}-{at_unix}-{}", &nonce[..BACKUP_NONCE_CHARS])
 }
 
 fn parse_backup_path(output: &str) -> Option<String> {

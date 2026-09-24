@@ -66,7 +66,10 @@ fn download_script_only_uses_the_path_quoted() {
     for name in NASTY_PATHS {
         let script = download_script("/srv/data", name);
         let quoted = posix_quote(&format!("./{name}"));
-        assert!(script.contains(&format!("-C '/srv/data' {quoted} ")), "{name}");
+        assert!(
+            script.contains(&format!("-C '/srv/data' {quoted} ")),
+            "{name}"
+        );
         assert!(!script.replace(&quoted, "").contains(name), "{name}");
     }
 }
@@ -86,7 +89,9 @@ fn upload_begin_command_is_wrapped() {
 #[test]
 fn validate_tmp_dir_accepts_mktemp_output() {
     assert_eq!(
-        validate_tmp_dir("/tmp/warp-sync.AbC123\r\n").unwrap().as_str(),
+        validate_tmp_dir("/tmp/warp-sync.AbC123\r\n")
+            .unwrap()
+            .as_str(),
         "/tmp/warp-sync.AbC123"
     );
     assert!(validate_tmp_dir("/var/tmp/my-dir/warp-sync.Xy9Z").is_ok());
@@ -104,13 +109,18 @@ fn validate_tmp_dir_rejects_suspicious_paths() {
         "/tmp/warp-sync.$(id)",
         "",
     ] {
-        assert!(validate_tmp_dir(path).is_err(), "{path:?} should be rejected");
+        assert!(
+            validate_tmp_dir(path).is_err(),
+            "{path:?} should be rejected"
+        );
     }
 }
 
 #[test]
 fn upload_chunks_reassemble_and_are_aligned() {
-    let tgz: Vec<u8> = (0..60_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    let tgz: Vec<u8> = (0..60_000u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
     let dir = tmp_dir("/tmp/warp-sync.AbC123");
 
     let commands = upload_chunk_commands(&dir, &tgz);
@@ -125,7 +135,13 @@ fn upload_chunks_reassemble_and_are_aligned() {
         assert_eq!(chunk.len() % 4, 0);
         assert_eq!(
             &words[3..],
-            ["|", "base64", "-d", ">>", "'/tmp/warp-sync.AbC123/payload.tgz'"]
+            [
+                "|",
+                "base64",
+                "-d",
+                ">>",
+                "'/tmp/warp-sync.AbC123/payload.tgz'"
+            ]
         );
         reassembled.extend(BASE64.decode(chunk).unwrap());
     }
@@ -141,7 +157,10 @@ fn cleanup_command_removes_only_the_quoted_dir() {
 #[test]
 fn extract_mode_depends_on_tar_flavor_and_uid() {
     let mut probe = parse_probe_output(&full_probe(&[])).unwrap();
-    assert_eq!(ExtractMode::for_probe(&probe), ExtractMode::GnuPreserveOwner);
+    assert_eq!(
+        ExtractMode::for_probe(&probe),
+        ExtractMode::GnuPreserveOwner
+    );
 
     probe.uid = 1000;
     assert_eq!(ExtractMode::for_probe(&probe), ExtractMode::GnuNoOwner);
@@ -370,7 +389,10 @@ mod with_sh {
 
     #[test]
     fn chunks_and_commit_replace_a_file_and_back_it_up() {
-        let scratch = tempfile::Builder::new().prefix("warp-sync.").tempdir().unwrap();
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
         let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
         let target_parent = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
@@ -402,8 +424,46 @@ mod with_sh {
     }
 
     #[test]
+    fn commit_refuses_to_back_up_through_a_symlinked_backup_directory() {
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
+        let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
+        let target_parent = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::write(target_parent.path().join("conf"), "old").unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), home.path().join(".warp-sync")).unwrap();
+        let tgz = make_tgz("conf", "new");
+        for command in upload_chunk_commands(&dir, &tgz) {
+            assert!(run_sh(&command, None).status.success());
+        }
+
+        let commit = upload_commit_script(&UploadCommit {
+            tmp_dir: &dir,
+            parent: target_parent.path().to_str().unwrap(),
+            name: "conf",
+            expected_len: tgz.len(),
+            backup_name: "b",
+            extract_mode: ExtractMode::Generic,
+        });
+        let output = run_sh(&commit, Some(home.path()));
+
+        assert_eq!(output.status.code(), Some(EXIT_BACKUP_DIR));
+        assert_eq!(
+            fs::read_to_string(target_parent.path().join("conf")).unwrap(),
+            "old"
+        );
+        assert!(fs::read_dir(elsewhere.path()).unwrap().next().is_none());
+    }
+
+    #[test]
     fn commit_rejects_a_payload_of_the_wrong_size() {
-        let scratch = tempfile::Builder::new().prefix("warp-sync.").tempdir().unwrap();
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
         let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
         let target_parent = tempfile::tempdir().unwrap();
         let tgz = make_tgz("conf", "x");

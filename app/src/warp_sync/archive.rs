@@ -9,15 +9,15 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use sha2::{Digest, Sha256};
 use tar::{Archive, Builder, Entry, EntryType, Header};
 
 use super::manifest::{EntryKind, EntryMeta, Manifest};
 use super::paths::{local_path_for, split_parent_name};
-use super::{WarpSyncError, MAX_ENTRIES, MAX_EXTRACTED_BYTES, MAX_UPLOAD_BYTES};
+use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, MAX_UPLOAD_BYTES, WarpSyncError};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
@@ -28,6 +28,15 @@ const NEW_DIR_MODE: u32 = 0o755;
 /// directories stay traversable. The remote mode is preserved in the manifest instead.
 const LOCAL_FILE_MODE_FLOOR: u32 = 0o600;
 const LOCAL_DIR_MODE_FLOOR: u32 = 0o700;
+
+/// Local copies never get group or other write access, nor setuid, setgid or sticky bits, no
+/// matter what the remote mode is.
+const LOCAL_MODE_MASK: u32 = 0o755;
+
+const SETUID_SETGID_BITS: u32 = 0o6000;
+
+/// Room for the tar headers and padding of one entry when bounding the decompressed stream.
+const TAR_ENTRY_OVERHEAD_BYTES: u64 = 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtractLimits {
@@ -120,7 +129,10 @@ pub fn extract_download_with_limits(
         limits,
         report: ExtractReport::default(),
     };
-    let mut archive = Archive::new(GzDecoder::new(tgz));
+    let mut archive = Archive::new(BoundedReader::new(
+        GzDecoder::new(tgz),
+        stream_limit(&limits),
+    ));
     let mut seen = 0usize;
     for entry in archive.entries().map_err(corrupt)? {
         let mut entry = entry.map_err(corrupt)?;
@@ -134,24 +146,58 @@ pub fn extract_download_with_limits(
         extractor.handle(&mut entry)?;
     }
     if seen == 0 {
-        return Err(WarpSyncError::CorruptArchive("the archive is empty".to_owned()));
+        return Err(WarpSyncError::CorruptArchive(
+            "the archive is empty".to_owned(),
+        ));
     }
-    verify_gzip_trailer(archive.into_inner(), limits.max_bytes)?;
+    verify_gzip_trailer(archive.into_inner())?;
     Ok(extractor.report)
+}
+
+/// Upper bound on the whole decompressed stream, including entries that are skipped and so never
+/// count against `max_bytes`.
+fn stream_limit(limits: &ExtractLimits) -> u64 {
+    let overhead = TAR_ENTRY_OVERHEAD_BYTES.saturating_mul(limits.max_entries as u64);
+    limits.max_bytes.saturating_add(overhead)
 }
 
 /// Reads to the end of the gzip stream so that its CRC is checked; tar itself stops at the end
 /// marker, before the trailer.
-fn verify_gzip_trailer(mut decoder: GzDecoder<&[u8]>, max_bytes: u64) -> Result<(), WarpSyncError> {
-    let drained = io::copy(&mut (&mut decoder).take(max_bytes + 1), &mut io::sink())
-        .map_err(corrupt)?;
-    if drained > max_bytes {
-        return Err(too_large(format!(
-            "the archive expands to more than {} MiB",
-            max_bytes / BYTES_PER_MIB
-        )));
-    }
+fn verify_gzip_trailer(mut reader: BoundedReader<GzDecoder<&[u8]>>) -> Result<(), WarpSyncError> {
+    io::copy(&mut reader, &mut io::sink()).map_err(corrupt)?;
     Ok(())
+}
+
+/// Fails once more than `remaining` bytes have been read, so that a small archive cannot expand
+/// without bound.
+struct BoundedReader<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R> BoundedReader<R> {
+    fn new(inner: R, limit: u64) -> Self {
+        Self {
+            inner,
+            remaining: limit,
+        }
+    }
+}
+
+impl<R: Read> Read for BoundedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        match self.remaining.checked_sub(read as u64) {
+            Some(remaining) => {
+                self.remaining = remaining;
+                Ok(read)
+            }
+            None => Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "the archive expands beyond the allowed size",
+            )),
+        }
+    }
 }
 
 struct Extractor<'a> {
@@ -183,7 +229,8 @@ impl Extractor<'_> {
 
         let meta = match kind {
             EntryKind::Dir => {
-                fs::create_dir_all(&local_path).map_err(|err| local_io("create", &local_path, &err))?;
+                fs::create_dir_all(&local_path)
+                    .map_err(|err| local_io("create", &local_path, &err))?;
                 set_local_mode(&local_path, entry_mode(entry)?, LOCAL_DIR_MODE_FLOOR)?;
                 self.report.dirs += 1;
                 entry_meta(entry.header(), kind, None, None)?
@@ -201,7 +248,11 @@ impl Extractor<'_> {
         Ok(())
     }
 
-    fn skip<R: Read>(&mut self, entry: &Entry<'_, R>, reason: SkipReason) -> Result<(), WarpSyncError> {
+    fn skip<R: Read>(
+        &mut self,
+        entry: &Entry<'_, R>,
+        reason: SkipReason,
+    ) -> Result<(), WarpSyncError> {
         let path = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
         self.report.skipped.push((path, reason));
         Ok(())
@@ -217,13 +268,17 @@ impl Extractor<'_> {
                 Component::CurDir => {}
                 Component::Normal(part) => relative.push(part),
                 Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(WarpSyncError::UnexpectedArchiveEntry(path.display().to_string()));
+                    return Err(WarpSyncError::UnexpectedArchiveEntry(
+                        path.display().to_string(),
+                    ));
                 }
             }
         }
         let top_level = relative.components().next().map(Component::as_os_str);
         if top_level != Some(OsStr::new(self.name)) {
-            return Err(WarpSyncError::UnexpectedArchiveEntry(path.display().to_string()));
+            return Err(WarpSyncError::UnexpectedArchiveEntry(
+                path.display().to_string(),
+            ));
         }
         Ok(relative)
     }
@@ -285,8 +340,18 @@ fn entry_meta(
         mode: header.mode().map_err(corrupt)? & 0o7777,
         uid: id(header.uid())?,
         gid: id(header.gid())?,
-        uname: header.username().ok().flatten().unwrap_or_default().to_owned(),
-        gname: header.groupname().ok().flatten().unwrap_or_default().to_owned(),
+        uname: header
+            .username()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_owned(),
+        gname: header
+            .groupname()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_owned(),
         mtime: header.mtime().map_err(corrupt)?,
         size,
         sha256,
@@ -297,7 +362,7 @@ fn entry_meta(
 fn set_local_mode(path: &Path, remote_mode: u32, floor: u32) -> Result<(), WarpSyncError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mode = (remote_mode & 0o777) | floor;
+    let mode = (remote_mode & LOCAL_MODE_MASK) | floor;
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
         .map_err(|err| local_io("set permissions on", path, &err))
 }
@@ -348,7 +413,9 @@ fn collect_local(local_root: &Path, root: &str) -> Result<Vec<LocalItem>, WarpSy
     let mut pending = vec![(local_root.to_owned(), String::new(), metadata)];
     while let Some((path, relative, metadata)) = pending.pop() {
         if items.len() >= MAX_ENTRIES {
-            return Err(too_large(format!("the mirror has more than {MAX_ENTRIES} entries")));
+            return Err(too_large(format!(
+                "the mirror has more than {MAX_ENTRIES} entries"
+            )));
         }
         let is_dir = metadata.is_dir();
         if is_dir {
@@ -415,7 +482,11 @@ pub fn build_upload(
     let local_root = local_path_for(mirror_root, host_key, root);
     let items = collect_local(&local_root, root)?;
 
-    let content_bytes: u64 = items.iter().filter(|item| !item.is_dir).map(|item| item.len).sum();
+    let content_bytes: u64 = items
+        .iter()
+        .filter(|item| !item.is_dir)
+        .map(|item| item.len)
+        .sum();
     if content_bytes > MAX_EXTRACTED_BYTES {
         return Err(too_large(format!(
             "the mirror holds more than {} MiB",
@@ -444,6 +515,11 @@ pub fn build_upload(
                 new_entry_meta(manifest, item, &remote_path)?
             }
         };
+        // The manifest is only as trustworthy as the host that reported it; never recreate a
+        // setuid or setgid program from it.
+        if meta.kind == EntryKind::File && meta.mode & SETUID_SETGID_BITS != 0 {
+            return Err(WarpSyncError::SpecialMode(remote_path));
+        }
         append_item(&mut builder, item, &name, &meta)?;
         if item.is_dir {
             summary.dirs += 1;
@@ -453,8 +529,12 @@ pub fn build_upload(
         present.insert(remote_path);
     }
 
-    let encoder = builder.into_inner().map_err(|err| local_io_message("pack", &err))?;
-    summary.bytes = encoder.finish().map_err(|err| local_io_message("pack", &err))?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|err| local_io_message("pack", &err))?;
+    summary.bytes = encoder
+        .finish()
+        .map_err(|err| local_io_message("pack", &err))?;
     if summary.bytes.len() > MAX_UPLOAD_BYTES {
         return Err(too_large(format!(
             "the upload is {} KiB compressed; the limit is {} KiB",
@@ -475,7 +555,11 @@ fn check_kind<'a>(
     item: &LocalItem,
     remote_path: &str,
 ) -> Result<&'a EntryMeta, WarpSyncError> {
-    let expected = if item.is_dir { EntryKind::Dir } else { EntryKind::File };
+    let expected = if item.is_dir {
+        EntryKind::Dir
+    } else {
+        EntryKind::File
+    };
     if meta.kind == expected {
         Ok(meta)
     } else {
@@ -494,8 +578,16 @@ fn new_entry_meta(
         WarpSyncError::Manifest(format!("no ownership information for {remote_path}"))
     })?;
     Ok(EntryMeta {
-        kind: if item.is_dir { EntryKind::Dir } else { EntryKind::File },
-        mode: if item.is_dir { NEW_DIR_MODE } else { NEW_FILE_MODE },
+        kind: if item.is_dir {
+            EntryKind::Dir
+        } else {
+            EntryKind::File
+        },
+        mode: if item.is_dir {
+            NEW_DIR_MODE
+        } else {
+            NEW_FILE_MODE
+        },
         uid: owner.uid,
         gid: owner.gid,
         uname: owner.uname.clone(),
@@ -535,9 +627,11 @@ fn append_item<W: Write>(
         header.set_size(0);
         builder.append_data(&mut header, &archive_path, io::empty())
     } else {
-        header.set_size(item.len);
-        let file = File::open(&item.path).map_err(|err| local_io("read", &item.path, &err))?;
-        builder.append_data(&mut header, &archive_path, file)
+        // The header size must match the bytes written even if an editor saves the file while
+        // packing, so take both from a single read.
+        let contents = fs::read(&item.path).map_err(|err| local_io("read", &item.path, &err))?;
+        header.set_size(contents.len() as u64);
+        builder.append_data(&mut header, &archive_path, contents.as_slice())
     };
     result.map_err(|err| local_io("pack", &item.path, &err))
 }
@@ -576,7 +670,9 @@ fn file_sha256(path: &Path) -> Result<String, WarpSyncError> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     loop {
-        let read = file.read(&mut buffer).map_err(|err| local_io("read", path, &err))?;
+        let read = file
+            .read(&mut buffer)
+            .map_err(|err| local_io("read", path, &err))?;
         if read == 0 {
             break;
         }
@@ -586,6 +682,9 @@ fn file_sha256(path: &Path) -> Result<String, WarpSyncError> {
 }
 
 fn corrupt(err: io::Error) -> WarpSyncError {
+    if err.kind() == io::ErrorKind::FileTooLarge {
+        return too_large("the archive expands to far more than its declared size".to_owned());
+    }
     WarpSyncError::CorruptArchive(err.to_string())
 }
 

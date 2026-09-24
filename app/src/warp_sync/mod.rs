@@ -3,6 +3,7 @@
 //! privileges as the shell the user is looking at.
 
 mod archive;
+pub mod confirm_dialog;
 mod error;
 mod manifest;
 mod model;
@@ -14,7 +15,8 @@ mod transfer;
 use std::time::Duration;
 
 pub use error::WarpSyncError;
-pub use model::WarpSyncModel;
+pub use model::{WarpSyncEvent, WarpSyncModel};
+pub use paths::{host_mirror_dir, normalize_remote_path, selection_to_remote_path};
 
 /// Upper bound on the remote size (`du -sk`) of a download. Output travels through the PTY
 /// hex-encoded, which doubles its size.

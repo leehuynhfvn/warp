@@ -115,7 +115,10 @@ impl Env {
         }
     }
 
-    fn download(&self, allow_overwrite_local_changes: bool) -> Result<DownloadResult, WarpSyncError> {
+    fn download(
+        &self,
+        allow_overwrite_local_changes: bool,
+    ) -> Result<DownloadResult, WarpSyncError> {
         block_on(download(
             &self.shell,
             &self.download_request(allow_overwrite_local_changes),
@@ -174,10 +177,15 @@ fn download_mirrors_a_directory_and_records_the_manifest() {
     assert!(!outcome.remote_user.is_empty());
     assert_eq!(outcome.local_path, env.local(""));
     assert_eq!(fs::read_to_string(env.local("a.conf")).unwrap(), "remote a");
-    assert_eq!(fs::read_to_string(env.local("sub/c.conf")).unwrap(), "remote c");
+    assert_eq!(
+        fs::read_to_string(env.local("sub/c.conf")).unwrap(),
+        "remote c"
+    );
 
     let manifest = env.manifest();
-    let a = manifest.entry(&format!("{}/a.conf", env.remote_path)).unwrap();
+    let a = manifest
+        .entry(&format!("{}/a.conf", env.remote_path))
+        .unwrap();
     assert_eq!(a.sha256.as_deref(), Some(sha256_hex("remote a").as_str()));
     assert!(manifest.entry(&env.remote_path).is_some());
     assert!(manifest.last_sync(&env.remote_path).is_some());
@@ -228,7 +236,10 @@ fn download_of_an_unreadable_file_is_permission_denied_and_creates_nothing() {
 
     let result = block_on(download(&env.shell, &request));
 
-    assert!(matches!(result, Err(WarpSyncError::PermissionDenied { .. })));
+    assert!(matches!(
+        result,
+        Err(WarpSyncError::PermissionDenied { .. })
+    ));
     assert!(!env.local("a.conf").exists());
 }
 
@@ -270,9 +281,16 @@ fn redownload_drops_files_deleted_on_the_remote_host() {
     env.download_done();
 
     assert!(!env.local("b.conf").exists());
-    assert_eq!(fs::read_to_string(env.local("a.conf")).unwrap(), "remote a v2");
+    assert_eq!(
+        fs::read_to_string(env.local("a.conf")).unwrap(),
+        "remote a v2"
+    );
     let manifest = env.manifest();
-    assert!(manifest.entry(&format!("{}/b.conf", env.remote_path)).is_none());
+    assert!(
+        manifest
+            .entry(&format!("{}/b.conf", env.remote_path))
+            .is_none()
+    );
 }
 
 #[test]
@@ -281,16 +299,17 @@ fn download_leaves_no_staging_directory_behind() {
     env.download_done();
 
     let staging = env.mirror_root().join(".warp-sync/staging");
-    let leftovers = fs::read_dir(staging).map(|entries| entries.count()).unwrap_or(0);
+    let leftovers = fs::read_dir(staging)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
     assert_eq!(leftovers, 0);
 }
 
 #[test]
 fn download_size_limit_is_enforced() {
-    let mut probe = parse_probe_output(
-        "status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=1\ntar=gnu\nbase64=yes\n",
-    )
-    .unwrap();
+    let mut probe =
+        parse_probe_output("status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=1\ntar=gnu\nbase64=yes\n")
+            .unwrap();
     assert!(ensure_download_size(&probe).is_ok());
 
     probe.size_kib = Some(MAX_DOWNLOAD_KIB);
@@ -325,22 +344,46 @@ fn upload_replaces_remote_files_backs_them_up_and_cleans_up() {
 
     let outcome = env.upload().unwrap();
 
-    assert_eq!(fs::read_to_string(env.remote("a.conf")).unwrap(), "edited a");
+    assert_eq!(
+        fs::read_to_string(env.remote("a.conf")).unwrap(),
+        "edited a"
+    );
     assert_eq!(fs::read_to_string(env.remote("d.conf")).unwrap(), "new d");
-    assert_eq!(fs::read_to_string(env.remote("b.conf")).unwrap(), "remote b");
-    assert_eq!(fs::read_to_string(env.remote("sub/c.conf")).unwrap(), "remote c");
+    assert_eq!(
+        fs::read_to_string(env.remote("b.conf")).unwrap(),
+        "remote b"
+    );
+    assert_eq!(
+        fs::read_to_string(env.remote("sub/c.conf")).unwrap(),
+        "remote c"
+    );
 
-    let backup = outcome.backup_path.expect("the target existed, so it is backed up");
+    let backup = outcome
+        .backup_path
+        .expect("the target existed, so it is backed up");
     assert!(Path::new(&backup).starts_with(env.dir.path().join("home/.warp-sync/backups")));
     assert!(Path::new(&backup).is_file());
     assert!(env.leftover_scratch_dirs().is_empty());
     assert_eq!((outcome.files, outcome.dirs), (3, 2));
 
     let manifest = env.manifest();
-    let edited = manifest.entry(&format!("{}/a.conf", env.remote_path)).unwrap();
-    assert_eq!(edited.sha256.as_deref(), Some(sha256_hex("edited a").as_str()));
-    assert!(manifest.entry(&format!("{}/d.conf", env.remote_path)).is_some());
-    assert!(manifest.entry(&format!("{}/b.conf", env.remote_path)).is_some());
+    let edited = manifest
+        .entry(&format!("{}/a.conf", env.remote_path))
+        .unwrap();
+    assert_eq!(
+        edited.sha256.as_deref(),
+        Some(sha256_hex("edited a").as_str())
+    );
+    assert!(
+        manifest
+            .entry(&format!("{}/d.conf", env.remote_path))
+            .is_some()
+    );
+    assert!(
+        manifest
+            .entry(&format!("{}/b.conf", env.remote_path))
+            .is_some()
+    );
 }
 
 #[test]
@@ -372,7 +415,10 @@ fn failed_upload_removes_the_remote_scratch_directory() {
 
     assert!(matches!(result, Err(WarpSyncError::Executor(_))));
     assert!(env.leftover_scratch_dirs().is_empty());
-    assert_eq!(fs::read_to_string(env.remote("a.conf")).unwrap(), "remote a");
+    assert_eq!(
+        fs::read_to_string(env.remote("a.conf")).unwrap(),
+        "remote a"
+    );
 }
 
 #[cfg(unix)]
@@ -398,7 +444,10 @@ fn upload_that_cannot_extract_reports_the_failure_and_cleans_up() {
         Err(WarpSyncError::RemoteCommandFailed { .. })
     ));
     assert!(env.leftover_scratch_dirs().is_empty());
-    assert_eq!(fs::read_to_string(env.remote("a.conf")).unwrap(), "remote a");
+    assert_eq!(
+        fs::read_to_string(env.remote("a.conf")).unwrap(),
+        "remote a"
+    );
 }
 
 #[test]
@@ -430,6 +479,7 @@ fn swap_restores_the_previous_copy_when_the_move_fails() {
         &dir.path().join("does-not-exist"),
         &target,
         &dir.path().join("previous"),
+        &dir.path().join("recovered"),
     );
 
     assert!(matches!(result, Err(WarpSyncError::LocalIo(_))));
@@ -437,13 +487,177 @@ fn swap_restores_the_previous_copy_when_the_move_fails() {
 }
 
 #[test]
+fn undoing_a_swap_puts_the_previous_copy_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("mirror/conf");
+    let new = dir.path().join("new/conf");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("file"), "old").unwrap();
+    fs::create_dir_all(&new).unwrap();
+    fs::write(new.join("file"), "new").unwrap();
+
+    let undo = swap_into_place(
+        &new,
+        &target,
+        &dir.path().join("previous"),
+        &dir.path().join("recovered"),
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(target.join("file")).unwrap(), "new");
+
+    undo.undo();
+
+    assert_eq!(fs::read_to_string(target.join("file")).unwrap(), "old");
+    assert_eq!(fs::read_to_string(new.join("file")).unwrap(), "new");
+}
+
+#[test]
+fn undoing_a_first_time_swap_removes_the_new_copy_from_the_mirror() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("mirror/conf");
+    let new = dir.path().join("new/conf");
+    fs::create_dir_all(&new).unwrap();
+    fs::write(new.join("file"), "new").unwrap();
+
+    let undo = swap_into_place(
+        &new,
+        &target,
+        &dir.path().join("previous"),
+        &dir.path().join("recovered"),
+    )
+    .unwrap();
+    undo.undo();
+
+    assert!(!target.exists());
+    assert!(new.join("file").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_manifest_that_cannot_be_saved_leaves_the_previous_mirror_in_place() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if running_as_root() {
+        return;
+    }
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.remote("a.conf"), "remote a v2").unwrap();
+    let state_dir = env.mirror_root().join(".warp-sync");
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let result = env.download(false);
+
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        matches!(result, Err(WarpSyncError::Manifest(_))),
+        "{result:?}"
+    );
+    assert_eq!(fs::read_to_string(env.local("a.conf")).unwrap(), "remote a");
+    let a = env
+        .manifest()
+        .entry(&format!("{}/a.conf", env.remote_path))
+        .cloned()
+        .unwrap();
+    assert_eq!(a.sha256.as_deref(), Some(sha256_hex("remote a").as_str()));
+}
+
+#[test]
+fn edits_made_while_a_download_runs_are_not_overwritten() {
+    let env = Env::new();
+    env.download_done();
+    let (parent, name) = split_parent_name(&env.remote_path);
+    let tgz = block_on(
+        env.shell
+            .run(&wrap_for_any_shell(&download_script(&parent, &name))),
+    )
+    .unwrap();
+    let probe = block_on(probe(&env.shell, &env.remote_path)).unwrap();
+    fs::write(env.local("a.conf"), "typed during the download").unwrap();
+    let staging = staging_dir(&env.mirror_root());
+
+    let result = apply_download(&tgz, &env.download_request(false), &probe, &staging);
+
+    let Ok(DownloadResult::NeedsConfirmation { modified_files }) = result else {
+        panic!("expected a confirmation request, got {result:?}");
+    };
+    assert_eq!(modified_files, [format!("{}/a.conf", env.remote_path)]);
+    assert_eq!(
+        fs::read_to_string(env.local("a.conf")).unwrap(),
+        "typed during the download"
+    );
+}
+
+#[test]
+fn a_remote_entry_named_like_the_parking_directory_does_not_clobber_the_download() {
+    let env = Env::new();
+    let request = DownloadRequest {
+        remote_path: format!("{}/{PREVIOUS_COPY_DIR}", env.remote_path),
+        ..env.download_request(false)
+    };
+    fs::write(env.remote(PREVIOUS_COPY_DIR), "first").unwrap();
+    assert!(matches!(
+        block_on(download(&env.shell, &request)),
+        Ok(DownloadResult::Done(_))
+    ));
+    fs::write(env.remote(PREVIOUS_COPY_DIR), "second").unwrap();
+
+    let result = block_on(download(&env.shell, &request));
+
+    assert!(matches!(result, Ok(DownloadResult::Done(_))), "{result:?}");
+    assert_eq!(
+        fs::read_to_string(env.local(PREVIOUS_COPY_DIR)).unwrap(),
+        "second"
+    );
+}
+
+#[test]
+fn oversized_output_is_rejected_even_when_du_said_otherwise() {
+    assert!(ensure_received_size(0).is_ok());
+    assert!(ensure_received_size((MAX_DOWNLOAD_KIB * BYTES_PER_KIB) as usize).is_ok());
+    assert!(matches!(
+        ensure_received_size((MAX_DOWNLOAD_KIB * BYTES_PER_KIB) as usize + 1),
+        Err(WarpSyncError::TooLarge { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_mirror_root_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+
+    env.download_done();
+
+    let mode = fs::metadata(env.mirror_root())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700);
+}
+
+#[test]
 fn backup_names_use_only_safe_characters() {
     let name = backup_name("prod-1", "/etc/my app/it's$(x)", 1_727_000_000);
 
-    assert_eq!(name, "prod-1_etc_my_app_it_s__x_-1727000000");
-    assert!(name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')));
+    assert!(
+        name.starts_with("prod-1_etc_my_app_it_s__x_-1727000000-"),
+        "{name}"
+    );
+    assert!(
+        name.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    );
+}
+
+#[test]
+fn backup_names_do_not_repeat_within_a_second() {
+    assert_ne!(
+        backup_name("h", "/etc/a", 1_727_000_000),
+        backup_name("h", "/etc/a", 1_727_000_000)
+    );
 }
 
 #[test]
@@ -452,8 +666,8 @@ fn backup_names_are_bounded() {
 
     let name = backup_name("h", &long_path, 1);
 
-    assert!(name.len() <= MAX_BACKUP_STEM_CHARS + "-1".len());
-    assert!(name.ends_with("-1"));
+    assert!(name.len() <= MAX_BACKUP_STEM_CHARS + "-1-".len() + BACKUP_NONCE_CHARS);
+    assert!(name.contains("-1-"));
 }
 
 #[test]

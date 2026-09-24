@@ -921,6 +921,22 @@ impl BlockList {
         self.smart_select_override = None;
     }
 
+    /// Index of the command block that contains the whole text selection. `None` when nothing is
+    /// selected or the selection spans several blocks.
+    pub fn selected_block_index(
+        &self,
+        semantic_selection: &SemanticSelection,
+        inverted_blocklist: bool,
+    ) -> Option<BlockIndex> {
+        match self.expand_selection(semantic_selection, inverted_blocklist)? {
+            ExpandedSelectionRange::Regular { start, end, .. } => {
+                let index = start.within_grid_point.block_index;
+                (index == end.within_grid_point.block_index).then_some(index)
+            }
+            ExpandedSelectionRange::Rect { .. } => None,
+        }
+    }
+
     pub fn selection_to_string(
         &self,
         semantic_selection: &SemanticSelection,

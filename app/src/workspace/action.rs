@@ -482,6 +482,10 @@ pub enum WorkspaceAction {
     OpenFilePath {
         path: PathBuf,
     },
+    /// Download the active remote session's working directory into the Warp Sync mirror.
+    WarpSyncDownloadCurrentDirectory,
+    /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
+    WarpSyncOpenMirror,
     TerminateApp,
     CloseWindow,
     /// Help the user call the Warp executable with the [`crate::args::DEBUG_DUMP_FLAG`].
@@ -1073,6 +1077,8 @@ impl WorkspaceAction {
             | CreatePersonalAIPrompt
             | CreateTeamAIPrompt
             | OpenInExplorer { .. }
+            | WarpSyncDownloadCurrentDirectory
+            | WarpSyncOpenMirror
             | DragTab { .. }
             | StartTabDrag
             | DragGroup { .. }

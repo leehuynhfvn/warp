@@ -15,6 +15,8 @@ pub enum WarpSyncError {
         "Permission denied (running as {user}). Run `sudo -i` and Warpify the subshell, then retry."
     )]
     PermissionDenied { user: String },
+    #[error("{0} has setuid or setgid permission bits, which Warp Sync will not upload")]
+    SpecialMode(String),
     #[error("Too large: {limit_desc}")]
     TooLarge { limit_desc: String },
     #[error("The remote host is missing the required `{0}` tool")]

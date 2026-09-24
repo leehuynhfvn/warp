@@ -4,11 +4,11 @@
 
 use std::sync::LazyLock;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use regex::Regex;
 
-use super::{WarpSyncError, UPLOAD_CHUNK_B64_LEN};
+use super::{UPLOAD_CHUNK_B64_LEN, WarpSyncError};
 
 const FAILURE_MESSAGE_TAIL_BYTES: usize = 1024;
 
@@ -201,7 +201,9 @@ pub fn upload_commit_script(commit: &UploadCommit<'_>) -> String {
 [ "$(wc -c < "$T/{PAYLOAD_FILE_NAME}" | tr -d ' ')" = "{expected_len}" ] || {{ echo "size mismatch"; exit {EXIT_SIZE_MISMATCH}; }}
 gzip -t "$T/{PAYLOAD_FILE_NAME}" || {{ echo "corrupt payload"; exit {EXIT_CORRUPT_PAYLOAD}; }}
 if [ -e "$P/$N" ]; then
-  B="{BACKUP_DIR}"; mkdir -p "$B" && chmod 700 "$B" || {{ echo "cannot create backup directory"; exit {EXIT_BACKUP_DIR}; }}
+  B="{BACKUP_DIR}"
+  if [ -L "$HOME/.warp-sync" ] || [ -L "$B" ]; then echo "unsafe backup directory"; exit {EXIT_BACKUP_DIR}; fi
+  mkdir -p "$B" && chmod 700 "$B" || {{ echo "cannot create backup directory"; exit {EXIT_BACKUP_DIR}; }}
   tar -czf "$B"/{backup_file} -C "$P" "$N" || {{ echo "backup failed"; exit {EXIT_BACKUP_FAILED}; }}
   echo "backup=$B/"{backup_file}
 fi

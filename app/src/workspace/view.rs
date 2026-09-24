@@ -73,6 +73,7 @@ use warp_cli::agent::Harness;
 use warp_core::context_flag::ContextFlag;
 use warp_core::execution_mode::AppExecutionMode;
 use warp_core::features::FeatureFlag;
+use warp_core::safe_warn;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_core::ui::Icon;
 use warp_core::ui::color::coloru_with_opacity;
@@ -480,6 +481,12 @@ use crate::view_components::callout_bubble::{
 };
 use crate::view_components::{
     AgentToast, AgentToastStack, DismissibleToast, DismissibleToastStack, ToastLink,
+};
+use crate::warp_sync::confirm_dialog::{
+    ConfirmKind, ConfirmRequest, WarpSyncConfirmDialog, WarpSyncConfirmEvent,
+};
+use crate::warp_sync::{
+    WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -1113,6 +1120,7 @@ pub struct Workspace {
     close_session_confirmation_dialog: ViewHandle<CloseSessionConfirmationDialog>,
     rewind_confirmation_dialog: ViewHandle<RewindConfirmationDialog>,
     delete_conversation_confirmation_dialog: ViewHandle<DeleteConversationConfirmationDialog>,
+    warp_sync_confirm_dialog: ViewHandle<WarpSyncConfirmDialog>,
     resource_center_view: ViewHandle<ResourceCenterView>,
     command_search_view: ViewHandle<CommandSearchView>,
     autoupdate_unable_to_update_banner_dismissed: bool,
@@ -2003,6 +2011,16 @@ impl Workspace {
         );
 
         delete_conversation_confirmation_dialog
+    }
+
+    fn build_warp_sync_confirm_dialog(
+        ctx: &mut ViewContext<Self>,
+    ) -> ViewHandle<WarpSyncConfirmDialog> {
+        let dialog = ctx.add_typed_action_view(WarpSyncConfirmDialog::new);
+        ctx.subscribe_to_view(&dialog, move |me, _, event, ctx| {
+            me.handle_warp_sync_confirm_event(event, ctx);
+        });
+        dialog
     }
 
     fn build_native_modal_view(ctx: &mut ViewContext<Self>) -> ViewHandle<NativeModal> {
@@ -3094,6 +3112,7 @@ impl Workspace {
         let rewind_confirmation_dialog = Self::build_rewind_confirmation_dialog(ctx);
         let delete_conversation_confirmation_dialog =
             Self::build_delete_conversation_confirmation_dialog(ctx);
+        let warp_sync_confirm_dialog = Self::build_warp_sync_confirm_dialog(ctx);
         let command_search_view =
             ctx.add_typed_action_view(|ctx| CommandSearchView::new(ai_client.clone(), ctx));
         ctx.subscribe_to_view(&command_search_view, |me, _, event, ctx| {
@@ -3208,6 +3227,11 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
+        if FeatureFlag::WarpSync.is_enabled() {
+            ctx.subscribe_to_model(&WarpSyncModel::handle(ctx), |me, _, event, ctx| {
+                me.handle_warp_sync_event(event, ctx);
+            });
+        }
 
         ctx.subscribe_to_model(
             &AgentNotificationsModel::handle(ctx),
@@ -3487,6 +3511,7 @@ impl Workspace {
             close_session_confirmation_dialog,
             rewind_confirmation_dialog,
             delete_conversation_confirmation_dialog,
+            warp_sync_confirm_dialog,
             resource_center_view,
             command_search_view,
             autoupdate_unable_to_update_banner_dismissed: false,
@@ -18796,6 +18821,168 @@ impl Workspace {
         ctx.notify();
     }
 
+    /// The active terminal's remote session together with its working directory.
+    fn active_warp_sync_session(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<(Arc<Session>, Option<String>), WarpSyncError> {
+        let view = self
+            .active_session_view(ctx)
+            .ok_or(WarpSyncError::NotRemoteSession)?;
+        let (session, pwd) = view.read(ctx, |view, ctx| {
+            (view.active_session().as_ref(ctx).session(ctx), view.pwd())
+        });
+        match session {
+            Some(session) if !session.is_local() => Ok((session, pwd)),
+            Some(_) | None => Err(WarpSyncError::NotRemoteSession),
+        }
+    }
+
+    fn warp_sync_download_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request = self
+            .active_warp_sync_session(ctx)
+            .and_then(|(session, pwd)| {
+                let remote_path = pwd
+                    .as_deref()
+                    .ok_or_else(|| {
+                        WarpSyncError::InvalidPath("the working directory is unknown".to_owned())
+                    })
+                    .and_then(|pwd| normalize_remote_path(pwd, None))?;
+                Ok((session, remote_path))
+            });
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_download(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
+    fn warp_sync_open_mirror(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let mirror_dir = self.active_warp_sync_session(ctx).and_then(|(session, _)| {
+            let dir = host_mirror_dir(session.hostname()).ok_or_else(|| {
+                WarpSyncError::LocalIo("the home directory could not be determined".to_owned())
+            })?;
+            std::fs::create_dir_all(&dir).map_err(|err| {
+                WarpSyncError::LocalIo(format!("could not create {}: {err}", dir.display()))
+            })?;
+            Ok(dir)
+        });
+        match mirror_dir {
+            Ok(dir) => ctx.open_file_path_in_explorer(&dir),
+            Err(error) => WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
+                warp_sync.report_failure(window_id, error, ctx)
+            }),
+        }
+    }
+
+    fn handle_warp_sync_event(&mut self, event: &WarpSyncEvent, ctx: &mut ViewContext<Self>) {
+        let window_id = match event {
+            WarpSyncEvent::Started { window_id, .. }
+            | WarpSyncEvent::DownloadNeedsConfirmation { window_id, .. }
+            | WarpSyncEvent::UploadNeedsConfirmation { window_id, .. }
+            | WarpSyncEvent::Succeeded { window_id, .. }
+            | WarpSyncEvent::Failed { window_id, .. } => *window_id,
+        };
+        if window_id != ctx.window_id() {
+            return;
+        }
+
+        match event {
+            WarpSyncEvent::Started { description, .. } => {
+                self.show_warp_sync_toast(DismissibleToast::default(description.clone()), ctx);
+            }
+            WarpSyncEvent::Succeeded {
+                message, open_path, ..
+            } => {
+                let mut toast = DismissibleToast::success(message.clone());
+                if let Some(path) = open_path {
+                    toast = toast.with_link(
+                        ToastLink::new("Open folder".to_owned()).with_onclick_action(
+                            WorkspaceAction::OpenInExplorer { path: path.clone() },
+                        ),
+                    );
+                }
+                self.show_warp_sync_toast(toast, ctx);
+            }
+            WarpSyncEvent::Failed { error, .. } => {
+                safe_warn!(
+                    safe: ("Warp Sync failed"),
+                    full: ("Warp Sync failed: {error}")
+                );
+                self.show_warp_sync_toast(DismissibleToast::error(error.to_string()), ctx);
+            }
+            WarpSyncEvent::DownloadNeedsConfirmation { id, files, .. } => {
+                let request = ConfirmRequest::overwrite_local_changes(*id, files);
+                self.show_warp_sync_confirm_dialog(request, ctx);
+            }
+            WarpSyncEvent::UploadNeedsConfirmation { id, summary, .. } => {
+                let request = ConfirmRequest::upload(*id, summary);
+                self.show_warp_sync_confirm_dialog(request, ctx);
+            }
+        }
+    }
+
+    fn show_warp_sync_toast(
+        &mut self,
+        toast: DismissibleToast<WorkspaceAction>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(toast, ctx);
+        });
+    }
+
+    fn show_warp_sync_confirm_dialog(
+        &mut self,
+        request: ConfirmRequest,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let replaced = self
+            .warp_sync_confirm_dialog
+            .update(ctx, |dialog, ctx| dialog.set_request(request, ctx));
+        if let Some(replaced) = replaced {
+            WarpSyncModel::handle(ctx)
+                .update(ctx, |warp_sync, _| warp_sync.cancel_pending(replaced.id));
+        }
+        self.current_workspace_state
+            .is_warp_sync_confirm_dialog_open = true;
+        ctx.focus(&self.warp_sync_confirm_dialog);
+        ctx.notify();
+    }
+
+    fn handle_warp_sync_confirm_event(
+        &mut self,
+        event: &WarpSyncConfirmEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.current_workspace_state
+            .is_warp_sync_confirm_dialog_open = false;
+        match event {
+            WarpSyncConfirmEvent::Confirm { request } => {
+                let id = request.id;
+                match request.kind {
+                    ConfirmKind::OverwriteLocalChanges => {
+                        WarpSyncModel::handle(ctx)
+                            .update(ctx, |model, ctx| model.confirm_download_overwrite(id, ctx));
+                    }
+                    ConfirmKind::Upload => {
+                        WarpSyncModel::handle(ctx)
+                            .update(ctx, |model, ctx| model.confirm_upload(id, ctx));
+                    }
+                }
+            }
+            WarpSyncConfirmEvent::Cancel { request } => {
+                let id = request.id;
+                WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_pending(id));
+            }
+        }
+        self.focus_active_tab(ctx);
+        ctx.notify();
+    }
+
     pub fn show_delete_conversation_confirmation_dialog(
         &mut self,
         source: DeleteConversationDialogSource,
@@ -25140,6 +25327,8 @@ impl TypedActionView for Workspace {
             OpenFilePath { path } => {
                 ctx.open_file_path(path);
             }
+            WarpSyncDownloadCurrentDirectory => self.warp_sync_download_current_directory(ctx),
+            WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             NewTabInAgentMode {
                 entrypoint,
                 zero_state_prompt_suggestion_type,
@@ -27776,6 +27965,21 @@ impl View for Workspace {
         {
             stack.add_positioned_overlay_child(
                 ChildView::new(&self.delete_conversation_confirmation_dialog).finish(),
+                OffsetPositioning::offset_from_parent(
+                    Vector2F::zero(),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                ),
+            );
+        }
+
+        if self
+            .current_workspace_state
+            .is_warp_sync_confirm_dialog_open
+        {
+            stack.add_positioned_overlay_child(
+                ChildView::new(&self.warp_sync_confirm_dialog).finish(),
                 OffsetPositioning::offset_from_parent(
                     Vector2F::zero(),
                     ParentOffsetBounds::WindowByPosition,

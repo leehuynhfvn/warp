@@ -11,7 +11,10 @@ fn absolute_path_is_kept() {
 
 #[test]
 fn surrounding_whitespace_is_trimmed() {
-    assert_eq!(normalize("  /etc/hostname\t", None).unwrap(), "/etc/hostname");
+    assert_eq!(
+        normalize("  /etc/hostname\t", None).unwrap(),
+        "/etc/hostname"
+    );
 }
 
 #[test]
@@ -70,20 +73,41 @@ fn tilde_paths_are_rejected() {
 
 #[test]
 fn root_is_rejected() {
-    assert!(matches!(normalize("/", None), Err(WarpSyncError::InvalidPath(_))));
-    assert!(matches!(normalize("//", None), Err(WarpSyncError::InvalidPath(_))));
-    assert!(matches!(normalize("/.", None), Err(WarpSyncError::InvalidPath(_))));
+    assert!(matches!(
+        normalize("/", None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
+    assert!(matches!(
+        normalize("//", None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
+    assert!(matches!(
+        normalize("/.", None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
 }
 
 #[test]
 fn empty_input_is_rejected() {
-    assert!(matches!(normalize("", None), Err(WarpSyncError::InvalidPath(_))));
-    assert!(matches!(normalize("  ", None), Err(WarpSyncError::InvalidPath(_))));
+    assert!(matches!(
+        normalize("", None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
+    assert!(matches!(
+        normalize("  ", None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
 }
 
 #[test]
 fn pseudo_filesystems_are_rejected() {
-    for path in ["/proc", "/proc/1/environ", "/sys/kernel", "/dev/null", "/run/secrets"] {
+    for path in [
+        "/proc",
+        "/proc/1/environ",
+        "/sys/kernel",
+        "/dev/null",
+        "/run/secrets",
+    ] {
         assert!(
             matches!(normalize(path, None), Err(WarpSyncError::InvalidPath(_))),
             "{path} should be rejected"
@@ -132,21 +156,42 @@ fn host_key_keeps_safe_characters() {
 }
 
 #[test]
-fn host_key_replaces_unsafe_characters() {
-    assert_eq!(host_key("my host!"), "my_host_");
-    assert_eq!(host_key("a/b"), "a_b");
+fn host_key_of_an_altered_name_is_disambiguated_by_a_hash() {
+    let key = host_key("my host!");
+
+    assert!(key.starts_with("my_host_-"), "{key}");
+    assert_eq!(key.len(), "my_host_-".len() + 8);
+    assert_eq!(key, host_key("my host!"));
 }
 
 #[test]
-fn host_key_of_empty_hostname_is_placeholder() {
-    assert_eq!(host_key(""), "unknown-host");
+fn hostnames_that_sanitize_alike_get_different_keys() {
+    let keys = [
+        host_key("prod_db"),
+        host_key("prod/db"),
+        host_key("prod db"),
+        host_key("prod\ndb"),
+    ];
+
+    let unique: std::collections::BTreeSet<_> = keys.iter().collect();
+    assert_eq!(unique.len(), keys.len(), "{keys:?}");
+    assert_eq!(keys[0], "prod_db");
+}
+
+#[test]
+fn host_key_of_empty_hostname_is_a_hashed_placeholder() {
+    assert!(host_key("").starts_with("unknown-host-"));
 }
 
 #[test]
 fn host_key_cannot_escape_or_collide_with_manifest_dir() {
-    assert_eq!(host_key(".."), "_.");
-    assert_eq!(host_key("."), "_");
-    assert_eq!(host_key(".warp-sync"), "_warp-sync");
+    for hostname in ["..", ".", ".warp-sync", "...", ".hidden"] {
+        let key = host_key(hostname);
+        assert!(!key.starts_with('.'), "{hostname} -> {key}");
+        assert!(!key.contains('/'), "{hostname} -> {key}");
+        assert_ne!(key, ".warp-sync");
+    }
+    assert!(host_key("..").starts_with("unknown-host-"));
 }
 
 #[test]
@@ -190,4 +235,57 @@ fn staging_dirs_are_unique_and_under_hidden_dir() {
     let second = staging_dir(root);
     assert_ne!(first, second);
     assert!(first.starts_with("/m/.warp-sync/staging"));
+}
+
+#[test]
+fn selection_is_normalized_against_the_block_pwd() {
+    assert_eq!(
+        selection_to_remote_path(Some("  nginx.conf "), Some("/etc")).unwrap(),
+        "/etc/nginx.conf"
+    );
+}
+
+#[test]
+fn empty_or_missing_selection_is_rejected() {
+    for selection in [None, Some(""), Some("   ")] {
+        assert!(matches!(
+            selection_to_remote_path(selection, Some("/etc")),
+            Err(WarpSyncError::InvalidPath(_))
+        ));
+    }
+}
+
+#[test]
+fn multi_line_selection_is_rejected() {
+    assert!(matches!(
+        selection_to_remote_path(Some("/etc/a\n/etc/b"), None),
+        Err(WarpSyncError::InvalidPath(_))
+    ));
+}
+
+#[test]
+fn recovery_dirs_are_unique_and_under_hidden_dir() {
+    let root = Path::new("/m");
+
+    let first = recovery_dir(root);
+
+    assert_ne!(first, recovery_dir(root));
+    assert!(first.starts_with("/m/.warp-sync/recovered"));
+}
+
+#[cfg(unix)]
+#[test]
+fn private_dirs_are_only_accessible_to_the_owner() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("a/b");
+
+    create_private_dir_all(&nested).unwrap();
+    create_private_dir_all(&nested).unwrap();
+
+    for path in [dir.path().join("a"), nested] {
+        let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 }

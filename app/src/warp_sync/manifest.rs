@@ -80,6 +80,12 @@ impl Manifest {
                 manifest.version
             )));
         }
+        if manifest.host_key != host_key {
+            return Err(WarpSyncError::Manifest(format!(
+                "{} belongs to another host",
+                path.display()
+            )));
+        }
         Ok(manifest)
     }
 

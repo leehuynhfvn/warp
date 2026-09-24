@@ -4,14 +4,14 @@ use std::sync::Arc;
 
 use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
 
+use super::WarpSyncError;
 use super::paths::{host_key, mirror_root};
 use super::remote_script::ExtractMode;
-use super::remote_shell::SessionShell;
+use super::remote_shell::{RemoteShell, SessionShell};
 use super::transfer::{
-    download, execute_upload, prepare_upload, DownloadOutcome, DownloadRequest, DownloadResult,
-    PreparedUpload, UploadOutcome, UploadRequest,
+    DownloadOutcome, DownloadRequest, DownloadResult, PreparedUpload, UploadOutcome, UploadRequest,
+    download, execute_upload, prepare_upload,
 };
-use super::WarpSyncError;
 use crate::terminal::model::session::Session;
 
 const BYTES_PER_KIB: u64 = 1024;
@@ -20,6 +20,13 @@ const BYTES_PER_MIB: u64 = 1024 * 1024;
 /// Identifies an operation that is waiting for the user's confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PendingId(u64);
+
+#[cfg(test)]
+impl PendingId {
+    pub(super) fn for_test(id: u64) -> Self {
+        Self(id)
+    }
+}
 
 /// What the user is asked to approve before an upload is sent.
 #[derive(Debug, Clone)]
@@ -65,24 +72,27 @@ pub enum WarpSyncEvent {
     },
 }
 
-/// A sync in progress is identified by its host and remote path.
+/// A sync in progress is identified by its host and remote path. The key is held from the moment
+/// an operation starts until it finishes or, when it waits for confirmation, until the user
+/// answers.
 type SyncKey = (String, String);
 
 /// A validated session and the local locations for an operation that just started.
 struct Begun {
-    shell: Arc<SessionShell>,
+    shell: Arc<dyn RemoteShell>,
+    hostname: String,
     host_key: String,
     mirror_root: PathBuf,
 }
 
 struct PendingDownload {
-    shell: Arc<SessionShell>,
+    shell: Arc<dyn RemoteShell>,
     request: DownloadRequest,
     window_id: WindowId,
 }
 
 struct PendingUpload {
-    shell: Arc<SessionShell>,
+    shell: Arc<dyn RemoteShell>,
     prepared: PreparedUpload,
     window_id: WindowId,
 }
@@ -138,12 +148,6 @@ impl WarpSyncModel {
             allow_overwrite_local_changes: true,
             ..pending.request
         };
-        if let Err(error) = self.try_begin_sync(&request.host_key, &request.remote_path) {
-            return ctx.emit(WarpSyncEvent::Failed {
-                window_id: pending.window_id,
-                error,
-            });
-        }
         ctx.emit(WarpSyncEvent::Started {
             window_id: pending.window_id,
             description: format!("Downloading {}…", request.remote_path),
@@ -174,16 +178,19 @@ impl WarpSyncModel {
             mirror_root: begun.mirror_root,
         };
         let shell = begun.shell;
+        let hostname = begun.hostname;
         ctx.spawn(
             async move {
                 let prepared = prepare_upload(shell.as_ref(), &request).await;
                 (shell, prepared)
             },
-            move |me, (shell, prepared), ctx| {
-                me.finish_sync(&key);
-                match prepared {
-                    Ok(prepared) => me.await_upload_confirmation(shell, prepared, window_id, ctx),
-                    Err(error) => ctx.emit(WarpSyncEvent::Failed { window_id, error }),
+            move |me, (shell, prepared), ctx| match prepared {
+                Ok(prepared) => {
+                    me.await_upload_confirmation(shell, hostname, prepared, window_id, ctx)
+                }
+                Err(error) => {
+                    me.finish_sync(&key);
+                    ctx.emit(WarpSyncEvent::Failed { window_id, error });
                 }
             },
         );
@@ -194,10 +201,9 @@ impl WarpSyncModel {
             return;
         };
         let window_id = pending.window_id;
-        let PendingUpload { shell, prepared, .. } = pending;
-        if let Err(error) = self.try_begin_sync(&prepared.host_key, &prepared.remote_path) {
-            return ctx.emit(WarpSyncEvent::Failed { window_id, error });
-        }
+        let PendingUpload {
+            shell, prepared, ..
+        } = pending;
         ctx.emit(WarpSyncEvent::Started {
             window_id,
             description: format!("Uploading {}…", prepared.remote_path),
@@ -223,36 +229,57 @@ impl WarpSyncModel {
         );
     }
 
+    /// Surfaces an error that occurred before an operation could be handed to the model.
+    pub fn report_failure(
+        &mut self,
+        window_id: WindowId,
+        error: WarpSyncError,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        ctx.emit(WarpSyncEvent::Failed { window_id, error });
+    }
+
     /// Discards an operation that is waiting for confirmation. Nothing has been changed by then.
     pub fn cancel_pending(&mut self, id: PendingId) {
-        self.pending_downloads.remove(&id);
-        self.pending_uploads.remove(&id);
+        if let Some(pending) = self.pending_downloads.remove(&id) {
+            self.finish_sync(&(pending.request.host_key, pending.request.remote_path));
+        }
+        if let Some(pending) = self.pending_uploads.remove(&id) {
+            self.finish_sync(&(pending.prepared.host_key, pending.prepared.remote_path));
+        }
     }
 
     /// Validates the session and marks the path as in progress.
     fn begin(&mut self, session: Arc<Session>, remote_path: &str) -> Result<Begun, WarpSyncError> {
-        let shell = Arc::new(SessionShell::new(session)?);
+        let shell = SessionShell::new(session)?;
         let mirror_root = mirror_root().ok_or_else(|| {
             WarpSyncError::LocalIo("the home directory could not be determined".to_owned())
         })?;
         let host_key = host_key(shell.hostname());
         self.try_begin_sync(&host_key, remote_path)?;
         Ok(Begun {
-            shell,
+            hostname: shell.hostname().to_owned(),
+            shell: Arc::new(shell),
             host_key,
             mirror_root,
         })
     }
 
+    /// Marks `remote_path` as in progress unless the same path, one of its ancestors, or one of
+    /// its descendants is already being synced on that host.
     fn try_begin_sync(&mut self, host_key: &str, remote_path: &str) -> Result<(), WarpSyncError> {
-        if self
+        let conflicts = self
             .in_flight
-            .insert((host_key.to_owned(), remote_path.to_owned()))
-        {
-            Ok(())
-        } else {
-            Err(WarpSyncError::AlreadyInProgress)
+            .iter()
+            .any(|(in_flight_host, in_flight_path)| {
+                in_flight_host == host_key && paths_overlap(in_flight_path, remote_path)
+            });
+        if conflicts {
+            return Err(WarpSyncError::AlreadyInProgress);
         }
+        self.in_flight
+            .insert((host_key.to_owned(), remote_path.to_owned()));
+        Ok(())
     }
 
     fn finish_sync(&mut self, key: &SyncKey) {
@@ -266,7 +293,7 @@ impl WarpSyncModel {
 
     fn spawn_download(
         &mut self,
-        shell: Arc<SessionShell>,
+        shell: Arc<dyn RemoteShell>,
         request: DownloadRequest,
         window_id: WindowId,
         ctx: &mut ModelContext<Self>,
@@ -277,31 +304,34 @@ impl WarpSyncModel {
                 let result = download(shell.as_ref(), &request).await;
                 (shell, request, result)
             },
-            move |me, (shell, request, result), ctx| {
-                me.finish_sync(&key);
-                match result {
-                    Ok(DownloadResult::Done(outcome)) => ctx.emit(WarpSyncEvent::Succeeded {
+            move |me, (shell, request, result), ctx| match result {
+                Ok(DownloadResult::Done(outcome)) => {
+                    me.finish_sync(&key);
+                    ctx.emit(WarpSyncEvent::Succeeded {
                         window_id,
                         message: download_message(&request.remote_path, &outcome),
                         open_path: Some(outcome.local_path),
-                    }),
-                    Ok(DownloadResult::NeedsConfirmation { modified_files }) => {
-                        let id = me.next_pending_id();
-                        me.pending_downloads.insert(
-                            id,
-                            PendingDownload {
-                                shell,
-                                request,
-                                window_id,
-                            },
-                        );
-                        ctx.emit(WarpSyncEvent::DownloadNeedsConfirmation {
+                    });
+                }
+                Ok(DownloadResult::NeedsConfirmation { modified_files }) => {
+                    let id = me.next_pending_id();
+                    me.pending_downloads.insert(
+                        id,
+                        PendingDownload {
+                            shell,
+                            request,
                             window_id,
-                            id,
-                            files: modified_files,
-                        });
-                    }
-                    Err(error) => ctx.emit(WarpSyncEvent::Failed { window_id, error }),
+                        },
+                    );
+                    ctx.emit(WarpSyncEvent::DownloadNeedsConfirmation {
+                        window_id,
+                        id,
+                        files: modified_files,
+                    });
+                }
+                Err(error) => {
+                    me.finish_sync(&key);
+                    ctx.emit(WarpSyncEvent::Failed { window_id, error });
                 }
             },
         );
@@ -309,14 +339,15 @@ impl WarpSyncModel {
 
     fn await_upload_confirmation(
         &mut self,
-        shell: Arc<SessionShell>,
+        shell: Arc<dyn RemoteShell>,
+        hostname: String,
         prepared: PreparedUpload,
         window_id: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
         let summary = UploadSummary {
             remote_user: prepared.probe.user.clone(),
-            hostname: shell.hostname().to_owned(),
+            hostname,
             remote_path: prepared.remote_path.clone(),
             files: prepared.archive.files,
             dirs: prepared.archive.dirs,
@@ -343,10 +374,20 @@ impl WarpSyncModel {
     }
 }
 
+/// Whether two normalized absolute paths are the same or one contains the other.
+fn paths_overlap(a: &str, b: &str) -> bool {
+    let contains = |outer: &str, inner: &str| {
+        inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    };
+    contains(a, b) || contains(b, a)
+}
+
 fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {
     let mut message = format!(
         "Downloaded {} ({}) from {remote_path} as {}",
-        pluralize_files(outcome.files),
+        pluralize_count(outcome.files, "file"),
         format_size(outcome.total_bytes),
         outcome.remote_user
     );
@@ -362,7 +403,7 @@ fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {
 fn upload_message(remote_path: &str, outcome: &UploadOutcome) -> String {
     let mut message = format!(
         "Uploaded {} to {remote_path} as {}",
-        pluralize_files(outcome.files),
+        pluralize_count(outcome.files, "file"),
         outcome.remote_user
     );
     if let Some(backup_path) = &outcome.backup_path {
@@ -371,15 +412,12 @@ fn upload_message(remote_path: &str, outcome: &UploadOutcome) -> String {
     message
 }
 
-fn pluralize_files(count: usize) -> String {
-    if count == 1 {
-        "1 file".to_owned()
-    } else {
-        format!("{count} files")
-    }
+pub(super) fn pluralize_count(count: usize, noun: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+    format!("{count} {noun}{suffix}")
 }
 
-fn format_size(bytes: u64) -> String {
+pub(super) fn format_size(bytes: u64) -> String {
     if bytes >= BYTES_PER_MIB {
         format!("{:.1} MiB", bytes as f64 / BYTES_PER_MIB as f64)
     } else if bytes >= BYTES_PER_KIB {

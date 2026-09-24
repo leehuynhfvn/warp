@@ -143,16 +143,31 @@ fn extracts_files_and_directories_with_remote_metadata() {
     assert_eq!(keys, ["/etc/conf", "/etc/conf/a.conf", "/etc/conf/b.conf"]);
 
     let dir = &report.entries["/etc/conf"];
-    assert_eq!((dir.kind, dir.mode, dir.uid, dir.gid), (EntryKind::Dir, 0o750, 33, 33));
-    assert_eq!((dir.uname.as_str(), dir.gname.as_str()), ("www-data", "www-data"));
+    assert_eq!(
+        (dir.kind, dir.mode, dir.uid, dir.gid),
+        (EntryKind::Dir, 0o750, 33, 33)
+    );
+    assert_eq!(
+        (dir.uname.as_str(), dir.gname.as_str()),
+        ("www-data", "www-data")
+    );
 
     let file = &report.entries["/etc/conf/a.conf"];
-    assert_eq!((file.kind, file.mode, file.uid), (EntryKind::File, 0o640, 0));
+    assert_eq!(
+        (file.kind, file.mode, file.uid),
+        (EntryKind::File, 0o640, 0)
+    );
     assert_eq!(file.size, Some(5));
     assert_eq!(file.mtime, 1_727_000_000);
-    assert_eq!(file.sha256.as_deref(), Some(hex::encode(Sha256::digest(b"old a")).as_str()));
+    assert_eq!(
+        file.sha256.as_deref(),
+        Some(hex::encode(Sha256::digest(b"old a")).as_str())
+    );
 
-    assert_eq!(fs::read(staging.path().join("conf/a.conf")).unwrap(), b"old a");
+    assert_eq!(
+        fs::read(staging.path().join("conf/a.conf")).unwrap(),
+        b"old a"
+    );
 }
 
 #[cfg(unix)]
@@ -170,12 +185,42 @@ fn local_permissions_stay_usable_by_the_local_user() {
     let report = extract(&tgz, staging.path()).unwrap();
 
     let mode = |relative: &str| {
-        fs::metadata(staging.path().join(relative)).unwrap().permissions().mode() & 0o777
+        fs::metadata(staging.path().join(relative))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
     };
     assert_eq!(mode("conf"), 0o700);
     assert_eq!(mode("conf/secret"), 0o600);
     assert_eq!(mode("conf/script"), 0o755);
     assert_eq!(report.entries["/etc/conf/secret"].mode, 0o400);
+}
+
+#[cfg(unix)]
+#[test]
+fn local_copies_drop_group_write_and_special_bits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let staging = tempfile::tempdir().unwrap();
+    let tgz = build_tgz(&[
+        TestEntry::dir(b"conf/").with_mode(0o1777),
+        TestEntry::file(b"conf/su", b"x").with_mode(0o4777),
+        TestEntry::file(b"conf/shared", b"x").with_mode(0o664),
+    ]);
+
+    extract(&tgz, staging.path()).unwrap();
+
+    let mode = |relative: &str| {
+        fs::metadata(staging.path().join(relative))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    };
+    assert_eq!(mode("conf"), 0o755);
+    assert_eq!(mode("conf/su"), 0o755);
+    assert_eq!(mode("conf/shared"), 0o644);
 }
 
 #[test]
@@ -213,10 +258,7 @@ fn hostile_paths_are_rejected_and_nothing_escapes_staging() {
     ] {
         let sandbox = tempfile::tempdir().unwrap();
         let staging = sandbox.path().join("staging");
-        let tgz = build_tgz(&[
-            TestEntry::dir(b"conf/"),
-            TestEntry::file(path, b"pwned"),
-        ]);
+        let tgz = build_tgz(&[TestEntry::dir(b"conf/"), TestEntry::file(path, b"pwned")]);
 
         let result = extract(&tgz, &staging);
 
@@ -275,14 +317,22 @@ fn entries_below_a_skipped_symlink_stay_inside_staging() {
     extract(&tgz, &staging).unwrap();
 
     assert!(staging.join("conf/link/evil").is_file());
-    assert!(!fs::symlink_metadata(staging.join("conf/link")).unwrap().file_type().is_symlink());
+    assert!(
+        !fs::symlink_metadata(staging.join("conf/link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn names_that_are_not_utf8_are_skipped() {
     let staging = tempfile::tempdir().unwrap();
-    let tgz = build_tgz(&[TestEntry::dir(b"conf/"), TestEntry::file(b"conf/bad\xff", b"x")]);
+    let tgz = build_tgz(&[
+        TestEntry::dir(b"conf/"),
+        TestEntry::file(b"conf/bad\xff", b"x"),
+    ]);
 
     let report = extract(&tgz, staging.path()).unwrap();
 
@@ -298,7 +348,8 @@ fn too_many_entries_is_rejected() {
         max_entries: 2,
     };
 
-    let result = extract_download_with_limits(&sample_tgz(), "conf", "/etc", staging.path(), limits);
+    let result =
+        extract_download_with_limits(&sample_tgz(), "conf", "/etc", staging.path(), limits);
 
     assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })));
 }
@@ -311,7 +362,25 @@ fn too_many_bytes_is_rejected() {
         max_entries: 10,
     };
 
-    let result = extract_download_with_limits(&sample_tgz(), "conf", "/etc", staging.path(), limits);
+    let result =
+        extract_download_with_limits(&sample_tgz(), "conf", "/etc", staging.path(), limits);
+
+    assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })));
+}
+
+#[test]
+fn skipped_entries_cannot_expand_without_bound() {
+    static PAYLOAD: [u8; 1024 * 1024] = [0; 1024 * 1024];
+    let staging = tempfile::tempdir().unwrap();
+    let mut pipe = TestEntry::of_kind(b"conf/pipe", EntryType::Fifo);
+    pipe.data = &PAYLOAD;
+    let tgz = build_tgz(&[TestEntry::dir(b"conf/"), pipe]);
+    let limits = ExtractLimits {
+        max_bytes: 100,
+        max_entries: 2,
+    };
+
+    let result = extract_download_with_limits(&tgz, "conf", "/etc", staging.path(), limits);
 
     assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })));
 }
@@ -369,8 +438,22 @@ fn upload_of_an_untouched_mirror_reproduces_the_downloaded_metadata() {
     for (path, meta) in mirror.manifest.entries_under("/etc/conf") {
         let packed = &report.entries[&path];
         assert_eq!(
-            (packed.kind, packed.mode, packed.uid, packed.gid, &packed.uname, &packed.gname),
-            (meta.kind, meta.mode, meta.uid, meta.gid, &meta.uname, &meta.gname),
+            (
+                packed.kind,
+                packed.mode,
+                packed.uid,
+                packed.gid,
+                &packed.uname,
+                &packed.gname
+            ),
+            (
+                meta.kind,
+                meta.mode,
+                meta.uid,
+                meta.gid,
+                &meta.uname,
+                &meta.gname
+            ),
             "{path}"
         );
         assert_eq!(packed.sha256, meta.sha256, "{path}");
@@ -397,7 +480,10 @@ fn upload_carries_edits_new_files_and_reports_missing_ones() {
 
     let report = entries_of_upload(&upload);
     let edited = &report.entries["/etc/conf/a.conf"];
-    assert_eq!((edited.mode, edited.uid, edited.uname.as_str()), (0o640, 0, "root"));
+    assert_eq!(
+        (edited.mode, edited.uid, edited.uname.as_str()),
+        (0o640, 0, "root")
+    );
     assert_eq!(edited.size, Some(8));
 
     let new_file = &report.entries["/etc/conf/c.conf"];
@@ -405,7 +491,10 @@ fn upload_carries_edits_new_files_and_reports_missing_ones() {
     assert_eq!(new_file.uname, "www-data");
 
     let new_dir = &report.entries["/etc/conf/sub"];
-    assert_eq!((new_dir.kind, new_dir.mode, new_dir.uid), (EntryKind::Dir, 0o755, 33));
+    assert_eq!(
+        (new_dir.kind, new_dir.mode, new_dir.uid),
+        (EntryKind::Dir, 0o755, 33)
+    );
     let nested = &report.entries["/etc/conf/sub/d.conf"];
     assert_eq!((nested.uid, nested.gname.as_str()), (33, "www-data"));
     assert!(!report.entries.contains_key("/etc/conf/b.conf"));
@@ -415,9 +504,10 @@ fn upload_carries_edits_new_files_and_reports_missing_ones() {
 fn upload_of_a_single_mirrored_file() {
     let mut mirror = Mirror::new();
     let meta = mirror.manifest.entry("/etc/conf/a.conf").unwrap().clone();
-    mirror
-        .manifest
-        .replace_subtree("/etc/conf/a.conf", BTreeMap::from([("/etc/conf/a.conf".to_owned(), meta)]));
+    mirror.manifest.replace_subtree(
+        "/etc/conf/a.conf",
+        BTreeMap::from([("/etc/conf/a.conf".to_owned(), meta)]),
+    );
 
     let upload = build_upload("/etc/conf/a.conf", &mirror.manifest, mirror.root(), "h").unwrap();
 
@@ -430,6 +520,40 @@ fn upload_of_a_single_mirrored_file() {
     )
     .unwrap();
     assert_eq!(report.entries["/etc/conf/a.conf"].mode, 0o640);
+}
+
+#[test]
+fn upload_refuses_setuid_and_setgid_files() {
+    for mode in [0o4755, 0o2755, 0o6755] {
+        let mut mirror = Mirror::new();
+        let mut meta = mirror.manifest.entry("/etc/conf/a.conf").unwrap().clone();
+        meta.mode = mode;
+        mirror
+            .manifest
+            .upsert_entries(BTreeMap::from([("/etc/conf/a.conf".to_owned(), meta)]));
+
+        let result = mirror.build();
+
+        assert!(
+            matches!(result, Err(WarpSyncError::SpecialMode(ref path)) if path == "/etc/conf/a.conf"),
+            "{mode:o}"
+        );
+    }
+}
+
+#[test]
+fn upload_keeps_setgid_directories() {
+    let mut mirror = Mirror::new();
+    let mut meta = mirror.manifest.entry("/etc/conf").unwrap().clone();
+    meta.mode = 0o2775;
+    mirror
+        .manifest
+        .upsert_entries(BTreeMap::from([("/etc/conf".to_owned(), meta)]));
+
+    let upload = mirror.build().unwrap();
+
+    let report = entries_of_upload(&upload);
+    assert_eq!(report.entries["/etc/conf"].mode, 0o2775);
 }
 
 #[test]
@@ -471,7 +595,10 @@ fn upload_over_the_size_limit_is_rejected() {
         .collect();
     fs::write(mirror.local("a.conf"), noise).unwrap();
 
-    assert!(matches!(mirror.build(), Err(WarpSyncError::TooLarge { .. })));
+    assert!(matches!(
+        mirror.build(),
+        Err(WarpSyncError::TooLarge { .. })
+    ));
 }
 
 #[cfg(unix)]

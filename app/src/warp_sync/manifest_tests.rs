@@ -51,7 +51,10 @@ fn replace_subtree_removes_old_entries_and_keeps_siblings() {
             ("/etc/nginx/old.conf", EntryKind::File, 0),
         ]),
     );
-    manifest.replace_subtree("/etc/nginx2", entries(&[("/etc/nginx2", EntryKind::Dir, 1)]));
+    manifest.replace_subtree(
+        "/etc/nginx2",
+        entries(&[("/etc/nginx2", EntryKind::Dir, 1)]),
+    );
 
     manifest.replace_subtree(
         "/etc/nginx",
@@ -95,7 +98,10 @@ fn upsert_overwrites_and_keeps_other_entries() {
         ]
     );
     assert_eq!(manifest.entry("/etc/nginx/a.conf").unwrap().uid, 7);
-    assert_eq!(manifest.entry("/etc/nginx/gone-locally.conf").unwrap().uid, 0);
+    assert_eq!(
+        manifest.entry("/etc/nginx/gone-locally.conf").unwrap().uid,
+        0
+    );
 }
 
 #[test]
@@ -143,7 +149,10 @@ fn sync_records_are_kept_per_root() {
         },
     );
 
-    assert_eq!(manifest.last_sync("/etc/nginx").unwrap().remote_user, "root");
+    assert_eq!(
+        manifest.last_sync("/etc/nginx").unwrap().remote_user,
+        "root"
+    );
     assert!(manifest.last_sync("/etc").is_none());
 }
 
@@ -213,6 +222,17 @@ fn unknown_version_is_an_error_and_the_file_is_kept() {
 
     assert!(matches!(result, Err(WarpSyncError::Manifest(_))));
     assert_eq!(fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn manifest_of_another_host_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.json");
+    Manifest::new("prod-1").save_atomic(&path).unwrap();
+
+    let result = Manifest::load_or_default(&path, "prod-2");
+
+    assert!(matches!(result, Err(WarpSyncError::Manifest(_))));
 }
 
 #[test]

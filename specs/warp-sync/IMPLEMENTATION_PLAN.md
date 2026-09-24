@@ -20,8 +20,9 @@
 5. Unit test đặt trong file `<name>_tests.rs`, include cuối module bằng
    `#[cfg(test)] #[path = "<name>_tests.rs"] mod tests;`.
 6. Lệnh kiểm tra:
-   - Test module: `cargo nextest run -p warp warp_sync` (nếu chưa cài nextest:
-     `cargo test -p warp --lib warp_sync`).
+   - Test module: `cargo nextest run -p warp --lib warp_sync` (đã cài trên máy này). Với `cargo test`
+     thường, một số test terminal/workspace lỗi khi chạy chung một process (phụ thuộc thứ tự, không liên quan
+     Warp Sync) — dùng nextest để đối chiếu.
    - Cuối mỗi Phase: `cargo clippy -p warp --all-targets --tests -- -D warnings`.
    - Chỉ chạy `./script/format` **một lần** ở cuối Phase 4 (hoặc cuối Phase đang làm nếu dừng).
    - **Không** chạy `./script/presubmit`.
@@ -479,6 +480,11 @@ remote khi hover.
 
 ## 5. Checklist test tay (cho người dùng)
 
+**Chạy bản có tính năng:** trên máy không có `warp-channel-config` (kênh OSS), `./script/run` **không** bật flag —
+dùng `./script/run --features warp_sync`. Cách dùng: chuột phải vào text đang chọn (một dòng, trong một block của
+session SSH) → "Warp Sync: Download to local mirror"; hoặc Command Palette → "Warp Sync: Download current directory
+to local mirror" / "Warp Sync: Open local mirror". Mirror nằm ở `~/.warp/mirrors/<host>/…`.
+
 **Môi trường:** 1 VM/container có sshd, **hostname khác máy local**, user thường có sudo **cần mật
 khẩu**. (Không dùng `ssh localhost`: subshell `sudo -i` có cùng hostname sẽ bị coi là local và chạy
 bằng `LocalCommandExecutor` dưới user của bạn.) Build Warp local với flag `WarpSync` bật.
@@ -516,6 +522,9 @@ Upload:
 | BusyBox/non-GNU tar | Flag tối thiểu + cảnh báo trong dialog |
 | Hostname trùng giữa các server khác nhau | Ghi chú giới hạn v1; có thể thêm alias ở v2 |
 | Ghi đè file hệ thống quan trọng | Confirm bắt buộc, backup tgz ngoài thư mục đích, `gzip -t` + kiểm size trước khi giải nén |
+| Hostname do host từ xa tự báo → hai host trùng tên dùng chung mirror/manifest | `host_key` thêm hash khi tên bị sanitize (không thể "nhái" thư mục của host khác bằng ký tự lạ); **hai host báo đúng cùng một hostname vẫn dùng chung mirror** (v1, cần định danh host thật ở v2). Upload từ chối file setuid/setgid để manifest độc hại không tạo được chương trình setuid root |
+| Symlink thư mục bị cài giữa lúc download và upload (upload chạy bằng root) | Archive luôn có mục thư mục tường minh nên GNU tar thay symlink bằng thư mục thật (đã thử: `tar 1.35` không ghi xuyên). Còn lại cửa sổ TOCTOU rất hẹp giữa hai mục — chấp nhận ở v1 |
+| Output/stdout bị host độc hại làm phình bộ nhớ | Kiểm `du` trước, kiểm kích thước byte nhận được sau, và chặn giải nén theo tổng stream (kể cả entry bị bỏ qua) |
 
 ---
 
@@ -526,7 +535,7 @@ Upload:
 - [x] Phase 0 — Làm sạch nền
 - [x] 1.1 Dependencies · [x] 1.2 mod/error · [x] 1.3 paths · [x] 1.4 remote_script · [x] 1.5 manifest · [x] 1.6 archive
 - [x] 2.1 Feature flag · [x] 2.2 transfer · [x] 2.3 model
-- [ ] 3.1 Toast · [ ] 3.2 Confirm dialog · [ ] 3.3 Context menu · [ ] 3.4 Palette · [ ] 3.5 Review
+- [x] 3.1 Toast · [x] 3.2 Confirm dialog · [x] 3.3 Context menu · [x] 3.4 Palette · [ ] 3.5 Review
 - [ ] ⛔ CHECKPOINT A (user) — kết quả đo: _chưa có_
 - [ ] 4.1 Upload wiring · [ ] 4.2 Upload dialog · [ ] 4.3 Toast · [ ] 4.4 Format
 - [ ] ⛔ CHECKPOINT B (user)
@@ -541,6 +550,10 @@ Upload:
 | D4 | 2026-09-24 | v1 bỏ qua symlink/special file; không lan truyền xoá | Giữ phạm vi nhỏ, tránh ghi đè nguy hiểm |
 | D5 | 2026-09-24 | Backup remote dạng tgz trong `$HOME/.warp-sync/backups` | Backup cạnh file đích có thể bị glob config nạp nhầm |
 | D6 | 2026-09-24 | Không dùng `.context/`; file này là nguồn duy nhất | Tránh nhiều nguồn ngữ cảnh lệch nhau giữa các agent |
+| D7 | 2026-09-24 | Flag bật bằng Cargo feature `warp_sync` (+ `DOGFOOD_FLAGS`); `Workspace` chỉ subscribe `WarpSyncModel` khi flag bật | Kênh OSS không có flag nào ngoài DEBUG_FLAGS; subscription vô điều kiện làm vỡ ~90 test Workspace vì model chưa đăng ký trong test harness |
+| D8 | 2026-09-24 | Khoá `(host, path)` giữ suốt lúc chờ xác nhận; hai path lồng nhau (tổ tiên/hậu duệ) cũng xung đột | Tránh download đè mirror khi dialog upload đang mở; tránh race swap/manifest |
+| D9 | 2026-09-24 | Manifest ghi dưới `MANIFEST_LOCK` (đọc-sửa-ghi); `save` lỗi thì hoàn tác swap | Hai sync path không lồng nhau trên cùng host từng có thể mất entry của nhau; lỗi lưu manifest từng làm mất mirror cũ |
+| D10 | 2026-09-24 | Mirror root tạo mode 0700; bản local bỏ bit group/other-write và setuid/setgid/sticky | Mirror chứa bản sao file của root; thư mục 1777 từng thành 0777 ở local |
 
 ### Nhật ký
 
@@ -551,3 +564,5 @@ Upload:
 - 2026-09-24 — 1.5 xong: `manifest.rs` + 11 test. `load_or_default` nhận thêm `host_key` (cần để tạo manifest rỗng); thêm `entry`, `record_sync`, `last_sync`.
 - 2026-09-24 — 1.6 xong: `archive.rs` + 25 test (tổng Phase 1: 91 test pass, clippy `-D warnings` sạch). Lưu ý: clippy cấm `std::process::Command` → dùng `command::blocking::Command` (kể cả trong test). Khác plan: `locally_modified_files` nhận thêm tham số `root` và tính cả file local **chưa có trong manifest** (nếu không, swap sẽ xoá file mới của user); `UploadArchive` có `content_bytes` thay cho `total_len`; `verify_gzip_trailer` đọc hết stream để kiểm CRC (tar dừng trước trailer).
 - 2026-09-24 — Phase 2 xong (117 test pass, clippy sạch). Flag: biến thể `FeatureFlag::WarpSync` (`crates/warp_features/src/lib.rs`, thêm vào `DOGFOOD_FLAGS`) + Cargo feature `warp_sync` (`app/Cargo.toml`) + dòng `#[cfg(feature = "warp_sync")]` trong `app/src/features.rs`. **Build `./script/run` trên máy này là kênh OSS (không có `warp-channel-config`) → chỉ có `DEBUG_FLAGS`, nên phải chạy `./script/run --features warp_sync`** (kênh local/dev thì tự bật qua DOGFOOD_FLAGS). `transfer.rs` chạy trên trait `RemoteShell` (`remote_shell.rs`; `SessionShell` bọc `Arc<Session>`), test end-to-end bằng `sh` cục bộ. `WarpSyncModel` đã đăng ký singleton ở `app/src/lib.rs`. `#[allow(dead_code)]` trên `mod warp_sync` **vẫn còn — gỡ ở Task 3.5** (UI mới là nơi dùng model).
+- 2026-09-24 — 3.1–3.4 xong (126 test pass; `cargo clippy -p warp --all-targets --tests -- -D warnings` sạch). Chi tiết: toast + dialog nằm ở `Workspace` (`handle_warp_sync_event`, chỉ xử lý event có `window_id` của chính nó). Dialog xác nhận (`warp_sync/confirm_dialog.rs`) **không gán phím Enter** (chỉ Escape=Cancel) vì cả hai dialog bảo vệ khỏi mất dữ liệu; nút xác nhận dùng `DangerPrimaryTheme` nguyên bản. Context menu: item "Warp Sync: Download to local mirror" chỉ hiện khi flag bật và vùng chọn nằm gọn trong **một block** thuộc session không-local; block được xác định qua helper mới `BlockList::selected_block_index` (menu chuột phải trên text không mang block index). Palette: `workspace:warp_sync_download_cwd`, `workspace:warp_sync_open_mirror` (đăng ký trong `if FeatureFlag::WarpSync.is_enabled()`, không thuộc group Settings). Cả hai action mới thuộc nhánh `should_save_app_state_on_action() == false`. `#[allow(dead_code)]` trên `mod warp_sync` **vẫn còn** vì code upload (Phase 4) chưa có UI gọi tới — gỡ ở Phase 4.
+- 2026-09-24 — 3.5 xong (review bằng `code-reviewer` + `security-reviewer`, sửa: rollback swap khi lưu manifest lỗi; thư mục `new`/`previous` tách nhau (trước đó tên file `previous` trùng); khoá manifest; kiểm tra lại sửa đổi local ngay trước swap; giữ khoá in-flight khi chờ xác nhận + chống path lồng nhau; dialog thứ hai huỷ pending của dialog bị thay + trả focus; đóng gói upload đọc file một lần (header size khớp); backup name có nonce; guard symlink cho thư mục backup; host_key có hash; manifest kiểm host_key; từ chối upload file setuid/setgid; mirror 0700 + mask quyền local; chặn giải nén theo tổng stream; log `safe:` không chứa lỗi từ xa). Kết quả: `cargo nextest run -p warp --lib -E 'test(/^(workspace::|terminal::model::blocks|terminal::view|warp_sync)/)'` → 768/768 pass; clippy `-D warnings` sạch.

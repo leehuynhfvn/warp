@@ -85,6 +85,7 @@ pub fn init(app: &mut AppContext) {
     lightbox_view::init(app);
     rewind_confirmation_dialog::init(app);
     delete_conversation_confirmation_dialog::init(app);
+    crate::warp_sync::confirm_dialog::init(app);
     crate::tab_configs::remove_confirmation_dialog::init(app);
     hoa_onboarding::init(app);
     tab_configs::session_config_modal::init(app);
@@ -358,6 +359,23 @@ pub fn init(app: &mut AppContext) {
     )
     .with_custom_action(CustomAction::NewFile)
     .with_context_predicate(id!("Workspace") & !id!("Workspace_ViewOnlySharedSession"))]);
+
+    if FeatureFlag::WarpSync.is_enabled() {
+        app.register_editable_bindings([
+            EditableBinding::new(
+                "workspace:warp_sync_download_cwd",
+                "Warp Sync: Download current directory to local mirror",
+                WorkspaceAction::WarpSyncDownloadCurrentDirectory,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:warp_sync_open_mirror",
+                "Warp Sync: Open local mirror",
+                WorkspaceAction::WarpSyncOpenMirror,
+            )
+            .with_context_predicate(id!("Workspace")),
+        ]);
+    }
 
     if FeatureFlag::UIZoom.is_enabled() {
         app.register_fixed_bindings([

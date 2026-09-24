@@ -5,7 +5,7 @@ use warp_completer::completer::CommandExitStatus;
 use warpui::r#async::FutureExt as _;
 
 use super::remote_script::remote_failure_message;
-use super::{WarpSyncError, COMMAND_TIMEOUT};
+use super::{COMMAND_TIMEOUT, WarpSyncError};
 use crate::terminal::model::session::{ExecuteCommandOptions, Session, SessionType};
 use crate::terminal::shell::ShellType;
 

@@ -542,6 +542,7 @@ use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, KeystrokeSource};
 use crate::view_components::find::{Event as FindEvent, Find, FindDirection, FindWithinBlockState};
 use crate::view_components::{DismissibleToast, ToastFlavor};
+use crate::warp_sync::{WarpSyncError, WarpSyncModel, selection_to_remote_path};
 use crate::workflows::WorkflowSelectionSource;
 use crate::workflows::workflow::Workflow;
 use crate::workspace::sync_inputs::SyncedInputState;
@@ -1377,6 +1378,8 @@ pub enum BlockVisibilityMode {
 pub enum ContextMenuAction {
     InsertSelectedText,
     CopySelectedText,
+    /// Downloads the selected remote path into the local Warp Sync mirror.
+    WarpSyncDownload,
     CopyUrl {
         url_content: String,
     },
@@ -1516,6 +1519,7 @@ impl fmt::Debug for ContextMenuAction {
         match self {
             InsertSelectedText => f.write_str("InsertSelectedText"),
             CopySelectedText => f.write_str("CopySelectedText"),
+            WarpSyncDownload => f.write_str("WarpSyncDownload"),
             CopyBlocks => f.write_str("CopyBlocks"),
             CopyBlockCommands => f.write_str("CopyBlockCommands"),
             CopyBlockOutputs => f.write_str("CopyBlockOutputs"),
@@ -2515,6 +2519,12 @@ struct LocalSessionCanonicalPwdCache {
     /// Non-canonical path
     path: PathBuf,
     canonical: CanonicalizedPath,
+}
+
+/// The remote session that a text selection came from, for Warp Sync actions.
+struct WarpSyncTarget {
+    session: Arc<Session>,
+    pwd: Option<String>,
 }
 
 pub struct TerminalView {
@@ -17420,6 +17430,18 @@ impl TerminalView {
                         .into_item(),
                     ]);
                 }
+                if FeatureFlag::WarpSync.is_enabled()
+                    && self.remote_selection_target(&model, ctx).is_some()
+                {
+                    fields.extend([
+                        MenuItem::Separator,
+                        MenuItemFields::new("Warp Sync: Download to local mirror")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::WarpSyncDownload,
+                            ))
+                            .into_item(),
+                    ]);
+                }
                 fields
             }
             (
@@ -22065,6 +22087,54 @@ impl TerminalView {
         self.close_context_menu(ctx, true);
     }
 
+    /// The remote session, and the working directory, of the block that contains the current text
+    /// selection. `None` unless the selection lies within a single block of a remote session.
+    fn remote_selection_target(
+        &self,
+        model: &TerminalModel,
+        ctx: &ViewContext<Self>,
+    ) -> Option<WarpSyncTarget> {
+        let semantic_selection = SemanticSelection::as_ref(ctx);
+        let block_index = model
+            .block_list()
+            .selected_block_index(semantic_selection, self.is_inverted_blocklist(ctx))?;
+        let block = model.block_list().block_at(block_index)?;
+        let session = self.sessions.as_ref(ctx).get(block.session_id()?)?;
+        if session.is_local() {
+            return None;
+        }
+        Some(WarpSyncTarget {
+            session,
+            pwd: block.pwd().cloned(),
+        })
+    }
+
+    fn context_menu_warp_sync_download(&mut self, ctx: &mut ViewContext<Self>) {
+        let (selected_text, target) = {
+            let semantic_selection = SemanticSelection::as_ref(ctx);
+            let model = self.model.lock();
+            let selected_text =
+                model.selection_to_string(semantic_selection, self.is_inverted_blocklist(ctx), ctx);
+            (selected_text, self.remote_selection_target(&model, ctx))
+        };
+        self.close_context_menu(ctx, true);
+
+        let window_id = ctx.window_id();
+        let request = target
+            .ok_or(WarpSyncError::NotRemoteSession)
+            .and_then(|target| {
+                let remote_path =
+                    selection_to_remote_path(selected_text.as_deref(), target.pwd.as_deref())?;
+                Ok((target.session, remote_path))
+            });
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_download(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
     fn context_menu_copy_selected_text(&mut self, ctx: &mut ViewContext<Self>) {
         {
             let semantic_selection = SemanticSelection::as_ref(ctx);
@@ -25783,6 +25853,7 @@ impl TerminalView {
         match action {
             InsertSelectedText => self.context_menu_insert_selected_text(ctx),
             CopySelectedText => self.context_menu_copy_selected_text(ctx),
+            WarpSyncDownload => self.context_menu_warp_sync_download(ctx),
             CopyUrl { url_content } => self.context_menu_copy_url(url_content, ctx),
             CopyBlocks => self.context_menu_copy_blocks(ctx),
             CopyBlockCommands => self.context_menu_copy_block_commands(ctx),
