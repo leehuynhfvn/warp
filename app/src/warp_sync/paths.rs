@@ -144,6 +144,13 @@ pub fn staging_dir(mirror_root: &Path) -> PathBuf {
         .join(Uuid::new_v4().to_string())
 }
 
+/// The directory name for a mirror of a host whose plain `host_key` is already used by another
+/// machine.
+pub fn machine_host_key(host_key: &str, machine_id: &str) -> String {
+    let digest = hex::encode(&Sha256::digest(machine_id.as_bytes())[..HOST_KEY_HASH_BYTES]);
+    format!("{host_key}-{digest}")
+}
+
 /// A fresh directory for keeping a previous mirror that could not be restored in place.
 pub fn recovery_dir(mirror_root: &Path) -> PathBuf {
     mirror_root

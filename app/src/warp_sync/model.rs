@@ -15,6 +15,7 @@ use super::transfer::{
 use crate::terminal::model::session::Session;
 
 const BYTES_PER_KIB: u64 = 1024;
+const SERVER_ID_TAIL_LEN: usize = 4;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 
 /// Identifies an operation that is waiting for the user's confirmation.
@@ -41,6 +42,8 @@ pub struct UploadSummary {
     pub missing_locally: Vec<String>,
     /// The remote `tar` is not GNU tar, so ownership may not be restored completely.
     pub ownership_may_be_incomplete: bool,
+    /// The last characters of the remote machine id, to tell apart hosts with the same name.
+    pub server_id_tail: Option<String>,
 }
 
 /// Progress of Warp Sync operations. Every event names the window that started the operation, so
@@ -356,6 +359,11 @@ impl WarpSyncModel {
             missing_locally: prepared.archive.missing_locally.clone(),
             ownership_may_be_incomplete: ExtractMode::for_probe(&prepared.probe)
                 == ExtractMode::Generic,
+            server_id_tail: prepared
+                .probe
+                .machine_id
+                .as_deref()
+                .map(|id| id[id.len().saturating_sub(SERVER_ID_TAIL_LEN)..].to_owned()),
         };
         let id = self.next_pending_id();
         self.pending_uploads.insert(

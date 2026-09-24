@@ -21,6 +21,7 @@ fn full_probe(extra: &[&str]) -> String {
         "size_kib=12",
         "tar=gnu",
         "base64=yes",
+        "machine_id=0123456789abcdef0123456789abcdef",
     ];
     lines.extend_from_slice(extra);
     probe_output(&lines)
@@ -202,8 +203,21 @@ fn probe_parses_a_complete_report() {
             size_kib: Some(12),
             tar: TarFlavor::Gnu,
             has_base64: true,
+            machine_id: Some("0123456789abcdef0123456789abcdef".to_owned()),
         }
     );
+}
+
+#[test]
+fn probe_without_a_valid_machine_id_reports_none() {
+    for value in ["", "short", "has space in it 12345", "$(id)$(id)$(id)"] {
+        let output = full_probe(&[&format!("machine_id={value}")]);
+        assert_eq!(
+            parse_probe_output(&output).unwrap().machine_id,
+            None,
+            "{value:?}"
+        );
+    }
 }
 
 #[test]

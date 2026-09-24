@@ -56,6 +56,30 @@ impl RemoteShell for LocalSh {
     }
 }
 
+/// The same "remote host" as [`LocalSh`], but reporting a chosen machine id.
+struct AsMachine<'a> {
+    shell: &'a LocalSh,
+    machine_id: &'a str,
+}
+
+#[async_trait]
+impl RemoteShell for AsMachine<'_> {
+    async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
+        let output = self.shell.run(command).await?;
+        let text = String::from_utf8_lossy(&output);
+        if !text.contains("status=") {
+            return Ok(output);
+        }
+        let mut lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.starts_with("machine_id="))
+            .collect();
+        let machine_line = format!("machine_id={}", self.machine_id);
+        lines.push(&machine_line);
+        Ok(lines.join("\n").into_bytes())
+    }
+}
+
 struct Env {
     dir: TempDir,
     shell: LocalSh,
@@ -677,4 +701,124 @@ fn backup_path_is_read_from_the_commit_output() {
         Some("/root/.warp-sync/backups/x.tgz".to_owned())
     );
     assert_eq!(parse_backup_path(""), None);
+}
+
+const MACHINE_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const MACHINE_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+fn save_manifest_owned_by(mirror_root: &Path, host_key: &str, machine_id: Option<&str>) {
+    let mut manifest = Manifest::new(host_key);
+    manifest.set_machine_id(machine_id.map(str::to_owned));
+    manifest
+        .save_atomic(&manifest_path(mirror_root, host_key))
+        .unwrap();
+}
+
+#[test]
+fn a_mirror_without_a_known_owner_keeps_the_plain_name() {
+    let dir = tempfile::tempdir().unwrap();
+
+    assert_eq!(
+        resolve_host_key(dir.path(), "h", Some(MACHINE_A)).unwrap(),
+        "h"
+    );
+    assert_eq!(resolve_host_key(dir.path(), "h", None).unwrap(), "h");
+
+    save_manifest_owned_by(dir.path(), "h", None);
+    assert_eq!(
+        resolve_host_key(dir.path(), "h", Some(MACHINE_A)).unwrap(),
+        "h"
+    );
+}
+
+#[test]
+fn the_plain_name_belongs_to_the_machine_that_first_used_it() {
+    let dir = tempfile::tempdir().unwrap();
+    save_manifest_owned_by(dir.path(), "h", Some(MACHINE_A));
+
+    assert_eq!(
+        resolve_host_key(dir.path(), "h", Some(MACHINE_A)).unwrap(),
+        "h"
+    );
+    let other = resolve_host_key(dir.path(), "h", Some(MACHINE_B)).unwrap();
+    assert_eq!(other, machine_host_key("h", MACHINE_B));
+    assert_ne!(other, "h");
+}
+
+#[test]
+fn a_host_that_reports_no_machine_id_uses_the_plain_name() {
+    let dir = tempfile::tempdir().unwrap();
+    save_manifest_owned_by(dir.path(), "h", Some(MACHINE_A));
+
+    assert_eq!(resolve_host_key(dir.path(), "h", None).unwrap(), "h");
+}
+
+#[test]
+fn a_name_owned_by_two_other_machines_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    save_manifest_owned_by(dir.path(), "h", Some(MACHINE_A));
+    let suffixed = machine_host_key("h", MACHINE_B);
+    save_manifest_owned_by(dir.path(), &suffixed, Some(MACHINE_A));
+
+    let result = resolve_host_key(dir.path(), "h", Some(MACHINE_B));
+
+    assert!(matches!(result, Err(WarpSyncError::Manifest(_))));
+}
+
+#[test]
+fn two_machines_with_the_same_hostname_get_separate_mirrors() {
+    let env = Env::new();
+    let machine_a = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_A,
+    };
+    let machine_b = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_B,
+    };
+
+    block_on(download(&machine_a, &env.download_request(false))).unwrap();
+    fs::write(env.remote("a.conf"), "remote a on B").unwrap();
+    block_on(download(&machine_b, &env.download_request(false))).unwrap();
+
+    let dir_b = machine_host_key(HOST_KEY, MACHINE_B);
+    let mirror_a = local_path_for(&env.mirror_root(), HOST_KEY, &env.remote_path);
+    let mirror_b = local_path_for(&env.mirror_root(), &dir_b, &env.remote_path);
+    assert_eq!(
+        fs::read_to_string(mirror_a.join("a.conf")).unwrap(),
+        "remote a"
+    );
+    assert_eq!(
+        fs::read_to_string(mirror_b.join("a.conf")).unwrap(),
+        "remote a on B"
+    );
+    let owner = |key: &str| {
+        load_manifest(&env.mirror_root(), key)
+            .unwrap()
+            .machine_id()
+            .map(str::to_owned)
+    };
+    assert_eq!(owner(HOST_KEY).as_deref(), Some(MACHINE_A));
+    assert_eq!(owner(&dir_b).as_deref(), Some(MACHINE_B));
+}
+
+#[test]
+fn a_mirror_downloaded_from_one_machine_cannot_be_uploaded_to_another() {
+    let env = Env::new();
+    let machine_a = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_A,
+    };
+    let machine_b = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_B,
+    };
+    block_on(download(&machine_a, &env.download_request(false))).unwrap();
+    fs::write(env.local("a.conf"), "edited for A").unwrap();
+
+    let onto_b = block_on(prepare_upload(&machine_b, &env.upload_request()));
+    let onto_a = block_on(prepare_upload(&machine_a, &env.upload_request()));
+
+    assert!(matches!(onto_b, Err(WarpSyncError::NotMirrored(_))));
+    assert_eq!(onto_a.unwrap().host_key, HOST_KEY);
 }

@@ -46,6 +46,9 @@ pub struct SyncRecord {
 pub struct Manifest {
     version: u32,
     host_key: String,
+    /// Identifies the remote machine this mirror was downloaded from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    machine_id: Option<String>,
     #[serde(default)]
     entries: BTreeMap<String, EntryMeta>,
     #[serde(default)]
@@ -57,6 +60,7 @@ impl Manifest {
         Self {
             version: MANIFEST_VERSION,
             host_key: host_key.to_owned(),
+            machine_id: None,
             entries: BTreeMap::new(),
             last_sync: BTreeMap::new(),
         }
@@ -123,6 +127,14 @@ impl Manifest {
             .filter(|(path, _)| is_within(path, root))
             .map(|(path, meta)| (path.clone(), meta.clone()))
             .collect()
+    }
+
+    pub fn machine_id(&self) -> Option<&str> {
+        self.machine_id.as_deref()
+    }
+
+    pub fn set_machine_id(&mut self, machine_id: Option<String>) {
+        self.machine_id = machine_id;
     }
 
     pub fn entry(&self, path: &str) -> Option<&EntryMeta> {

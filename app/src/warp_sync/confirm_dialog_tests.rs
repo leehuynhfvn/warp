@@ -15,6 +15,7 @@ fn summary() -> UploadSummary {
         new_files: vec![],
         missing_locally: vec![],
         ownership_may_be_incomplete: false,
+        server_id_tail: Some("ab12".to_owned()),
     }
 }
 
@@ -38,7 +39,9 @@ fn bullet_list_summarizes_the_rest() {
 fn upload_body_names_the_target_and_the_backup_location() {
     let body = upload_body(&summary());
 
-    assert!(body.starts_with("/etc/nginx\n\n3 files and 1 folder, 2.0 KiB"));
+    assert!(
+        body.starts_with("prod-1 (machine id …ab12):/etc/nginx\n\n3 files and 1 folder, 2.0 KiB")
+    );
     assert!(body.contains("~/.warp-sync/backups"));
     assert!(!body.contains("New on the server"));
     assert!(!body.contains("NOT be deleted"));

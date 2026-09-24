@@ -74,8 +74,12 @@ impl ConfirmRequest {
 }
 
 fn upload_body(summary: &UploadSummary) -> String {
+    let server = match &summary.server_id_tail {
+        Some(tail) => format!("{} (machine id …{tail})", summary.hostname),
+        None => summary.hostname.clone(),
+    };
     let mut sections = vec![
-        summary.remote_path.clone(),
+        format!("{server}:{}", summary.remote_path),
         format!(
             "{} and {}, {}",
             pluralize_count(summary.files, "file"),

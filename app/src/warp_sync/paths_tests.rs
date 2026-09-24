@@ -289,3 +289,13 @@ fn private_dirs_are_only_accessible_to_the_owner() {
         assert_eq!(mode, 0o700);
     }
 }
+
+#[test]
+fn machine_host_keys_differ_per_machine_and_extend_the_host_key() {
+    let first = machine_host_key("draff3", "aaaaaaaaaaaaaaaa");
+    let second = machine_host_key("draff3", "bbbbbbbbbbbbbbbb");
+
+    assert_ne!(first, second);
+    assert!(first.starts_with("draff3-"));
+    assert_eq!(first, machine_host_key("draff3", "aaaaaaaaaaaaaaaa"));
+}

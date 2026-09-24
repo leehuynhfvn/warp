@@ -262,3 +262,21 @@ fn save_atomic_leaves_no_temporary_files() {
         .collect();
     assert_eq!(names, ["m.json"]);
 }
+
+#[test]
+fn machine_id_round_trips_and_is_optional() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.json");
+    let mut manifest = Manifest::new("h");
+    manifest.save_atomic(&path).unwrap();
+    assert_eq!(
+        Manifest::load_or_default(&path, "h").unwrap().machine_id(),
+        None
+    );
+
+    manifest.set_machine_id(Some("abcdef0123456789".to_owned()));
+    manifest.save_atomic(&path).unwrap();
+
+    let loaded = Manifest::load_or_default(&path, "h").unwrap();
+    assert_eq!(loaded.machine_id(), Some("abcdef0123456789"));
+}

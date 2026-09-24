@@ -11,6 +11,8 @@ use regex::Regex;
 use super::{UPLOAD_CHUNK_B64_LEN, WarpSyncError};
 
 const FAILURE_MESSAGE_TAIL_BYTES: usize = 1024;
+const MIN_MACHINE_ID_LEN: usize = 8;
+const MAX_MACHINE_ID_LEN: usize = 64;
 
 /// Name of the payload file inside the remote temporary directory.
 const PAYLOAD_FILE_NAME: &str = "payload.tgz";
@@ -60,6 +62,9 @@ pub struct ProbeResult {
     pub size_kib: Option<u64>,
     pub tar: TarFlavor,
     pub has_base64: bool,
+    /// The remote host's machine id, which unlike its hostname is not chosen by whoever
+    /// configured the session. `None` when the host has none.
+    pub machine_id: Option<String>,
 }
 
 /// How `tar -x` should treat ownership on the remote host.
@@ -134,6 +139,7 @@ if [ -d "$P" ]; then echo kind=dir; else echo kind=file; fi
 echo "size_kib=$(du -sk "$P" 2>/dev/null | cut -f1)"
 if tar --version 2>/dev/null | grep -q GNU; then echo tar=gnu; else echo tar=other; fi
 if command -v base64 >/dev/null 2>&1; then echo base64=yes; else echo base64=no; fi
+echo "machine_id=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null)"
 "#
     )
 }
@@ -225,6 +231,7 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
     let mut size_kib = None;
     let mut tar = None;
     let mut has_base64 = None;
+    let mut machine_id = None;
 
     for line in output.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -258,6 +265,7 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
                 }
             }
             "base64" => has_base64 = Some(value == "yes"),
+            "machine_id" => machine_id = valid_machine_id(value),
             _ => {}
         }
     }
@@ -272,6 +280,7 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
             size_kib: None,
             tar: TarFlavor::Other,
             has_base64: false,
+            machine_id: None,
         });
     }
     Ok(ProbeResult {
@@ -282,7 +291,16 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
         size_kib,
         tar: tar.ok_or_else(|| unexpected_output("missing `tar`"))?,
         has_base64: has_base64.ok_or_else(|| unexpected_output("missing `base64`"))?,
+        machine_id,
     })
+}
+
+/// Machine ids are hex strings (32 characters on systemd hosts); anything else is ignored rather
+/// than trusted.
+fn valid_machine_id(value: &str) -> Option<String> {
+    let is_valid = (MIN_MACHINE_ID_LEN..=MAX_MACHINE_ID_LEN).contains(&value.len())
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    is_valid.then(|| value.to_owned())
 }
 
 /// The last non-empty line of the tail of a failed command's output, which is where tools print

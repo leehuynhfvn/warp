@@ -15,8 +15,8 @@ use super::archive::{
 };
 use super::manifest::{Manifest, SyncRecord};
 use super::paths::{
-    create_private_dir_all, local_path_for, manifest_path, recovery_dir, split_parent_name,
-    staging_dir,
+    create_private_dir_all, local_path_for, machine_host_key, manifest_path, recovery_dir,
+    split_parent_name, staging_dir,
 };
 use super::remote_script::{
     ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, cleanup_command,
@@ -104,6 +104,15 @@ pub async fn download(
     ensure_readable(&probe, &request.remote_path)?;
     ensure_download_size(&probe)?;
 
+    let request = &DownloadRequest {
+        host_key: resolve_host_key(
+            &request.mirror_root,
+            &request.host_key,
+            probe.machine_id.as_deref(),
+        )?,
+        ..request.clone()
+    };
+
     let manifest = load_manifest(&request.mirror_root, &request.host_key)?;
     if !request.allow_overwrite_local_changes {
         let modified_files = locally_modified_files(
@@ -142,24 +151,31 @@ pub async fn prepare_upload(
     shell: &dyn RemoteShell,
     request: &UploadRequest,
 ) -> Result<PreparedUpload, WarpSyncError> {
-    let manifest = load_manifest(&request.mirror_root, &request.host_key)?;
-    let archive = build_upload(
-        &request.remote_path,
-        &manifest,
-        &request.mirror_root,
-        &request.host_key,
-    )?;
-
     let probe = probe(shell, &request.remote_path).await?;
     ensure_readable(&probe, &request.remote_path)?;
     if !probe.has_base64 {
         return Err(WarpSyncError::MissingTool("base64"));
     }
+
+    // Mirrors are matched to the remote machine, not just to its hostname, so that a mirror
+    // downloaded from one host is never uploaded to another host with the same name.
+    let host_key = resolve_host_key(
+        &request.mirror_root,
+        &request.host_key,
+        probe.machine_id.as_deref(),
+    )?;
+    let manifest = load_manifest(&request.mirror_root, &host_key)?;
+    let archive = build_upload(
+        &request.remote_path,
+        &manifest,
+        &request.mirror_root,
+        &host_key,
+    )?;
     Ok(PreparedUpload {
         archive,
         probe,
         remote_path: request.remote_path.clone(),
-        host_key: request.host_key.clone(),
+        host_key,
         mirror_root: request.mirror_root.clone(),
     })
 }
@@ -246,6 +262,31 @@ fn lock_manifests() -> MutexGuard<'static, ()> {
     MANIFEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Picks the mirror directory name for the remote machine behind `host_key` (derived from its
+/// hostname). The plain name is kept unless a different machine already owns it, in which case the
+/// machine id is folded into the name.
+fn resolve_host_key(
+    mirror_root: &Path,
+    host_key: &str,
+    machine_id: Option<&str>,
+) -> Result<String, WarpSyncError> {
+    let Some(machine_id) = machine_id else {
+        return Ok(host_key.to_owned());
+    };
+    let candidates = [host_key.to_owned(), machine_host_key(host_key, machine_id)];
+    for candidate in candidates {
+        let manifest = load_manifest(mirror_root, &candidate)?;
+        match manifest.machine_id() {
+            None => return Ok(candidate),
+            Some(owner) if owner == machine_id => return Ok(candidate),
+            Some(_) => {}
+        }
+    }
+    Err(WarpSyncError::Manifest(
+        "another host with the same name already owns this mirror".to_owned(),
+    ))
+}
+
 fn load_manifest(mirror_root: &Path, host_key: &str) -> Result<Manifest, WarpSyncError> {
     Manifest::load_or_default(&manifest_path(mirror_root, host_key), host_key)
 }
@@ -268,6 +309,9 @@ fn apply_download(
 
     let _manifests = lock_manifests();
     let mut manifest = load_manifest(&request.mirror_root, &request.host_key)?;
+    if manifest.machine_id().is_none() {
+        manifest.set_machine_id(probe.machine_id.clone());
+    }
     if !request.allow_overwrite_local_changes {
         // The mirror may have been edited while the download was running.
         let modified_files = locally_modified_files(
