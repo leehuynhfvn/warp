@@ -16,6 +16,7 @@ mod paths;
 mod remote_check;
 mod remote_script;
 mod remote_shell;
+pub mod requester;
 mod transfer;
 
 use std::time::Duration;
@@ -51,3 +52,7 @@ pub const UPLOAD_CHUNK_B64_LEN: usize = 16 * 1024;
 
 /// In-band commands only run once the shell is idle, so a stuck shell must not block forever.
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long an operation waits for a local-control client to confirm or cancel it before it is
+/// dropped and its path is released.
+pub const EXTERNAL_PENDING_TTL: Duration = Duration::from_secs(10 * 60);

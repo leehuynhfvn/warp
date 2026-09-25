@@ -52,6 +52,9 @@ pub enum WarpSyncError {
     Editor(String),
     #[error("Could not record the Git baseline: {0}")]
     Baseline(String),
+    #[allow(dead_code)] // Returned once the local-control sync actions exist.
+    #[error("That confirmation is no longer pending: it was already answered, cancelled or expired")]
+    PendingNotFound,
 }
 
 fn format_remote_failure(exit_code: Option<i32>, message: &str) -> String {

@@ -1,6 +1,10 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use async_trait::async_trait;
+use futures::channel::oneshot;
+use warpui::ModelHandle;
 
 use super::super::archive::UploadArchive;
 use super::super::diff::FileChange;
@@ -386,4 +390,277 @@ fn the_editor_opens_a_bounded_number_of_diffs() {
     };
     assert_eq!(diffs.len(), MAX_EDITOR_DIFFS);
     assert_eq!(files.len(), 1);
+}
+
+type CollectedEvents = Rc<RefCell<Vec<WarpSyncEvent>>>;
+
+fn collect_events(app: &mut warpui::App, model: &ModelHandle<WarpSyncModel>) -> CollectedEvents {
+    let events = CollectedEvents::default();
+    let captured = events.clone();
+    app.update(|ctx| {
+        ctx.subscribe_to_model(model, move |_, event, _| {
+            captured.borrow_mut().push(event.clone());
+        });
+    });
+    events
+}
+
+fn reply_of(
+    receiver: &mut oneshot::Receiver<Result<SyncReply, WarpSyncError>>,
+) -> Result<SyncReply, WarpSyncError> {
+    receiver
+        .try_recv()
+        .expect("the reply channel is open")
+        .expect("a reply was sent")
+}
+
+/// Registers the path as in progress and hands an upload that is ready for confirmation to the
+/// model, the way `start_upload` does once the remote host has been checked.
+fn await_upload(
+    app: &mut warpui::App,
+    model: &ModelHandle<WarpSyncModel>,
+    requester: Requester,
+) {
+    let PendingUpload {
+        shell, prepared, ..
+    } = pending_upload("prod-1", "/etc/nginx");
+    model.update(app, |model, ctx| {
+        model
+            .try_begin_sync("prod-1", "/etc/nginx")
+            .expect("path is free");
+        model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, requester, ctx);
+    });
+}
+
+fn sole_external_id(app: &warpui::App, model: &ModelHandle<WarpSyncModel>) -> Uuid {
+    model.read(app, |model, _| {
+        let mut ids = model.external_pending.keys().copied();
+        let id = ids.next().expect("one external pending operation");
+        assert!(ids.next().is_none());
+        id
+    })
+}
+
+#[test]
+fn a_window_upload_waits_for_its_dialog_and_not_for_a_client() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+
+        await_upload(&mut app, &model, Requester::Window(window_id));
+
+        model.read(&app, |model, _| {
+            assert_eq!(model.pending_uploads.len(), 1);
+            assert!(model.external_pending.is_empty());
+        });
+        assert!(matches!(
+            events.borrow().as_slice(),
+            [WarpSyncEvent::UploadNeedsConfirmation { window_id: event_window, .. }]
+                if *event_window == window_id
+        ));
+    });
+}
+
+#[test]
+fn an_external_upload_is_answered_with_a_reply_and_no_dialog() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let (requester, mut receiver) = Requester::external(WindowId::new());
+
+        await_upload(&mut app, &model, requester);
+
+        let SyncReply::NeedsConfirmation { pending_id, kind } = reply_of(&mut receiver).unwrap()
+        else {
+            panic!("an upload must be confirmed before it is sent");
+        };
+        assert_eq!(pending_id, sole_external_id(&app, &model));
+        let ConfirmationKind::Upload(summary) = kind else {
+            panic!("expected an upload summary");
+        };
+        assert_eq!(summary.remote_user, "root");
+        assert!(events.borrow().is_empty(), "no dialog for an external client");
+        model.read(&app, |model, _| assert!(model.pending_uploads.is_empty()));
+    });
+}
+
+#[test]
+fn a_held_external_operation_keeps_its_path_reserved() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (requester, _receiver) = Requester::external(WindowId::new());
+
+        await_upload(&mut app, &model, requester);
+
+        model.update(&mut app, |model, _| {
+            assert_eq!(
+                model.try_begin_sync("prod-1", "/etc/nginx"),
+                Err(WarpSyncError::AlreadyInProgress)
+            );
+        });
+    });
+}
+
+#[test]
+fn external_ids_are_random_and_never_collide_with_window_ids() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (requester, _receiver) = Requester::external(WindowId::new());
+        await_upload(&mut app, &model, requester);
+
+        model.update(&mut app, |model, _| {
+            model.cancel_pending(PendingId::for_test(1));
+            assert_eq!(model.external_pending.len(), 1);
+            assert_eq!(
+                model.cancel_external(Uuid::new_v4()),
+                Err(WarpSyncError::PendingNotFound)
+            );
+            assert_eq!(model.external_pending.len(), 1);
+        });
+    });
+}
+
+#[test]
+fn a_window_pending_operation_cannot_be_confirmed_by_a_client() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        await_upload(&mut app, &model, Requester::Window(WindowId::new()));
+        let window_pending_id = model.read(&app, |model, _| {
+            *model.pending_uploads.keys().next().expect("one pending upload")
+        });
+        let (reply, mut receiver) = ExternalReply::channel();
+
+        model.update(&mut app, |model, ctx| {
+            model.confirm_external(Uuid::from_u128(u128::from(window_pending_id.0)), reply, ctx);
+        });
+
+        assert_eq!(
+            reply_of(&mut receiver).unwrap_err(),
+            WarpSyncError::PendingNotFound
+        );
+        model.read(&app, |model, _| assert_eq!(model.pending_uploads.len(), 1));
+    });
+}
+
+#[test]
+fn cancelling_an_external_operation_releases_its_path() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (requester, _receiver) = Requester::external(WindowId::new());
+        await_upload(&mut app, &model, requester);
+        let id = sole_external_id(&app, &model);
+
+        model.update(&mut app, |model, _| {
+            assert_eq!(model.cancel_external(id), Ok(()));
+            assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+            assert_eq!(
+                model.cancel_external(id),
+                Err(WarpSyncError::PendingNotFound),
+                "an id can only be used once"
+            );
+        });
+    });
+}
+
+#[test]
+fn confirming_an_unknown_external_id_reports_that_nothing_is_pending() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (reply, mut receiver) = ExternalReply::channel();
+
+        model.update(&mut app, |model, ctx| {
+            model.confirm_external(Uuid::new_v4(), reply, ctx);
+        });
+
+        assert_eq!(
+            reply_of(&mut receiver).unwrap_err(),
+            WarpSyncError::PendingNotFound
+        );
+    });
+}
+
+#[test]
+fn an_external_operation_that_nobody_answers_expires_and_frees_its_path() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::with_external_pending_ttl(Duration::from_millis(20)));
+        let (requester, _receiver) = Requester::external(WindowId::new());
+        await_upload(&mut app, &model, requester);
+
+        Timer::after(Duration::from_millis(300)).await;
+
+        model.update(&mut app, |model, _| {
+            assert!(model.external_pending.is_empty());
+            assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+        });
+    });
+}
+
+#[test]
+fn a_download_that_needs_confirmation_lists_the_files_for_a_client() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (requester, mut receiver) = Requester::external(WindowId::new());
+        let PendingDownload { shell, request, .. } = pending_download("prod-1", "/etc/nginx");
+
+        model.update(&mut app, |model, ctx| {
+            model.await_download_confirmation(
+                shell,
+                request,
+                vec!["/etc/nginx/a\nb".to_owned()],
+                requester,
+                ctx,
+            );
+        });
+
+        let SyncReply::NeedsConfirmation { kind, .. } = reply_of(&mut receiver).unwrap() else {
+            panic!("expected a confirmation request");
+        };
+        let ConfirmationKind::OverwriteLocalChanges { files } = kind else {
+            panic!("expected an overwrite confirmation");
+        };
+        assert_eq!(files, vec!["/etc/nginx/a\\nb".to_owned()]);
+    });
+}
+
+#[test]
+fn an_external_operation_is_announced_in_the_window_of_its_session() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+        let (requester, _receiver) = Requester::external(window_id);
+
+        model.update(&mut app, |_, ctx| announce(&requester, "Uploading /etc…".to_owned(), ctx));
+
+        let events = events.borrow();
+        let [WarpSyncEvent::Started { window_id: event_window, description }] = events.as_slice()
+        else {
+            panic!("expected a single Started event, got {events:?}");
+        };
+        assert_eq!(*event_window, window_id);
+        assert_eq!(description, "Warp Sync (local control): Uploading /etc…");
+    });
+}
+
+#[test]
+fn failures_reach_a_window_as_events_and_a_client_as_an_error_reply() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+        let (external, mut receiver) = Requester::external(window_id);
+
+        model.update(&mut app, |_, ctx| {
+            report(Requester::Window(window_id), Finished::Failed(WarpSyncError::Timeout), ctx);
+            report(external, Finished::Failed(WarpSyncError::Timeout), ctx);
+        });
+
+        assert!(matches!(
+            events.borrow().as_slice(),
+            [WarpSyncEvent::Failed { window_id: event_window, error: WarpSyncError::Timeout }]
+                if *event_window == window_id
+        ));
+        assert_eq!(reply_of(&mut receiver).unwrap_err(), WarpSyncError::Timeout);
+    });
 }
