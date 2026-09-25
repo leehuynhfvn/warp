@@ -363,3 +363,24 @@ fn names_that_some_filesystem_resolves_to_git_metadata_are_recognized() {
         assert!(!is_git_metadata_name(name), "{name:?}");
     }
 }
+
+#[test]
+fn a_mirror_folder_belongs_to_the_host_of_that_name_or_its_machine_suffixed_variant() {
+    let suffixed = machine_host_key(&host_key("prod-1"), "0123456789abcdef");
+
+    assert!(host_dir_matches("prod-1", "prod-1"));
+    assert!(host_dir_matches(&suffixed, "prod-1"));
+    assert!(!host_dir_matches("prod-2", "prod-1"));
+    assert!(!host_dir_matches("prod-1-backup", "prod-1"));
+    assert!(!host_dir_matches("prod-1-ab12cd3", "prod-1"));
+    assert!(!host_dir_matches("prod-1-ab12cd3g", "prod-1"));
+    assert!(!host_dir_matches("prod-1x", "prod-1"));
+}
+
+#[test]
+fn a_host_whose_name_had_to_be_altered_matches_its_hashed_folder() {
+    let folder = host_key("my host!");
+
+    assert!(host_dir_matches(&folder, "my host!"));
+    assert!(!host_dir_matches(&folder, "other"));
+}

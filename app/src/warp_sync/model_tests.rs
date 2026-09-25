@@ -26,6 +26,7 @@ fn pending_download(host_key: &str, remote_path: &str) -> PendingDownload {
         request: DownloadRequest {
             remote_path: remote_path.to_owned(),
             host_key: host_key.to_owned(),
+            expected_host_key: None,
             mirror_root: PathBuf::from("/mirror"),
             limits: SyncLimits::default(),
             allow_overwrite_local_changes: false,
@@ -467,7 +468,7 @@ fn an_external_upload_is_answered_with_a_reply_and_no_dialog() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::new());
         let events = collect_events(&mut app, &model);
-        let (requester, mut receiver) = Requester::external(WindowId::new());
+        let (requester, mut receiver) = Requester::external(WindowId::new(), None);
 
         await_upload(&mut app, &model, requester);
 
@@ -489,7 +490,7 @@ fn an_external_upload_is_answered_with_a_reply_and_no_dialog() {
 fn a_held_external_operation_keeps_its_path_reserved() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::new());
-        let (requester, _receiver) = Requester::external(WindowId::new());
+        let (requester, _receiver) = Requester::external(WindowId::new(), None);
 
         await_upload(&mut app, &model, requester);
 
@@ -506,7 +507,7 @@ fn a_held_external_operation_keeps_its_path_reserved() {
 fn external_ids_are_random_and_never_collide_with_window_ids() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::new());
-        let (requester, _receiver) = Requester::external(WindowId::new());
+        let (requester, _receiver) = Requester::external(WindowId::new(), None);
         await_upload(&mut app, &model, requester);
 
         model.update(&mut app, |model, _| {
@@ -547,7 +548,7 @@ fn a_window_pending_operation_cannot_be_confirmed_by_a_client() {
 fn cancelling_an_external_operation_releases_its_path() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::new());
-        let (requester, _receiver) = Requester::external(WindowId::new());
+        let (requester, _receiver) = Requester::external(WindowId::new(), None);
         await_upload(&mut app, &model, requester);
         let id = sole_external_id(&app, &model);
 
@@ -584,7 +585,7 @@ fn confirming_an_unknown_external_id_reports_that_nothing_is_pending() {
 fn an_external_operation_that_nobody_answers_expires_and_frees_its_path() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::with_external_pending_ttl(Duration::from_millis(20)));
-        let (requester, _receiver) = Requester::external(WindowId::new());
+        let (requester, _receiver) = Requester::external(WindowId::new(), None);
         await_upload(&mut app, &model, requester);
 
         Timer::after(Duration::from_millis(300)).await;
@@ -600,7 +601,7 @@ fn an_external_operation_that_nobody_answers_expires_and_frees_its_path() {
 fn a_download_that_needs_confirmation_lists_the_files_for_a_client() {
     warpui::App::test((), |mut app| async move {
         let model = app.add_model(|_| WarpSyncModel::new());
-        let (requester, mut receiver) = Requester::external(WindowId::new());
+        let (requester, mut receiver) = Requester::external(WindowId::new(), None);
         let PendingDownload { shell, request, .. } = pending_download("prod-1", "/etc/nginx");
 
         model.update(&mut app, |model, ctx| {
@@ -629,7 +630,7 @@ fn an_external_operation_is_announced_in_the_window_of_its_session() {
         let model = app.add_model(|_| WarpSyncModel::new());
         let events = collect_events(&mut app, &model);
         let window_id = WindowId::new();
-        let (requester, _receiver) = Requester::external(window_id);
+        let (requester, _receiver) = Requester::external(window_id, None);
 
         model.update(&mut app, |_, ctx| announce(&requester, "Uploading /etc…".to_owned(), ctx));
 
@@ -649,7 +650,7 @@ fn failures_reach_a_window_as_events_and_a_client_as_an_error_reply() {
         let model = app.add_model(|_| WarpSyncModel::new());
         let events = collect_events(&mut app, &model);
         let window_id = WindowId::new();
-        let (external, mut receiver) = Requester::external(window_id);
+        let (external, mut receiver) = Requester::external(window_id, None);
 
         model.update(&mut app, |_, ctx| {
             report(Requester::Window(window_id), Finished::Failed(WarpSyncError::Timeout), ctx);

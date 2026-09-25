@@ -48,6 +48,9 @@ pub enum ActionParameterSpec {
     Query,
     Rename,
     Resize,
+    SyncPath,
+    SyncPending,
+    SyncStatus,
     TabActivate,
     TabClose,
     TabCreate,
@@ -71,6 +74,7 @@ pub enum ActionResultSpec {
     SettingList,
     SettingValue,
     SurfaceList,
+    SyncResult,
     TargetList,
     TargetMetadata,
     ThemeList,
@@ -288,6 +292,15 @@ define_action_catalog! {
         SurfaceVerticalTabsOpen => { name: "surface.vertical_tabs.open", status: Implemented, target: Surface, params: None, result: Acknowledgement },
         SurfaceVerticalTabsToggle => { name: "surface.vertical_tabs.toggle", status: Implemented, target: Surface, params: None, result: Acknowledgement },
         SurfaceAgentManagementOpen => { name: "surface.agent_management.open", status: Implemented, target: Surface, params: None, result: Acknowledgement },
+    }
+
+    sync {
+        SyncStatus => { name: "sync.status", status: Implemented, target: File, params: SyncStatus, result: SyncResult },
+        SyncDownload => { name: "sync.download", status: Implemented, target: File, params: SyncPath, result: SyncResult },
+        SyncUploadPrepare => { name: "sync.upload.prepare", status: Implemented, target: File, params: SyncPath, result: SyncResult },
+        SyncConfirm => { name: "sync.confirm", status: Implemented, target: File, params: SyncPending, result: SyncResult },
+        SyncCancel => { name: "sync.cancel", status: Implemented, target: File, params: SyncPending, result: SyncResult },
+        SyncCompare => { name: "sync.compare", status: Implemented, target: File, params: SyncPath, result: SyncResult },
     }
 
     file {

@@ -8,6 +8,8 @@ pub(super) mod layout;
 pub(super) mod metadata;
 pub(super) mod metadata_config;
 pub(super) mod settings_surfaces;
+pub(super) mod sync;
+mod sync_reply;
 
 /// Standard acknowledgement payload shared by mutation handlers.
 pub(crate) fn ack(instance_id: &Option<InstanceId>, action: ActionKind) -> serde_json::Value {

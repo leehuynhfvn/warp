@@ -266,6 +266,7 @@ impl WarpSyncModel {
         let request = DownloadRequest {
             remote_path,
             host_key: begun.host_key,
+            expected_host_key: requester.expected_host_key(),
             mirror_root: begun.mirror_root,
             limits: begun.limits,
             allow_overwrite_local_changes: false,
@@ -303,6 +304,7 @@ impl WarpSyncModel {
         let request = UploadRequest {
             remote_path,
             host_key: begun.host_key,
+            expected_host_key: requester.expected_host_key(),
             mirror_root: begun.mirror_root,
             limits: begun.limits,
         };
@@ -348,6 +350,7 @@ impl WarpSyncModel {
             remote_path,
             hostname: begun.hostname.clone(),
             host_key: begun.host_key,
+            expected_host_key: requester.expected_host_key(),
             mirror_root: begun.mirror_root,
             limits: begun.limits,
         };
@@ -382,7 +385,6 @@ impl WarpSyncModel {
     }
 
     /// Carries on with the operation that a local-control client was asked to confirm.
-    #[allow(dead_code)] // Called by the local-control sync actions added in the next task.
     pub fn confirm_external(
         &mut self,
         id: Uuid,
@@ -392,12 +394,20 @@ impl WarpSyncModel {
         match self.external_pending.remove(&id) {
             Some(ExternalPending::Download(pending)) => {
                 let window_id = pending.window_id;
-                let requester = Requester::External { reply, window_id };
+                let requester = Requester::External {
+                    reply,
+                    window_id,
+                    expected_host_key: None,
+                };
                 self.resume_download(pending, requester, ctx);
             }
             Some(ExternalPending::Upload(pending)) => {
                 let window_id = pending.window_id;
-                let requester = Requester::External { reply, window_id };
+                let requester = Requester::External {
+                    reply,
+                    window_id,
+                    expected_host_key: None,
+                };
                 self.resume_upload(*pending, requester, ctx);
             }
             None => reply.send(Err(WarpSyncError::PendingNotFound)),
@@ -405,7 +415,6 @@ impl WarpSyncModel {
     }
 
     /// Discards an operation that a local-control client was asked to confirm.
-    #[allow(dead_code)] // Called by the local-control sync actions added in the next task.
     pub fn cancel_external(&mut self, id: Uuid) -> Result<(), WarpSyncError> {
         if self.discard_external(id) {
             Ok(())

@@ -1,7 +1,5 @@
 //! Who asked for a Warp Sync operation, and how its outcome travels back to them.
 
-// The local-control actions that construct external requesters are added in the next task.
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 
@@ -27,6 +25,9 @@ pub enum Requester {
     External {
         reply: ExternalReply,
         window_id: WindowId,
+        /// The mirror folder the client's path belongs to. Only consulted when an operation
+        /// starts: the operation fails if the session's machine owns a different mirror.
+        expected_host_key: Option<String>,
     },
 }
 
@@ -39,14 +40,29 @@ impl From<WindowId> for Requester {
 impl Requester {
     pub fn external(
         window_id: WindowId,
+        expected_host_key: Option<String>,
     ) -> (Self, oneshot::Receiver<Result<SyncReply, WarpSyncError>>) {
         let (reply, receiver) = ExternalReply::channel();
-        (Self::External { reply, window_id }, receiver)
+        let requester = Self::External {
+            reply,
+            window_id,
+            expected_host_key,
+        };
+        (requester, receiver)
     }
 
     pub(super) fn window_id(&self) -> WindowId {
         match self {
             Self::Window(window_id) | Self::External { window_id, .. } => *window_id,
+        }
+    }
+
+    pub(super) fn expected_host_key(&self) -> Option<String> {
+        match self {
+            Self::Window(_) => None,
+            Self::External {
+                expected_host_key, ..
+            } => expected_host_key.clone(),
         }
     }
 }

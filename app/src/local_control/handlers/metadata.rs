@@ -118,14 +118,15 @@ pub(super) struct PaneEntry {
     pub(super) pane_id: PaneId,
 }
 
-struct SessionEntry {
-    window_id: WindowId,
+pub(super) struct SessionEntry {
+    pub(super) window_id: WindowId,
     window_index: usize,
     tab_id: String,
-    tab_index: usize,
-    pane_id: PaneId,
+    pub(super) tab_index: usize,
+    pub(super) pane_id: PaneId,
     pane_index: usize,
-    is_active: bool,
+    pub(super) is_active: bool,
+    pub(super) pane_group: ViewHandle<PaneGroup>,
 }
 
 #[derive(Clone, Copy)]
@@ -535,17 +536,26 @@ pub(crate) fn pane_inspect(
     }))
 }
 
+/// The terminal sessions that `target` selects, or every terminal session when it selects none.
+pub(super) fn session_entries(
+    target: &TargetSelector,
+    action: ActionKind,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<SessionEntry>, ControlError> {
+    let target = active_session_target(target);
+    let pane_entries = select_pane_entries(&target, action, ctx)?;
+    select_session_entries(
+        session_entries_for_panes(pane_entries, ctx),
+        target.session.as_ref(),
+        action,
+    )
+}
+
 pub(crate) fn session_list(
     target: &TargetSelector,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<serde_json::Value, ControlError> {
-    let target = active_session_target(target);
-    let pane_entries = select_pane_entries(&target, ActionKind::SessionList, ctx)?;
-    let entries = select_session_entries(
-        session_entries_for_panes(pane_entries, ctx),
-        target.session.as_ref(),
-        ActionKind::SessionList,
-    )?;
+    let entries = session_entries(target, ActionKind::SessionList, ctx)?;
     let sessions = session_values(entries);
     Ok(json!({
         "action": ActionKind::SessionList.as_str(),
@@ -902,6 +912,7 @@ fn session_entries_for_panes(
                 pane_id: pane.pane_id,
                 pane_index: pane.index,
                 is_active,
+                pane_group: pane.pane_group,
             });
         }
     }

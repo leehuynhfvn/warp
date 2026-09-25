@@ -53,6 +53,9 @@ pub struct DownloadRequest {
     /// Normalized absolute remote path.
     pub remote_path: String,
     pub host_key: String,
+    /// The mirror folder that the caller worked out from a local path. The operation fails if the
+    /// remote machine turns out to own a different one.
+    pub expected_host_key: Option<String>,
     pub mirror_root: PathBuf,
     pub limits: SyncLimits,
     /// Whether local edits under the path may be overwritten.
@@ -88,6 +91,9 @@ pub struct UploadRequest {
     /// Normalized absolute remote path.
     pub remote_path: String,
     pub host_key: String,
+    /// The mirror folder that the caller worked out from a local path. The operation fails if the
+    /// remote machine turns out to own a different one.
+    pub expected_host_key: Option<String>,
     pub mirror_root: PathBuf,
     pub limits: SyncLimits,
 }
@@ -123,6 +129,9 @@ pub struct CompareRequest {
     /// The host's name as it reports itself, for the report.
     pub hostname: String,
     pub host_key: String,
+    /// The mirror folder that the caller worked out from a local path. The operation fails if the
+    /// remote machine turns out to own a different one.
+    pub expected_host_key: Option<String>,
     pub mirror_root: PathBuf,
     pub limits: SyncLimits,
 }
@@ -149,12 +158,14 @@ pub async fn download(
     ensure_readable(&probe, &request.remote_path)?;
     ensure_download_size(&probe, request.limits)?;
 
+    let host_key = resolve_host_key(
+        &request.mirror_root,
+        &request.host_key,
+        probe.machine_id.as_deref(),
+    )?;
+    ensure_expected_host_key(request.expected_host_key.as_deref(), &host_key)?;
     let request = &DownloadRequest {
-        host_key: resolve_host_key(
-            &request.mirror_root,
-            &request.host_key,
-            probe.machine_id.as_deref(),
-        )?,
+        host_key,
         ..request.clone()
     };
 
@@ -211,6 +222,7 @@ pub async fn compare(
         &request.host_key,
         probe.machine_id.as_deref(),
     )?;
+    ensure_expected_host_key(request.expected_host_key.as_deref(), &host_key)?;
     let recorded =
         load_manifest(&request.mirror_root, &host_key)?.entries_under(&request.remote_path);
     if recorded.is_empty() {
@@ -255,6 +267,7 @@ pub async fn prepare_upload(
         &request.host_key,
         probe.machine_id.as_deref(),
     )?;
+    ensure_expected_host_key(request.expected_host_key.as_deref(), &host_key)?;
     let manifest = load_manifest(&request.mirror_root, &host_key)?;
     let archive = build_upload(
         &request.remote_path,
@@ -525,6 +538,17 @@ fn resolve_host_key(
     Err(WarpSyncError::Manifest(
         "another host with the same name already owns this mirror".to_owned(),
     ))
+}
+
+/// Refuses to go on when the remote machine resolved to a mirror other than the one the caller
+/// asked for, so that a mirror is never used with a different machine.
+fn ensure_expected_host_key(expected: Option<&str>, resolved: &str) -> Result<(), WarpSyncError> {
+    match expected {
+        Some(expected) if expected != resolved => Err(WarpSyncError::Manifest(
+            "the mirror belongs to another machine".to_owned(),
+        )),
+        Some(_) | None => Ok(()),
+    }
 }
 
 fn load_manifest(mirror_root: &Path, host_key: &str) -> Result<Manifest, WarpSyncError> {

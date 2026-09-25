@@ -8,7 +8,7 @@ use super::WarpSyncError;
 
 const MAX_REMOTE_PATH_LEN: usize = 4096;
 const UNKNOWN_HOST_KEY: &str = "unknown-host";
-const STATE_DIR_NAME: &str = ".warp-sync";
+pub(super) const STATE_DIR_NAME: &str = ".warp-sync";
 const STAGING_DIR_NAME: &str = "staging";
 const RECOVERY_DIR_NAME: &str = "recovered";
 const DIFFS_DIR_NAME: &str = "diffs";
@@ -223,6 +223,22 @@ pub fn staging_dir(mirror_root: &Path) -> PathBuf {
 pub fn machine_host_key(host_key: &str, machine_id: &str) -> String {
     let digest = hex::encode(&Sha256::digest(machine_id.as_bytes())[..HOST_KEY_HASH_BYTES]);
     format!("{host_key}-{digest}")
+}
+
+/// Whether the mirror folder `dir_name` can belong to a machine that reports `hostname`: it is
+/// either the hostname's own folder or that folder with a machine suffix. This only narrows down
+/// the sessions worth trying: the transfer itself checks which mirror the machine resolves to.
+pub fn host_dir_matches(dir_name: &str, hostname: &str) -> bool {
+    let key = host_key(hostname);
+    if dir_name == key {
+        return true;
+    }
+    dir_name
+        .strip_prefix(key.as_str())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|suffix| {
+            suffix.len() == HOST_KEY_HASH_BYTES * 2 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+        })
 }
 
 /// A fresh directory for keeping a previous mirror that could not be restored in place.

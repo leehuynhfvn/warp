@@ -163,8 +163,10 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 }
 
 #[test]
-fn catalog_has_exactly_84_retained_actions() {
-    assert_eq!(ActionKind::ALL.len(), 84);
+fn catalog_has_exactly_the_retained_and_sync_actions() {
+    const RETAINED_ACTIONS: usize = 84;
+    const SYNC_ACTIONS: usize = 6;
+    assert_eq!(ActionKind::ALL.len(), RETAINED_ACTIONS + SYNC_ACTIONS);
 }
 
 #[test]
@@ -224,4 +226,184 @@ fn implemented_catalog_contains_all_retained_actions() {
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
     assert_eq!(actions, ActionKind::ALL);
+}
+
+#[test]
+fn sync_actions_have_stable_names() {
+    let names: Vec<&str> = [
+        ActionKind::SyncStatus,
+        ActionKind::SyncDownload,
+        ActionKind::SyncUploadPrepare,
+        ActionKind::SyncConfirm,
+        ActionKind::SyncCancel,
+        ActionKind::SyncCompare,
+    ]
+    .into_iter()
+    .map(ActionKind::as_str)
+    .collect();
+
+    assert_eq!(
+        names,
+        [
+            "sync.status",
+            "sync.download",
+            "sync.upload.prepare",
+            "sync.confirm",
+            "sync.cancel",
+            "sync.compare"
+        ]
+    );
+}
+
+#[test]
+fn sync_params_reject_unknown_fields_and_malformed_ids() {
+    let action = Action {
+        kind: ActionKind::SyncDownload,
+        params: serde_json::json!({ "path": "/m/h/etc", "recursive": true }),
+    };
+    assert_eq!(
+        action
+            .params_as::<SyncPathParams>()
+            .expect_err("unknown params are rejected")
+            .code,
+        ErrorCode::InvalidParams
+    );
+
+    let action = Action {
+        kind: ActionKind::SyncConfirm,
+        params: serde_json::json!({ "pending_id": "7" }),
+    };
+    assert_eq!(
+        action
+            .params_as::<SyncPendingParams>()
+            .expect_err("a pending id is a UUID")
+            .code,
+        ErrorCode::InvalidParams
+    );
+
+    let action = Action {
+        kind: ActionKind::SyncStatus,
+        params: serde_json::json!({}),
+    };
+    assert_eq!(
+        action
+            .params_as::<SyncStatusParams>()
+            .expect("the path is optional"),
+        SyncStatusParams::default()
+    );
+}
+
+fn roundtrip(result: &SyncResult) -> serde_json::Value {
+    let value = serde_json::to_value(result).expect("result serializes");
+    let decoded = serde_json::from_value::<SyncResult>(value.clone()).expect("result decodes");
+    assert_eq!(&decoded, result);
+    value
+}
+
+#[test]
+fn a_confirmation_result_flattens_its_kind_next_to_the_status() {
+    let pending_id = Uuid::new_v4();
+    let value = roundtrip(&SyncResult::NeedsConfirmation {
+        pending_id,
+        confirmation: SyncConfirmation::OverwriteLocalChanges {
+            files: vec!["/etc/a".to_owned()],
+        },
+    });
+
+    assert_eq!(value["status"], "needs_confirmation");
+    assert_eq!(value["kind"], "overwrite_local_changes");
+    assert_eq!(value["pending_id"], pending_id.to_string());
+    assert_eq!(value["files"], serde_json::json!(["/etc/a"]));
+}
+
+#[test]
+fn an_upload_confirmation_carries_the_summary_and_conflicts() {
+    let value = roundtrip(&SyncResult::NeedsConfirmation {
+        pending_id: Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(SyncUploadSummary {
+                remote_user: "root".to_owned(),
+                hostname: "prod-1".to_owned(),
+                remote_path: "/etc/nginx".to_owned(),
+                files: 2,
+                dirs: 1,
+                bytes: 3000,
+                new_files: vec!["/etc/nginx/new.conf".to_owned()],
+                missing_locally: Vec::new(),
+                remote_conflicts: Some(SyncRemoteConflicts {
+                    changed: vec!["/etc/nginx/nginx.conf".to_owned()],
+                    ..SyncRemoteConflicts::default()
+                }),
+                ownership_may_be_incomplete: false,
+                server_id_tail: None,
+            }),
+        },
+    });
+
+    assert_eq!(value["kind"], "upload");
+    assert_eq!(value["summary"]["remote_user"], "root");
+    assert_eq!(
+        value["summary"]["remote_conflicts"]["changed"],
+        serde_json::json!(["/etc/nginx/nginx.conf"])
+    );
+    assert!(value["summary"].get("server_id_tail").is_none());
+}
+
+#[test]
+fn every_sync_result_shape_roundtrips() {
+    let results = [
+        SyncResult::Status {
+            mirror_root: "/m".to_owned(),
+            path: Some(SyncPathStatus {
+                host_key: "prod-1".to_owned(),
+                remote_path: None,
+                sessions: vec![SyncSessionSummary {
+                    session_id: "s1".to_owned(),
+                    window_id: "w1".to_owned(),
+                    tab_index: 0,
+                    hostname: "prod-1".to_owned(),
+                    user: "root".to_owned(),
+                    is_active: true,
+                }],
+            }),
+        },
+        SyncResult::Downloaded {
+            local_path: "/m/prod-1/etc".to_owned(),
+            files: 1,
+            dirs: 1,
+            bytes: 10,
+            remote_user: "root".to_owned(),
+            skipped: vec![SyncSkippedEntry {
+                path: "/etc/l".to_owned(),
+                reason: "symbolic link".to_owned(),
+            }],
+            baseline_warning: None,
+        },
+        SyncResult::Uploaded {
+            files: 1,
+            dirs: 0,
+            bytes: 5,
+            remote_user: "root".to_owned(),
+            backup_path: Some("/root/.warp-sync/backups/b.tgz".to_owned()),
+            baseline_warning: None,
+        },
+        SyncResult::Compared {
+            differences: vec![SyncDifference {
+                remote_path: "/etc/a".to_owned(),
+                change: SyncChange::ChangedOnServer,
+                on_both_sides: true,
+            }],
+            identical_files: 4,
+            diff_path: "/m/.warp-sync/diffs/h/etc.diff".to_owned(),
+            host_dir: "/m/h".to_owned(),
+            server_copy_dir: "/m/.warp-sync/compare/h".to_owned(),
+            remote_user: "root".to_owned(),
+        },
+        SyncResult::Unchanged { identical_files: 2 },
+        SyncResult::Cancelled,
+    ];
+
+    for result in &results {
+        roundtrip(result);
+    }
 }

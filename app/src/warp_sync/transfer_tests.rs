@@ -152,6 +152,7 @@ impl Env {
         DownloadRequest {
             remote_path: self.remote_path.clone(),
             host_key: HOST_KEY.to_owned(),
+            expected_host_key: None,
             mirror_root: self.mirror_root(),
             limits: SyncLimits::default(),
             allow_overwrite_local_changes,
@@ -162,6 +163,7 @@ impl Env {
         UploadRequest {
             remote_path: self.remote_path.clone(),
             host_key: HOST_KEY.to_owned(),
+            expected_host_key: None,
             mirror_root: self.mirror_root(),
             limits: SyncLimits::default(),
         }
@@ -196,6 +198,7 @@ impl Env {
             remote_path: self.remote_path.clone(),
             hostname: "prod-1".to_owned(),
             host_key: HOST_KEY.to_owned(),
+            expected_host_key: None,
             mirror_root: self.mirror_root(),
             limits: SyncLimits::default(),
         }
@@ -1249,4 +1252,70 @@ fn a_mirror_downloaded_from_one_machine_cannot_be_uploaded_to_another() {
 
     assert!(matches!(onto_b, Err(WarpSyncError::NotMirrored(_))));
     assert_eq!(onto_a.unwrap().host_key, HOST_KEY);
+}
+
+#[test]
+fn a_download_for_another_mirror_folder_is_refused_before_anything_is_written() {
+    let env = Env::new();
+    let request = DownloadRequest {
+        expected_host_key: Some("other-host".to_owned()),
+        ..env.download_request(false)
+    };
+
+    let result = block_on(download(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("another machine")),
+        "{result:?}"
+    );
+    assert!(!env.mirror_root().join(HOST_KEY).exists());
+}
+
+#[test]
+fn a_download_for_the_folder_the_host_resolves_to_goes_ahead() {
+    let env = Env::new();
+    let request = DownloadRequest {
+        expected_host_key: Some(HOST_KEY.to_owned()),
+        ..env.download_request(false)
+    };
+
+    let result = block_on(download(&env.shell, &request));
+
+    assert!(matches!(result, Ok(DownloadResult::Done(_))), "{result:?}");
+}
+
+#[test]
+fn an_upload_for_another_mirror_folder_is_refused_before_it_is_packed() {
+    let env = Env::new();
+    env.download_done();
+    let request = UploadRequest {
+        expected_host_key: Some("other-host".to_owned()),
+        ..env.upload_request()
+    };
+
+    let result = block_on(prepare_upload(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("another machine")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_comparison_for_another_mirror_folder_is_refused() {
+    let env = Env::new();
+    env.download_done();
+    let request = CompareRequest {
+        expected_host_key: Some("other-host".to_owned()),
+        ..env.compare_request()
+    };
+
+    let result = block_on(compare(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("another machine")),
+        "{:?}",
+        result.as_ref().err()
+    );
 }

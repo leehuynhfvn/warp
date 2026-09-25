@@ -152,6 +152,30 @@ pub struct ResizeParams {
     pub amount: Option<u32>,
 }
 
+/// Parameters for the Warp Sync actions that act on one path of a host mirror.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncPathParams {
+    /// Absolute path of a file or folder in the local mirror.
+    pub path: String,
+}
+
+/// Parameters for `sync.status`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncStatusParams {
+    /// Absolute path in the local mirror whose host and sessions should be reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Parameters for answering an operation that is waiting for confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncPendingParams {
+    pub pending_id: Uuid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabActivateParams {
@@ -298,6 +322,139 @@ pub struct SurfaceSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceListResult {
     pub surfaces: Vec<SurfaceSummary>,
+}
+
+/// A Warp session that can run the commands of a Warp Sync operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncSessionSummary {
+    pub session_id: String,
+    pub window_id: String,
+    pub tab_index: u32,
+    pub hostname: String,
+    pub user: String,
+    pub is_active: bool,
+}
+
+/// What `sync.status` knows about a path of the mirror.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncPathStatus {
+    /// Name of the host's folder in the mirror.
+    pub host_key: String,
+    /// The path on the server, absent for the host folder itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_path: Option<String>,
+    /// Remote sessions that belong to the host, empty when none is open.
+    pub sessions: Vec<SyncSessionSummary>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncChange {
+    ChangedLocally,
+    ChangedOnServer,
+    ChangedOnBoth,
+    Differs,
+    NewOnServer,
+    DeletedLocally,
+    NewLocally,
+    DeletedOnServer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncDifference {
+    pub remote_path: String,
+    pub change: SyncChange,
+    /// Whether the server and the mirror both have the file, so that it can be shown as a diff.
+    pub on_both_sides: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncSkippedEntry {
+    pub path: String,
+    pub reason: String,
+}
+
+/// What an upload would overwrite on the server without the user having seen it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncRemoteConflicts {
+    pub changed: Vec<String>,
+    pub missing: Vec<String>,
+    pub already_exist: Vec<String>,
+}
+
+/// What the user is asked to approve before an upload is sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncUploadSummary {
+    pub remote_user: String,
+    pub hostname: String,
+    pub remote_path: String,
+    pub files: u64,
+    pub dirs: u64,
+    pub bytes: u64,
+    pub new_files: Vec<String>,
+    pub missing_locally: Vec<String>,
+    /// Absent when the server has no tool to hash files, so nothing could be compared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_conflicts: Option<SyncRemoteConflicts>,
+    pub ownership_may_be_incomplete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id_tail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SyncConfirmation {
+    OverwriteLocalChanges { files: Vec<String> },
+    Upload { summary: Box<SyncUploadSummary> },
+}
+
+/// Result of every Warp Sync action; `status` says which shape it has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SyncResult {
+    Status {
+        mirror_root: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<SyncPathStatus>,
+    },
+    Downloaded {
+        local_path: String,
+        files: u64,
+        dirs: u64,
+        bytes: u64,
+        remote_user: String,
+        skipped: Vec<SyncSkippedEntry>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        baseline_warning: Option<String>,
+    },
+    /// Nothing has changed yet: answer with `sync.confirm` or `sync.cancel` and this id.
+    NeedsConfirmation {
+        pending_id: Uuid,
+        #[serde(flatten)]
+        confirmation: SyncConfirmation,
+    },
+    Uploaded {
+        files: u64,
+        dirs: u64,
+        bytes: u64,
+        remote_user: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        backup_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        baseline_warning: Option<String>,
+    },
+    Compared {
+        differences: Vec<SyncDifference>,
+        identical_files: u64,
+        diff_path: String,
+        host_dir: String,
+        server_copy_dir: String,
+        remote_user: String,
+    },
+    Unchanged {
+        identical_files: u64,
+    },
+    Cancelled,
 }
 
 /// Typed success payloads for catalog actions that need stable structured data.
@@ -473,6 +630,8 @@ pub enum ErrorCode {
     BridgeUnavailable,
     UnsupportedAction,
     NotAllowlisted,
+    /// A Warp Sync operation failed; the message says why.
+    SyncFailed,
     Internal,
 }
 

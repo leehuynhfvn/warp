@@ -158,7 +158,7 @@ fn surface_list_rejects_target_selectors() {
 
 #[test]
 fn capabilities_advertises_the_complete_catalog() {
-    assert_eq!(capabilities().len(), 84);
+    assert_eq!(capabilities().len(), 90);
 }
 
 #[test]

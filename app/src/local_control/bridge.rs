@@ -11,6 +11,7 @@ use futures::channel::oneshot;
 use uuid::Uuid;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
+use crate::local_control::handlers::sync::{self, PathOperation, SyncReceiver};
 use crate::local_control::handlers::{
     app_state, close, metadata, metadata_config, settings_surfaces,
 };
@@ -25,7 +26,6 @@ pub(super) enum BridgeResult {
     Ready(ResponseEnvelope),
     /// The action outlives the main-thread turn; the HTTP layer awaits `receiver` so that the
     /// model is never blocked on remote work.
-    #[allow(dead_code)] // Constructed by the async actions that build on this branch.
     Pending {
         request_id: Uuid,
         receiver: oneshot::Receiver<Result<serde_json::Value, ControlError>>,
@@ -207,11 +207,66 @@ impl LocalControlBridge {
             ActionKind::WindowClose => close::window_close(&self.instance_id, &request, ctx),
             ActionKind::TabClose => close::tab_close(&self.instance_id, &request, ctx),
             ActionKind::PaneClose => close::pane_close(&self.instance_id, &request, ctx),
+            ActionKind::SyncStatus => {
+                return pending(
+                    request.request_id,
+                    sync::status(&request.action, &request.target, ctx),
+                );
+            }
+            ActionKind::SyncDownload => {
+                return pending(
+                    request.request_id,
+                    sync::path_operation(
+                        PathOperation::Download,
+                        &request.action,
+                        &request.target,
+                        ctx,
+                    ),
+                );
+            }
+            ActionKind::SyncUploadPrepare => {
+                return pending(
+                    request.request_id,
+                    sync::path_operation(
+                        PathOperation::UploadPrepare,
+                        &request.action,
+                        &request.target,
+                        ctx,
+                    ),
+                );
+            }
+            ActionKind::SyncCompare => {
+                return pending(
+                    request.request_id,
+                    sync::path_operation(
+                        PathOperation::Compare,
+                        &request.action,
+                        &request.target,
+                        ctx,
+                    ),
+                );
+            }
+            ActionKind::SyncConfirm => {
+                return pending(request.request_id, sync::confirm(&request.action, ctx));
+            }
+            ActionKind::SyncCancel => {
+                return pending(request.request_id, sync::cancel(&request.action, ctx));
+            }
         };
         BridgeResult::Ready(match result {
             Ok(data) => ResponseEnvelope::ok(request.request_id, data),
             Err(error) => ResponseEnvelope::error(request.request_id, error),
         })
+    }
+}
+
+fn pending(request_id: Uuid, receiver: Result<SyncReceiver, ControlError>) -> BridgeResult {
+    match receiver {
+        Ok(receiver) => BridgeResult::Pending {
+            request_id,
+            receiver,
+        },
+        Err(error) => BridgeResult::error(request_id, error),
     }
 }
 
