@@ -491,6 +491,11 @@ pub enum WorkspaceAction {
     WarpSyncDownloadPath,
     /// Ask for a path on the active remote session's host and upload its local mirror.
     WarpSyncUploadPath,
+    /// Compare the local Warp Sync mirror of the active remote session's working directory with
+    /// the host.
+    WarpSyncCompareCurrentDirectory,
+    /// Ask for a path on the active remote session's host and compare its local mirror with it.
+    WarpSyncComparePath,
     /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
     WarpSyncOpenMirror,
     TerminateApp,
@@ -1086,6 +1091,8 @@ impl WorkspaceAction {
             | OpenInExplorer { .. }
             | WarpSyncDownloadCurrentDirectory
             | WarpSyncUploadCurrentDirectory
+            | WarpSyncCompareCurrentDirectory
+            | WarpSyncComparePath
             | WarpSyncDownloadPath
             | WarpSyncUploadPath
             | WarpSyncOpenMirror

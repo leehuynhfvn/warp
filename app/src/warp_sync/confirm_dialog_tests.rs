@@ -1,3 +1,4 @@
+use super::super::diff::{FileChange, FileDifference};
 use super::*;
 
 fn paths(count: usize) -> Vec<String> {
@@ -70,14 +71,24 @@ fn upload_request_is_titled_with_the_real_remote_user() {
     let request = ConfirmRequest::upload(PendingId::for_test(1), &summary());
 
     assert_eq!(request.title, "Upload to root@prod-1?");
-    assert_eq!(request.kind, ConfirmKind::Upload);
+    assert_eq!(
+        request.kind,
+        ConfirmKind::Upload {
+            id: PendingId::for_test(1)
+        }
+    );
 }
 
 #[test]
 fn overwrite_request_lists_the_modified_files() {
     let request = ConfirmRequest::overwrite_local_changes(PendingId::for_test(2), &paths(2));
 
-    assert_eq!(request.kind, ConfirmKind::OverwriteLocalChanges);
+    assert_eq!(
+        request.kind,
+        ConfirmKind::OverwriteLocalChanges {
+            id: PendingId::for_test(2)
+        }
+    );
     assert!(request.body.contains("• /etc/f0\n• /etc/f1"));
 }
 
@@ -116,4 +127,72 @@ fn upload_body_admits_when_the_server_could_not_be_checked() {
 
     assert!(body.contains("Could not check whether the server's files changed"));
     assert!(!body.contains("unchanged since the last sync"));
+}
+
+fn compare_summary() -> CompareSummary {
+    CompareSummary {
+        remote_user: "root".to_owned(),
+        hostname: "prod-1".to_owned(),
+        remote_path: "/etc/nginx".to_owned(),
+        differences: vec![
+            FileDifference {
+                remote_path: "/etc/nginx/a.conf".to_owned(),
+                change: FileChange::ChangedOnServer,
+            },
+            FileDifference {
+                remote_path: "/etc/nginx/b.conf".to_owned(),
+                change: FileChange::NewLocally,
+            },
+        ],
+        identical_files: 5,
+        diff_path: PathBuf::from("/mirror/.warp-sync/diffs/prod-1/etc_nginx.diff"),
+    }
+}
+
+#[test]
+fn compare_result_lists_each_difference_with_who_changed_it() {
+    let request = ConfirmRequest::compare_result(&compare_summary());
+
+    assert_eq!(request.title, "2 differences with root@prod-1");
+    assert!(request.body.starts_with("prod-1:/etc/nginx\n\n2 files differ, 5 identical."));
+    assert!(request.body.contains("• changed on the server: /etc/nginx/a.conf"));
+    assert!(request.body.contains("• new locally: /etc/nginx/b.conf"));
+}
+
+#[test]
+fn compare_result_opens_the_diff_and_is_not_destructive() {
+    let summary = compare_summary();
+
+    let request = ConfirmRequest::compare_result(&summary);
+
+    assert_eq!(
+        request.kind,
+        ConfirmKind::CompareResult {
+            diff_path: summary.diff_path
+        }
+    );
+    assert_eq!(request.kind.pending_id(), None);
+    assert_eq!(request.confirm_label, "Open diff");
+    assert_eq!(request.cancel_label, "Close");
+    assert_eq!(request.style, ConfirmStyle::Neutral);
+}
+
+#[test]
+fn only_dialogs_that_resume_an_operation_have_a_pending_id() {
+    let id = PendingId::for_test(7);
+
+    assert_eq!(ConfirmKind::Upload { id }.pending_id(), Some(id));
+    assert_eq!(
+        ConfirmKind::OverwriteLocalChanges { id }.pending_id(),
+        Some(id)
+    );
+}
+
+#[test]
+fn upload_and_overwrite_dialogs_are_destructive() {
+    let overwrite = ConfirmRequest::overwrite_local_changes(PendingId::for_test(1), &paths(1));
+    let upload = ConfirmRequest::upload(PendingId::for_test(2), &summary());
+
+    assert_eq!(overwrite.style, ConfirmStyle::Destructive);
+    assert_eq!(upload.style, ConfirmStyle::Destructive);
 }

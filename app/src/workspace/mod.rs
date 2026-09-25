@@ -375,6 +375,18 @@ pub fn init(app: &mut AppContext) {
             )
             .with_context_predicate(id!("Workspace")),
             EditableBinding::new(
+                "workspace:warp_sync_compare_cwd",
+                "Warp Sync: Compare current directory with local mirror",
+                WorkspaceAction::WarpSyncCompareCurrentDirectory,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:warp_sync_compare_path",
+                "Warp Sync: Compare a path on the server with local mirror…",
+                WorkspaceAction::WarpSyncComparePath,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
                 "workspace:warp_sync_download_path",
                 "Warp Sync: Download a path from the server to local mirror…",
                 WorkspaceAction::WarpSyncDownloadPath,

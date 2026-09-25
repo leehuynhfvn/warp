@@ -18879,6 +18879,17 @@ impl Workspace {
         });
     }
 
+    fn warp_sync_compare_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request = self.warp_sync_current_directory(ctx);
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_compare(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
     fn warp_sync_upload_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
         let request = self.warp_sync_current_directory(ctx);
@@ -18945,7 +18956,13 @@ impl Workspace {
             (Ok((session, remote_path)), PathPromptKind::Upload) => {
                 warp_sync.start_upload(session, remote_path, window_id, ctx)
             }
-            (Err(error), PathPromptKind::Download | PathPromptKind::Upload) => {
+            (Ok((session, remote_path)), PathPromptKind::Compare) => {
+                warp_sync.start_compare(session, remote_path, window_id, ctx)
+            }
+            (
+                Err(error),
+                PathPromptKind::Download | PathPromptKind::Upload | PathPromptKind::Compare,
+            ) => {
                 warp_sync.report_failure(window_id, error, ctx)
             }
         });
@@ -18980,6 +18997,7 @@ impl Workspace {
             WarpSyncEvent::Started { window_id, .. }
             | WarpSyncEvent::DownloadNeedsConfirmation { window_id, .. }
             | WarpSyncEvent::UploadNeedsConfirmation { window_id, .. }
+            | WarpSyncEvent::CompareFinished { window_id, .. }
             | WarpSyncEvent::Succeeded { window_id, .. }
             | WarpSyncEvent::Failed { window_id, .. } => *window_id,
         };
@@ -19019,6 +19037,10 @@ impl Workspace {
                 let request = ConfirmRequest::upload(*id, summary);
                 self.show_warp_sync_confirm_dialog(request, ctx);
             }
+            WarpSyncEvent::CompareFinished { summary, .. } => {
+                let request = ConfirmRequest::compare_result(summary);
+                self.show_warp_sync_confirm_dialog(request, ctx);
+            }
         }
     }
 
@@ -19040,9 +19062,8 @@ impl Workspace {
         let replaced = self
             .warp_sync_confirm_dialog
             .update(ctx, |dialog, ctx| dialog.set_request(request, ctx));
-        if let Some(replaced) = replaced {
-            WarpSyncModel::handle(ctx)
-                .update(ctx, |warp_sync, _| warp_sync.cancel_pending(replaced.id));
+        if let Some(id) = replaced.and_then(|replaced| replaced.kind.pending_id()) {
+            WarpSyncModel::handle(ctx).update(ctx, |warp_sync, _| warp_sync.cancel_pending(id));
         }
         self.current_workspace_state
             .is_warp_sync_confirm_dialog_open = true;
@@ -19058,22 +19079,35 @@ impl Workspace {
         self.current_workspace_state
             .is_warp_sync_confirm_dialog_open = false;
         match event {
-            WarpSyncConfirmEvent::Confirm { request } => {
-                let id = request.id;
-                match request.kind {
-                    ConfirmKind::OverwriteLocalChanges => {
-                        WarpSyncModel::handle(ctx)
-                            .update(ctx, |model, ctx| model.confirm_download_overwrite(id, ctx));
-                    }
-                    ConfirmKind::Upload => {
-                        WarpSyncModel::handle(ctx)
-                            .update(ctx, |model, ctx| model.confirm_upload(id, ctx));
-                    }
+            WarpSyncConfirmEvent::Confirm { request } => match &request.kind {
+                ConfirmKind::OverwriteLocalChanges { id } => {
+                    WarpSyncModel::handle(ctx)
+                        .update(ctx, |model, ctx| model.confirm_download_overwrite(*id, ctx));
                 }
-            }
+                ConfirmKind::Upload { id } => {
+                    WarpSyncModel::handle(ctx)
+                        .update(ctx, |model, ctx| model.confirm_upload(*id, ctx));
+                }
+                ConfirmKind::CompareResult { diff_path } => {
+                    self.open_file_with_target(
+                        diff_path.clone(),
+                        FileTarget::CodeEditor(EditorLayout::SplitPane),
+                        None,
+                        CodeSource::Link {
+                            path: diff_path.clone(),
+                            range_start: None,
+                            range_end: None,
+                        },
+                        ctx,
+                    );
+                    ctx.notify();
+                    return;
+                }
+            },
             WarpSyncConfirmEvent::Cancel { request } => {
-                let id = request.id;
-                WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_pending(id));
+                if let Some(id) = request.kind.pending_id() {
+                    WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_pending(id));
+                }
             }
         }
         self.focus_active_tab(ctx);
@@ -25426,6 +25460,8 @@ impl TypedActionView for Workspace {
             }
             WarpSyncDownloadCurrentDirectory => self.warp_sync_download_current_directory(ctx),
             WarpSyncUploadCurrentDirectory => self.warp_sync_upload_current_directory(ctx),
+            WarpSyncCompareCurrentDirectory => self.warp_sync_compare_current_directory(ctx),
+            WarpSyncComparePath => self.open_warp_sync_path_prompt(PathPromptKind::Compare, ctx),
             WarpSyncDownloadPath => self.open_warp_sync_path_prompt(PathPromptKind::Download, ctx),
             WarpSyncUploadPath => self.open_warp_sync_path_prompt(PathPromptKind::Upload, ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),

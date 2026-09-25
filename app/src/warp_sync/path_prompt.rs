@@ -31,6 +31,7 @@ const PATH_PLACEHOLDER: &str = "/etc/nginx/nginx.conf";
 pub enum PathPromptKind {
     Download,
     Upload,
+    Compare,
 }
 
 impl PathPromptKind {
@@ -38,6 +39,7 @@ impl PathPromptKind {
         match self {
             Self::Download => "Download from the server",
             Self::Upload => "Upload to the server",
+            Self::Compare => "Compare with the server",
         }
     }
 
@@ -45,6 +47,7 @@ impl PathPromptKind {
         match self {
             Self::Download => "Download",
             Self::Upload => "Upload",
+            Self::Compare => "Compare",
         }
     }
 }

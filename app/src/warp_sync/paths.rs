@@ -11,6 +11,8 @@ const UNKNOWN_HOST_KEY: &str = "unknown-host";
 const STATE_DIR_NAME: &str = ".warp-sync";
 const STAGING_DIR_NAME: &str = "staging";
 const RECOVERY_DIR_NAME: &str = "recovered";
+const DIFFS_DIR_NAME: &str = "diffs";
+const MAX_DIFF_STEM_CHARS: usize = 150;
 const HOST_KEY_HASH_BYTES: usize = 4;
 
 /// Top-level directories that hold kernel or runtime state rather than files worth mirroring.
@@ -42,6 +44,30 @@ pub fn host_key(hostname: &str) -> String {
     };
     let digest = hex::encode(&Sha256::digest(hostname.as_bytes())[..HOST_KEY_HASH_BYTES]);
     format!("{base}-{digest}")
+}
+
+/// The file that holds the latest comparison of `remote_path` on the host with `host_key`. It
+/// lives next to the manifests rather than in the mirror so that it is never mistaken for a
+/// synced file.
+pub fn diff_path(mirror_root: &Path, host_key: &str, remote_path: &str) -> PathBuf {
+    let stem: String = remote_path
+        .trim_start_matches('/')
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(MAX_DIFF_STEM_CHARS)
+        .collect();
+    let stem = if stem.is_empty() { "root" } else { &stem };
+    mirror_root
+        .join(STATE_DIR_NAME)
+        .join(DIFFS_DIR_NAME)
+        .join(host_key)
+        .join(format!("{stem}.diff"))
 }
 
 /// Directory holding the mirror of everything synced from `hostname`.

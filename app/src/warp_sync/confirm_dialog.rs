@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::Fill;
 use warpui::elements::{
@@ -10,14 +12,17 @@ use warpui::{
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
-use super::model::{PendingId, UploadSummary, format_size, pluralize_count};
+use super::model::{CompareSummary, PendingId, UploadSummary, format_size, pluralize_count};
 use super::remote_check::{RemoteCheck, RemoteConflicts};
 use crate::appearance::Appearance;
 use crate::ui_components::dialog::{Dialog, dialog_styles};
-use crate::view_components::action_button::{ActionButton, DangerPrimaryTheme, NakedTheme};
+use crate::view_components::action_button::{
+    ActionButton, DangerPrimaryTheme, NakedTheme, PrimaryTheme,
+};
 
 const DIALOG_WIDTH: f32 = 520.;
 const MAX_LISTED_PATHS: usize = 10;
+const CANCEL_LABEL: &str = "Cancel";
 
 pub fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
@@ -31,20 +36,43 @@ pub fn init(app: &mut AppContext) {
     )]);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What confirming the dialog does.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmKind {
-    OverwriteLocalChanges,
-    Upload,
+    /// Resumes a download that would discard local edits.
+    OverwriteLocalChanges { id: PendingId },
+    /// Resumes an upload.
+    Upload { id: PendingId },
+    /// Opens the written comparison.
+    CompareResult { diff_path: PathBuf },
 }
 
-/// What the dialog asks and which pending operation a confirmation resumes.
+impl ConfirmKind {
+    /// The pending operation that cancelling the dialog abandons, if any.
+    pub fn pending_id(&self) -> Option<PendingId> {
+        match self {
+            Self::OverwriteLocalChanges { id } | Self::Upload { id } => Some(*id),
+            Self::CompareResult { .. } => None,
+        }
+    }
+}
+
+/// Whether confirming is an action that can lose data, which decides how its button looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfirmStyle {
+    Destructive,
+    Neutral,
+}
+
+/// What the dialog asks and what confirming it does.
 #[derive(Debug, Clone)]
 pub struct ConfirmRequest {
-    pub id: PendingId,
     pub kind: ConfirmKind,
     title: String,
     body: String,
     confirm_label: &'static str,
+    cancel_label: &'static str,
+    style: ConfirmStyle,
 }
 
 impl ConfirmRequest {
@@ -55,23 +83,64 @@ impl ConfirmRequest {
             bullet_list(modified_files)
         );
         Self {
-            id,
-            kind: ConfirmKind::OverwriteLocalChanges,
+            kind: ConfirmKind::OverwriteLocalChanges { id },
             title: "Overwrite local changes?".to_owned(),
             body,
             confirm_label: "Overwrite",
+            cancel_label: CANCEL_LABEL,
+            style: ConfirmStyle::Destructive,
         }
     }
 
     pub fn upload(id: PendingId, summary: &UploadSummary) -> Self {
         Self {
-            id,
-            kind: ConfirmKind::Upload,
+            kind: ConfirmKind::Upload { id },
             title: format!("Upload to {}@{}?", summary.remote_user, summary.hostname),
             body: upload_body(summary),
             confirm_label: "Upload",
+            cancel_label: CANCEL_LABEL,
+            style: ConfirmStyle::Destructive,
         }
     }
+
+    pub fn compare_result(summary: &CompareSummary) -> Self {
+        Self {
+            kind: ConfirmKind::CompareResult {
+                diff_path: summary.diff_path.clone(),
+            },
+            title: format!(
+                "{} with {}@{}",
+                pluralize_count(summary.differences.len(), "difference"),
+                summary.remote_user,
+                summary.hostname
+            ),
+            body: compare_body(summary),
+            confirm_label: "Open diff",
+            cancel_label: "Close",
+            style: ConfirmStyle::Neutral,
+        }
+    }
+}
+
+fn compare_body(summary: &CompareSummary) -> String {
+    let changes: Vec<String> = summary
+        .differences
+        .iter()
+        .map(|difference| format!("{}: {}", difference.change.label(), difference.remote_path))
+        .collect();
+    [
+        format!("{}:{}", summary.hostname, summary.remote_path),
+        format!(
+            "{} differ, {} identical.",
+            pluralize_count(summary.differences.len(), "file"),
+            summary.identical_files
+        ),
+        bullet_list(&changes),
+        "In the diff, '-' is the server and '+' is your local mirror. Uploading makes the server \
+         match the local mirror."
+            .to_owned(),
+    ]
+    .join("\n\n")
 }
 
 fn upload_body(summary: &UploadSummary) -> String {
@@ -171,7 +240,7 @@ pub struct WarpSyncConfirmDialog {
 impl WarpSyncConfirmDialog {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         let cancel_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Cancel", NakedTheme).on_click(|ctx| {
+            ActionButton::new(CANCEL_LABEL, NakedTheme).on_click(|ctx| {
                 ctx.dispatch_typed_action(WarpSyncConfirmAction::Cancel);
             })
         });
@@ -194,7 +263,14 @@ impl WarpSyncConfirmDialog {
         ctx: &mut ViewContext<Self>,
     ) -> Option<ConfirmRequest> {
         self.confirm_button.update(ctx, |button, ctx| {
-            button.set_label(request.confirm_label, ctx)
+            button.set_label(request.confirm_label, ctx);
+            match request.style {
+                ConfirmStyle::Destructive => button.set_theme(DangerPrimaryTheme, ctx),
+                ConfirmStyle::Neutral => button.set_theme(PrimaryTheme, ctx),
+            }
+        });
+        self.cancel_button.update(ctx, |button, ctx| {
+            button.set_label(request.cancel_label, ctx)
         });
         let replaced = self.request.replace(request);
         ctx.notify();

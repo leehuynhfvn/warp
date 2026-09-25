@@ -1382,6 +1382,8 @@ pub enum ContextMenuAction {
     WarpSyncDownload,
     /// Uploads the selected remote path's local Warp Sync mirror back to the server.
     WarpSyncUpload,
+    /// Compares the selected remote path's local Warp Sync mirror with the server.
+    WarpSyncCompare,
     CopyUrl {
         url_content: String,
     },
@@ -1523,6 +1525,7 @@ impl fmt::Debug for ContextMenuAction {
             CopySelectedText => f.write_str("CopySelectedText"),
             WarpSyncDownload => f.write_str("WarpSyncDownload"),
             WarpSyncUpload => f.write_str("WarpSyncUpload"),
+            WarpSyncCompare => f.write_str("WarpSyncCompare"),
             CopyBlocks => f.write_str("CopyBlocks"),
             CopyBlockCommands => f.write_str("CopyBlockCommands"),
             CopyBlockOutputs => f.write_str("CopyBlockOutputs"),
@@ -17448,6 +17451,11 @@ impl TerminalView {
                                 ContextMenuAction::WarpSyncUpload,
                             ))
                             .into_item(),
+                        MenuItemFields::new("Warp Sync: Compare with local mirror")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::WarpSyncCompare,
+                            ))
+                            .into_item(),
                     ]);
                 }
                 fields
@@ -22159,6 +22167,17 @@ impl TerminalView {
         });
     }
 
+    fn context_menu_warp_sync_compare(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request = self.warp_sync_selection_request(ctx);
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                warp_sync.start_compare(session, remote_path, window_id, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
     fn context_menu_copy_selected_text(&mut self, ctx: &mut ViewContext<Self>) {
         {
             let semantic_selection = SemanticSelection::as_ref(ctx);
@@ -25879,6 +25898,7 @@ impl TerminalView {
             CopySelectedText => self.context_menu_copy_selected_text(ctx),
             WarpSyncDownload => self.context_menu_warp_sync_download(ctx),
             WarpSyncUpload => self.context_menu_warp_sync_upload(ctx),
+            WarpSyncCompare => self.context_menu_warp_sync_compare(ctx),
             CopyUrl { url_content } => self.context_menu_copy_url(url_content, ctx),
             CopyBlocks => self.context_menu_copy_blocks(ctx),
             CopyBlockCommands => self.context_menu_copy_block_commands(ctx),

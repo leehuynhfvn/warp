@@ -5,6 +5,7 @@
 mod archive;
 pub mod config;
 pub mod confirm_dialog;
+mod diff;
 mod error;
 mod manifest;
 mod model;

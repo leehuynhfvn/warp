@@ -6,6 +6,7 @@ use futures::executor::block_on;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
+use super::super::diff::FileChange;
 use super::super::remote_check::RemoteConflicts;
 use super::super::remote_script::remote_failure_message;
 use super::*;
@@ -184,6 +185,19 @@ impl Env {
     fn upload(&self) -> Result<UploadOutcome, WarpSyncError> {
         let prepared = block_on(prepare_upload(&self.shell, &self.upload_request()))?;
         block_on(execute_upload(&self.shell, &prepared))
+    }
+
+    fn compare_request(&self) -> CompareRequest {
+        CompareRequest {
+            remote_path: self.remote_path.clone(),
+            host_key: HOST_KEY.to_owned(),
+            mirror_root: self.mirror_root(),
+            limits: SyncLimits::default(),
+        }
+    }
+
+    fn compare(&self) -> Result<CompareOutcome, WarpSyncError> {
+        block_on(compare(&self.shell, &self.compare_request()))
     }
 
     fn prepare(&self) -> PreparedUpload {
@@ -555,6 +569,112 @@ fn a_failing_hash_command_does_not_block_the_upload() {
     .unwrap();
 
     assert_eq!(prepared.remote_check, RemoteCheck::Unavailable);
+}
+
+#[test]
+fn compare_of_an_unchanged_mirror_finds_nothing_and_writes_no_diff() {
+    let env = Env::new();
+    env.download_done();
+
+    let outcome = env.compare().unwrap();
+
+    assert!(outcome.differences.is_empty());
+    assert_eq!(outcome.identical_files, 3);
+    assert_eq!(outcome.diff_path, None);
+}
+
+#[test]
+fn compare_reports_changes_on_both_sides_and_writes_a_diff() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited locally").unwrap();
+    fs::write(env.remote("b.conf"), "edited on the server").unwrap();
+    fs::write(env.local("new.conf"), "brand new").unwrap();
+    fs::remove_file(env.local("sub/c.conf")).unwrap();
+
+    let outcome = env.compare().unwrap();
+
+    let changes: Vec<(String, FileChange)> = outcome
+        .differences
+        .iter()
+        .map(|difference| {
+            let relative = difference
+                .remote_path
+                .strip_prefix(&format!("{}/", env.remote_path))
+                .unwrap()
+                .to_owned();
+            (relative, difference.change)
+        })
+        .collect();
+    assert_eq!(
+        changes,
+        vec![
+            ("a.conf".to_owned(), FileChange::ChangedLocally),
+            ("b.conf".to_owned(), FileChange::ChangedOnServer),
+            ("new.conf".to_owned(), FileChange::NewLocally),
+            ("sub/c.conf".to_owned(), FileChange::DeletedLocally),
+        ]
+    );
+    let diff_path = outcome.diff_path.expect("there are differences");
+    assert!(diff_path.starts_with(env.mirror_root().join(".warp-sync/diffs")));
+    let diff = fs::read_to_string(&diff_path).unwrap();
+    assert!(diff.contains("-remote a\n\\ No newline at end of file\n+edited locally"), "{diff}");
+    assert!(diff.contains("-edited on the server") || diff.contains("+remote b"), "{diff}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_comparison_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited").unwrap();
+
+    let diff_path = env.compare().unwrap().diff_path.unwrap();
+
+    let mode = fs::metadata(diff_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn compare_leaves_the_mirror_and_manifest_alone() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited locally").unwrap();
+    fs::write(env.remote("a.conf"), "edited on the server").unwrap();
+    let manifest_before = env.manifest();
+
+    env.compare().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(env.local("a.conf")).unwrap(),
+        "edited locally"
+    );
+    assert_eq!(env.manifest(), manifest_before);
+    let staging = env.mirror_root().join(".warp-sync/staging");
+    let leftovers = fs::read_dir(staging).map(|dir| dir.count()).unwrap_or(0);
+    assert_eq!(leftovers, 0);
+}
+
+#[test]
+fn compare_without_a_download_is_not_mirrored() {
+    let env = Env::new();
+
+    let result = env.compare();
+
+    assert!(matches!(result, Err(WarpSyncError::NotMirrored(_))));
+}
+
+#[test]
+fn compare_of_a_missing_path_is_not_found() {
+    let env = Env::new();
+    env.download_done();
+    fs::remove_dir_all(env.remote("")).unwrap();
+
+    let result = env.compare();
+
+    assert!(matches!(result, Err(WarpSyncError::NotFound(_))));
 }
 
 #[test]

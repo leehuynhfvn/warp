@@ -299,3 +299,24 @@ fn machine_host_keys_differ_per_machine_and_extend_the_host_key() {
     assert!(first.starts_with("draff3-"));
     assert_eq!(first, machine_host_key("draff3", "aaaaaaaaaaaaaaaa"));
 }
+
+#[test]
+fn diff_path_lives_in_the_state_directory_and_uses_a_safe_name() {
+    let path = diff_path(Path::new("/m"), "prod-1", "/etc/nginx/my conf's.d");
+
+    assert_eq!(
+        path,
+        Path::new("/m/.warp-sync/diffs/prod-1/etc_nginx_my_conf_s.d.diff")
+    );
+}
+
+#[test]
+fn diff_path_names_are_bounded_and_never_empty() {
+    let long = format!("/{}", "a".repeat(1000));
+
+    let long_name = diff_path(Path::new("/m"), "h", &long);
+    let root_name = diff_path(Path::new("/m"), "h", "/");
+
+    assert!(long_name.file_name().unwrap().len() <= MAX_DIFF_STEM_CHARS + ".diff".len());
+    assert_eq!(root_name, Path::new("/m/.warp-sync/diffs/h/root.diff"));
+}

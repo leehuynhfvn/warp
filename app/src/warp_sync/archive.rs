@@ -666,6 +666,42 @@ pub fn locally_modified_files(
     Ok(modified)
 }
 
+/// A regular file in the local mirror.
+#[derive(Debug, Clone)]
+pub struct LocalFile {
+    pub path: PathBuf,
+    pub sha256: String,
+}
+
+/// The regular files of the mirror of `root`, keyed by their remote path. Empty if `root` has not
+/// been mirrored.
+pub fn local_files(
+    root: &str,
+    mirror_root: &Path,
+    host_key: &str,
+) -> Result<BTreeMap<String, LocalFile>, WarpSyncError> {
+    let local_root = local_path_for(mirror_root, host_key, root);
+    let items = match collect_local(&local_root, root) {
+        Ok(items) => items,
+        Err(WarpSyncError::NotMirrored(_)) => return Ok(BTreeMap::new()),
+        Err(err) => return Err(err),
+    };
+    items
+        .into_iter()
+        .filter(|item| !item.is_dir)
+        .map(|item| {
+            let sha256 = file_sha256(&item.path)?;
+            Ok((
+                item.remote_path(root),
+                LocalFile {
+                    path: item.path,
+                    sha256,
+                },
+            ))
+        })
+        .collect()
+}
+
 fn file_sha256(path: &Path) -> Result<String, WarpSyncError> {
     let mut file = File::open(path).map_err(|err| local_io("read", path, &err))?;
     let mut hasher = Sha256::new();

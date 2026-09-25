@@ -10,9 +10,10 @@ use super::paths::host_key;
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
+use super::diff::FileDifference;
 use super::transfer::{
-    DownloadOutcome, DownloadRequest, DownloadResult, PreparedUpload, UploadOutcome, UploadRequest,
-    download, execute_upload, prepare_upload,
+    CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult, PreparedUpload,
+    UploadOutcome, UploadRequest, compare, download, execute_upload, prepare_upload,
 };
 use crate::terminal::model::session::Session;
 
@@ -49,6 +50,20 @@ pub struct UploadSummary {
     pub server_id_tail: Option<String>,
 }
 
+/// What a comparison of the local mirror with the remote host found. Only produced when there is
+/// at least one difference.
+#[derive(Debug, Clone)]
+pub struct CompareSummary {
+    pub remote_user: String,
+    pub hostname: String,
+    pub remote_path: String,
+    /// Sorted by remote path.
+    pub differences: Vec<FileDifference>,
+    pub identical_files: usize,
+    /// The written comparison.
+    pub diff_path: PathBuf,
+}
+
 /// Progress of Warp Sync operations. Every event names the window that started the operation, so
 /// that only that window reports it.
 #[derive(Debug, Clone)]
@@ -66,6 +81,10 @@ pub enum WarpSyncEvent {
         window_id: WindowId,
         id: PendingId,
         summary: Box<UploadSummary>,
+    },
+    CompareFinished {
+        window_id: WindowId,
+        summary: Box<CompareSummary>,
     },
     Succeeded {
         window_id: WindowId,
@@ -201,6 +220,47 @@ impl WarpSyncModel {
                     me.finish_sync(&key);
                     ctx.emit(WarpSyncEvent::Failed { window_id, error });
                 }
+            },
+        );
+    }
+
+    pub fn start_compare(
+        &mut self,
+        session: Arc<Session>,
+        remote_path: String,
+        window_id: WindowId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let begun = match self.begin(session, &remote_path, ctx) {
+            Ok(begun) => begun,
+            Err(error) => return ctx.emit(WarpSyncEvent::Failed { window_id, error }),
+        };
+        ctx.emit(WarpSyncEvent::Started {
+            window_id,
+            description: format!("Comparing {remote_path} with the local mirror…"),
+        });
+
+        let key = (begun.host_key.clone(), remote_path.clone());
+        let request = CompareRequest {
+            remote_path,
+            host_key: begun.host_key,
+            mirror_root: begun.mirror_root,
+            limits: begun.limits,
+        };
+        let shell = begun.shell;
+        let hostname = begun.hostname;
+        ctx.spawn(
+            async move {
+                let outcome = compare(shell.as_ref(), &request).await;
+                (request.remote_path, outcome)
+            },
+            move |me, (remote_path, outcome), ctx| {
+                me.finish_sync(&key);
+                let event = match outcome {
+                    Ok(outcome) => compare_event(window_id, hostname, remote_path, outcome),
+                    Err(error) => WarpSyncEvent::Failed { window_id, error },
+                };
+                ctx.emit(event);
             },
         );
     }
@@ -404,6 +464,35 @@ fn paths_overlap(a: &str, b: &str) -> bool {
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
     };
     contains(a, b) || contains(b, a)
+}
+
+fn compare_event(
+    window_id: WindowId,
+    hostname: String,
+    remote_path: String,
+    outcome: CompareOutcome,
+) -> WarpSyncEvent {
+    let Some(diff_path) = outcome.diff_path else {
+        return WarpSyncEvent::Succeeded {
+            window_id,
+            message: format!(
+                "No differences: {remote_path} matches the local mirror ({})",
+                pluralize_count(outcome.identical_files, "file")
+            ),
+            open_path: None,
+        };
+    };
+    WarpSyncEvent::CompareFinished {
+        window_id,
+        summary: Box::new(CompareSummary {
+            remote_user: outcome.remote_user,
+            hostname,
+            remote_path,
+            differences: outcome.differences,
+            identical_files: outcome.identical_files,
+            diff_path,
+        }),
+    }
 }
 
 fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {

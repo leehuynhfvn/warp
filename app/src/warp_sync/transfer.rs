@@ -1,24 +1,27 @@
 //! Orchestrates a download or upload between the remote host and the local mirror. Everything
 //! here is `async` and blocking-IO heavy, so callers run it on a background executor.
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tempfile::NamedTempFile;
 use uuid::Uuid;
 use warp_core::{safe_info, safe_warn};
 
 use super::archive::{
-    SkipReason, UploadArchive, build_upload, extract_download, locally_modified_files,
+    SkipReason, UploadArchive, build_upload, extract_download, local_files, locally_modified_files,
 };
-use super::manifest::{Manifest, SyncRecord};
+use super::manifest::{EntryMeta, Manifest, SyncRecord};
 use super::paths::{
-    create_private_dir_all, local_path_for, machine_host_key, manifest_path, recovery_dir,
-    split_parent_name, staging_dir,
+    create_private_dir_all, diff_path, local_path_for, machine_host_key, manifest_path,
+    recovery_dir, split_parent_name, staging_dir,
 };
 use super::config::SyncLimits;
+use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
 use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
     ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, checksum_script,
@@ -103,6 +106,25 @@ pub struct UploadOutcome {
     pub remote_user: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompareRequest {
+    /// Normalized absolute remote path.
+    pub remote_path: String,
+    pub host_key: String,
+    pub mirror_root: PathBuf,
+    pub limits: SyncLimits,
+}
+
+#[derive(Debug)]
+pub struct CompareOutcome {
+    /// Sorted by remote path; empty when the mirror matches the host.
+    pub differences: Vec<FileDifference>,
+    pub identical_files: usize,
+    /// The written comparison, present when there are differences.
+    pub diff_path: Option<PathBuf>,
+    pub remote_user: String,
+}
+
 pub async fn download(
     shell: &dyn RemoteShell,
     request: &DownloadRequest,
@@ -152,6 +174,45 @@ pub async fn download(
         );
     }
     Ok(result)
+}
+
+/// Downloads a fresh copy of the remote path without touching the mirror and compares the two.
+pub async fn compare(
+    shell: &dyn RemoteShell,
+    request: &CompareRequest,
+) -> Result<CompareOutcome, WarpSyncError> {
+    let probe = probe(shell, &request.remote_path).await?;
+    ensure_readable(&probe, &request.remote_path)?;
+    ensure_download_size(&probe, request.limits)?;
+
+    let host_key = resolve_host_key(
+        &request.mirror_root,
+        &request.host_key,
+        probe.machine_id.as_deref(),
+    )?;
+    let recorded =
+        load_manifest(&request.mirror_root, &host_key)?.entries_under(&request.remote_path);
+    if recorded.is_empty() {
+        return Err(WarpSyncError::NotMirrored(request.remote_path.clone()));
+    }
+
+    let (parent, name) = split_parent_name(&request.remote_path);
+    let tgz = shell
+        .run(&wrap_for_any_shell(&download_script(&parent, &name)))
+        .await?;
+    ensure_received_size(tgz.len(), request.limits)?;
+
+    ensure_mirror_root(&request.mirror_root)?;
+    let staging = staging_dir(&request.mirror_root);
+    let compared = compare_with_download(&tgz, request, &host_key, &recorded, &staging);
+    remove_staging(&staging);
+    let (comparison, diff_path) = compared?;
+    Ok(CompareOutcome {
+        differences: comparison.differences,
+        identical_files: comparison.identical_files,
+        diff_path,
+        remote_user: probe.user,
+    })
 }
 
 pub async fn prepare_upload(
@@ -289,6 +350,48 @@ fn ensure_received_size(received_bytes: usize, limits: SyncLimits) -> Result<(),
             ),
         });
     }
+    Ok(())
+}
+
+fn compare_with_download(
+    tgz: &[u8],
+    request: &CompareRequest,
+    host_key: &str,
+    recorded: &BTreeMap<String, EntryMeta>,
+    staging: &Path,
+) -> Result<(Comparison, Option<PathBuf>), WarpSyncError> {
+    let (parent, name) = split_parent_name(&request.remote_path);
+    let extracted = staging.join(NEW_COPY_DIR);
+    let report = extract_download(tgz, &name, &parent, &extracted)?;
+    let local = local_files(&request.remote_path, &request.mirror_root, host_key)?;
+    let comparison = compare_trees(&ComparedTrees {
+        remote_root: &request.remote_path,
+        remote_copy: &extracted.join(&name),
+        remote_entries: &report.entries,
+        local_files: &local,
+        recorded,
+    })?;
+    if comparison.differences.is_empty() {
+        return Ok((comparison, None));
+    }
+    let path = diff_path(&request.mirror_root, host_key, &request.remote_path);
+    let text = render_report(&request.remote_path, host_key, &comparison);
+    write_private_file(&path, &text)?;
+    Ok((comparison, Some(path)))
+}
+
+/// Writes `contents` to `path` through a temporary file that only the current user can read, since
+/// the comparison quotes files that may be readable only by root on the host.
+fn write_private_file(path: &Path, contents: &str) -> Result<(), WarpSyncError> {
+    let dir = path.parent().ok_or_else(|| {
+        WarpSyncError::LocalIo(format!("{} has no parent directory", path.display()))
+    })?;
+    create_private_dir_all(dir).map_err(|err| local_io("create", dir, &err))?;
+    let mut file = NamedTempFile::new_in(dir).map_err(|err| local_io("write in", dir, &err))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|err| local_io("write", path, &err))?;
+    file.persist(path)
+        .map_err(|err| local_io("replace", path, &err.error))?;
     Ok(())
 }
 

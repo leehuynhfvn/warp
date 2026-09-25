@@ -229,3 +229,59 @@ fn the_upload_message_omits_the_backup_when_nothing_was_replaced() {
 
     assert!(!message.contains("saved to"));
 }
+
+fn compare_outcome(diff_path: Option<PathBuf>, differences: usize) -> CompareOutcome {
+    CompareOutcome {
+        differences: (0..differences)
+            .map(|i| FileDifference {
+                remote_path: format!("/etc/f{i}"),
+                change: super::super::diff::FileChange::ChangedLocally,
+            })
+            .collect(),
+        identical_files: 3,
+        diff_path,
+        remote_user: "root".to_owned(),
+    }
+}
+
+#[test]
+fn a_comparison_without_differences_is_reported_as_a_success() {
+    let event = compare_event(
+        WindowId::new(),
+        "prod-1".to_owned(),
+        "/etc".to_owned(),
+        compare_outcome(None, 0),
+    );
+
+    let WarpSyncEvent::Succeeded {
+        message, open_path, ..
+    } = event
+    else {
+        panic!("expected a success, got {event:?}");
+    };
+    assert_eq!(
+        message,
+        "No differences: /etc matches the local mirror (3 files)"
+    );
+    assert_eq!(open_path, None);
+}
+
+#[test]
+fn a_comparison_with_differences_carries_the_diff_location() {
+    let diff_path = PathBuf::from("/mirror/.warp-sync/diffs/prod-1/etc.diff");
+
+    let event = compare_event(
+        WindowId::new(),
+        "prod-1".to_owned(),
+        "/etc".to_owned(),
+        compare_outcome(Some(diff_path.clone()), 2),
+    );
+
+    let WarpSyncEvent::CompareFinished { summary, .. } = event else {
+        panic!("expected a comparison, got {event:?}");
+    };
+    assert_eq!(summary.diff_path, diff_path);
+    assert_eq!(summary.differences.len(), 2);
+    assert_eq!(summary.identical_files, 3);
+    assert_eq!(summary.hostname, "prod-1");
+}
