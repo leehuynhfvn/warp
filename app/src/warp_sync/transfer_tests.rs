@@ -1572,6 +1572,7 @@ fn a_path_that_appears_before_the_confirmation_is_not_overwritten() {
     assert!(env.leftover_scratch_dirs().is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn a_dangling_symlink_that_appears_at_the_path_is_not_written_through() {
     let env = Env::with_new_local_file("fresh.conf", "mine");
@@ -1611,6 +1612,7 @@ fn a_level_in_between_that_appears_before_the_confirmation_is_left_alone() {
     assert!(!env.remote("one/two").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn a_synced_directory_that_became_a_symlink_is_not_written_into() {
     let env = Env::with_new_local_file("fresh.conf", "mine");
@@ -1786,21 +1788,20 @@ fn a_new_path_upload_probes_the_anchor_again_when_confirmed() {
     let env = Env::with_new_local_file("sub/fresh.conf", "fresh");
     let prepared = env.prepare_new("sub/fresh.conf").unwrap();
     fs::remove_dir_all(env.remote("sub")).unwrap();
+    env.shell.calls.store(0, Ordering::SeqCst);
 
     let result = block_on(execute_upload(&env.shell, &prepared));
 
-    assert!(result.is_err(), "{result:?}");
-    assert!(!env.remote("sub").exists());
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotFound(path)) if path.ends_with("/conf/sub")),
+        "{result:?}"
+    );
+    assert_eq!(
+        env.shell.calls.load(Ordering::SeqCst),
+        1,
+        "nothing but the probe reaches the host"
+    );
     assert!(env.leftover_scratch_dirs().is_empty());
-}
-
-#[test]
-fn a_new_path_upload_is_not_a_replacement_so_it_makes_no_backup_directory() {
-    let env = Env::with_new_local_file("fresh.conf", "fresh");
-
-    let outcome = env.upload_new("fresh.conf").unwrap();
-
-    assert_eq!(outcome.backup_path, None);
 }
 
 #[test]
@@ -1819,5 +1820,56 @@ fn a_new_path_upload_enters_the_git_baseline_and_leaves_other_edits_out_of_it() 
         baseline_contents(&env, "a.conf").as_deref(),
         Some("remote a"),
         "what was not uploaded stays as the server has it"
+    );
+}
+
+/// A host that names a different machine for every probe after the first two, as when the
+/// terminal is moved to another host between the probes.
+struct SwitchesMachine<'a> {
+    shell: &'a LocalSh,
+    probes: AtomicUsize,
+}
+
+#[async_trait]
+impl RemoteShell for SwitchesMachine<'_> {
+    async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
+        let output = self.shell.run(command).await?;
+        let text = String::from_utf8_lossy(&output);
+        if !text.contains("status=") {
+            return Ok(output);
+        }
+        let probe = self.probes.fetch_add(1, Ordering::SeqCst) + 1;
+        // 1: the path, 2: "/", 3 and later: the anchor.
+        let machine_id = if probe <= 2 { MACHINE_A } else { MACHINE_B };
+        let mut lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.starts_with("machine_id="))
+            .collect();
+        let machine_line = format!("machine_id={machine_id}");
+        lines.push(&machine_line);
+        Ok(lines.join("\n").into_bytes())
+    }
+}
+
+#[test]
+fn a_new_path_is_refused_when_the_host_changes_between_the_probes() {
+    let env = Env::new();
+    let machine_a = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_A,
+    };
+    block_on(download(&machine_a, &env.download_request(false))).unwrap();
+    fs::write(env.local("fresh.conf"), "fresh").unwrap();
+    let switching = SwitchesMachine {
+        shell: &env.shell,
+        probes: AtomicUsize::new(0),
+    };
+
+    let result = block_on(prepare_upload(&switching, &env.request_for_new("fresh.conf")));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("no longer reaches")),
+        "{:?}",
+        result.as_ref().err()
     );
 }

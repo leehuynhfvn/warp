@@ -788,6 +788,21 @@ fn a_new_path_without_a_local_copy_is_not_mirrored() {
     assert!(matches!(result, Err(WarpSyncError::NotMirrored(_))), "{result:?}");
 }
 
+#[test]
+fn the_levels_created_in_between_count_against_the_entry_limit() {
+    let mirror = Mirror::new();
+    let dir = mirror.local("a/b");
+    fs::create_dir_all(&dir).unwrap();
+    // `b` itself and these files make MAX_ENTRIES items; the level `a` is one more.
+    for index in 0..MAX_ENTRIES - 1 {
+        fs::write(dir.join(format!("f{index}")), "").unwrap();
+    }
+
+    let result = mirror.build_new("/etc/conf/a/b");
+
+    assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })), "{:?}", result.err());
+}
+
 #[cfg(unix)]
 #[test]
 fn a_new_path_upload_refuses_setuid_files_and_respects_the_size_limit() {

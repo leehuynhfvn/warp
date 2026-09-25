@@ -116,6 +116,30 @@ fn upload_body_says_what_will_be_created_and_where_when_the_path_is_new() {
 }
 
 #[test]
+fn upload_text_escapes_what_the_server_and_the_manifest_chose() {
+    let summary = UploadSummary {
+        remote_user: "ro\u{202e}ot".to_owned(),
+        hostname: "pr\rod".to_owned(),
+        remote_path: "/root/a\u{1b}b".to_owned(),
+        creates_under: Some("/ro\u{202e}ot".to_owned()),
+        server_id_tail: None,
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+    let request = ConfirmRequest::upload(PendingId::for_test(1), &summary);
+
+    for text in [&body, &request.title] {
+        assert!(
+            !text.chars().any(|c| c.is_control() && c != '\n'),
+            "{text:?}"
+        );
+        assert!(!text.contains('\u{202e}'), "{text:?}");
+    }
+    assert!(body.contains("inside /ro\\u{202e}ot:"));
+}
+
+#[test]
 fn upload_request_is_titled_with_the_real_remote_user() {
     let request = ConfirmRequest::upload(PendingId::for_test(1), &summary());
 

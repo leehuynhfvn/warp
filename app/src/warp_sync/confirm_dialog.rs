@@ -102,7 +102,11 @@ impl ConfirmRequest {
     pub fn upload(id: PendingId, summary: &UploadSummary) -> Self {
         Self {
             kind: ConfirmKind::Upload { id },
-            title: format!("Upload to {}@{}?", summary.remote_user, summary.hostname),
+            title: format!(
+                "Upload to {}@{}?",
+                printable(&summary.remote_user),
+                printable(&summary.hostname)
+            ),
             body: upload_body(summary),
             confirm_label: "Upload".into(),
             cancel_label: CANCEL_LABEL,
@@ -162,11 +166,11 @@ fn compare_body(summary: &CompareSummary, opens_in_editor: bool) -> String {
 
 fn upload_body(summary: &UploadSummary) -> String {
     let server = match &summary.server_id_tail {
-        Some(tail) => format!("{} (machine id …{tail})", summary.hostname),
-        None => summary.hostname.clone(),
+        Some(tail) => format!("{} (machine id …{})", printable(&summary.hostname), printable(tail)),
+        None => printable(&summary.hostname),
     };
     let mut sections = vec![
-        format!("{server}:{}", summary.remote_path),
+        format!("{server}:{}", printable(&summary.remote_path)),
         format!(
             "{} and {}, {}",
             pluralize_count(summary.files, "file"),
@@ -176,7 +180,8 @@ fn upload_body(summary: &UploadSummary) -> String {
     ];
     match &summary.creates_under {
         Some(anchor) => sections.push(format!(
-            "Creates on the server, inside {anchor}:\n{}",
+            "Creates on the server, inside {}:\n{}",
+            printable(anchor),
             bullet_list(&new_entry_lines(summary))
         )),
         None => {

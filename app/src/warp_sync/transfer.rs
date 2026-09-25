@@ -370,20 +370,20 @@ async fn prepare_new_upload(
     let Some((anchor, _)) = manifest.nearest_dir(remote_path) else {
         return Err(not_found());
     };
-    match fs::symlink_metadata(local_path_for(&request.mirror_root, &host_key, remote_path)) {
+    let local_path = local_path_for(&request.mirror_root, &host_key, remote_path);
+    match fs::symlink_metadata(&local_path) {
         Ok(_) => {}
         Err(err) if err.kind() == ErrorKind::NotFound => return Err(not_found()),
-        Err(err) => {
-            return Err(local_io(
-                "read",
-                &local_path_for(&request.mirror_root, &host_key, remote_path),
-                &err,
-            ));
-        }
+        Err(err) => return Err(local_io("read", &local_path, &err)),
     }
 
     let anchor_probe = probe_light(shell, anchor).await?;
     ensure_readable(&anchor_probe, anchor)?;
+    // The mirror was chosen by the answer about `/`, so the anchor must come from the same account
+    // on the same machine, or the terminal was moved to another host in between.
+    if !same_account_and_machine(&anchor_probe, &host) {
+        return Err(session_moved());
+    }
     if anchor_probe.kind != RemoteKind::Dir {
         return Err(WarpSyncError::InvalidPath(format!(
             "{} is not a directory on the remote host",
@@ -395,11 +395,10 @@ async fn prepare_new_upload(
     }
     // Extracting over a directory that exists but was never synced would reset its owner and
     // mode, so the outermost new level must really be new.
-    if let Some(outermost) = components_below(anchor, remote_path)?.first() {
+    // With a single level that level is the path, which is already known to be absent.
+    if let [outermost, _, ..] = components_below(anchor, remote_path)?.as_slice() {
         let outermost = format!("{anchor}/{outermost}");
-        if outermost != remote_path
-            && probe_light(shell, &outermost).await?.status != ProbeStatus::NotFound
-        {
+        if probe_light(shell, &outermost).await?.status != ProbeStatus::NotFound {
             return Err(WarpSyncError::NotMirrored(outermost));
         }
     }
@@ -486,10 +485,7 @@ fn baseline_warning(recorded: Result<BaselineOutcome, WarpSyncError>) -> Option<
 }
 
 async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult, WarpSyncError> {
-    let output = shell
-        .run(&wrap_for_any_shell(&probe_script(remote_path)))
-        .await?;
-    parse_probe_output(&String::from_utf8_lossy(&output))
+    run_probe(shell, &probe_script(remote_path)).await
 }
 
 /// Like [`probe`], without measuring the size of what is probed.
@@ -497,9 +493,11 @@ async fn probe_light(
     shell: &dyn RemoteShell,
     remote_path: &str,
 ) -> Result<ProbeResult, WarpSyncError> {
-    let output = shell
-        .run(&wrap_for_any_shell(&light_probe_script(remote_path)))
-        .await?;
+    run_probe(shell, &light_probe_script(remote_path)).await
+}
+
+async fn run_probe(shell: &dyn RemoteShell, script: &str) -> Result<ProbeResult, WarpSyncError> {
+    let output = shell.run(&wrap_for_any_shell(script)).await?;
     parse_probe_output(&String::from_utf8_lossy(&output))
 }
 
@@ -517,13 +515,21 @@ async fn ensure_same_target(
         return Err(WarpSyncError::NotFound(prepared.probe_path().to_owned()));
     }
     let before = &prepared.probe;
-    if now.user != before.user || now.uid != before.uid || now.machine_id != before.machine_id {
-        return Err(WarpSyncError::Manifest(
-            "the session no longer reaches the machine or account the upload was prepared for"
-                .to_owned(),
-        ));
+    if !same_account_and_machine(&now, before) {
+        return Err(session_moved());
     }
     Ok(())
+}
+
+fn same_account_and_machine(a: &ProbeResult, b: &ProbeResult) -> bool {
+    a.user == b.user && a.uid == b.uid && a.machine_id == b.machine_id
+}
+
+fn session_moved() -> WarpSyncError {
+    WarpSyncError::Manifest(
+        "the session no longer reaches the machine or account the upload was prepared for"
+            .to_owned(),
+    )
 }
 
 /// A host that cannot hash files, or whose hashing command fails or takes too long, is reported

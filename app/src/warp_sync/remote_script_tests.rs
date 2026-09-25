@@ -545,6 +545,52 @@ mod with_sh {
     }
 
     #[test]
+    fn create_only_commit_of_a_directory_sets_its_mode_from_the_archive() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
+        let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o750);
+        header.set_size(0);
+        header.set_entry_type(tar::EntryType::Directory);
+        builder
+            .append_data(&mut header, "conf", std::io::empty())
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o600);
+        header.set_size(1);
+        header.set_entry_type(tar::EntryType::Regular);
+        builder.append_data(&mut header, "conf/a", &b"a"[..]).unwrap();
+        let tgz = builder.into_inner().unwrap().finish().unwrap();
+        for command in upload_chunk_commands(&dir, &tgz) {
+            assert!(run_sh(&command, None).status.success());
+        }
+        let commit = upload_commit_script(&UploadCommit {
+            tmp_dir: &dir,
+            parent: parent.path().to_str().unwrap(),
+            name: "conf",
+            mode: CommitMode::CreateOnly,
+            expected_len: tgz.len(),
+            backup_name: "unused",
+            extract_mode: ExtractMode::GnuNoOwner,
+        });
+
+        let output = run_sh(&commit, None);
+
+        assert!(output.status.success(), "{}", stdout(&output));
+        let mode = fs::metadata(parent.path().join("conf")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o750);
+        assert_eq!(fs::read_to_string(parent.path().join("conf/a")).unwrap(), "a");
+    }
+
+    #[test]
     fn create_only_commit_refuses_a_target_that_exists() {
         let parent = tempfile::tempdir().unwrap();
         fs::write(parent.path().join("conf"), "theirs").unwrap();

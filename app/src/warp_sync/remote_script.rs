@@ -256,16 +256,16 @@ pub fn upload_commit_script(commit: &UploadCommit<'_>) -> String {
     let name = posix_quote(&format!("./{}", commit.name));
     let expected_len = commit.expected_len;
     let flags = commit.extract_mode.tar_flags();
-    let before_extract = match commit.mode {
-        CommitMode::Replace => backup_step(commit.backup_name),
-        CommitMode::CreateOnly => create_only_step(),
+    let (before_extract, extra_flags) = match commit.mode {
+        CommitMode::Replace => (backup_step(commit.backup_name), ""),
+        CommitMode::CreateOnly => (create_only_step(), " $K"),
     };
     format!(
         r#"T={tmp_dir}; P={parent}; N={name}
 [ "$(wc -c < "$T/{PAYLOAD_FILE_NAME}" | tr -d ' ')" = "{expected_len}" ] || {{ echo "size mismatch"; exit {EXIT_SIZE_MISMATCH}; }}
 gzip -t "$T/{PAYLOAD_FILE_NAME}" || {{ echo "corrupt payload"; exit {EXIT_CORRUPT_PAYLOAD}; }}
 {before_extract}
-tar -xzf "$T/{PAYLOAD_FILE_NAME}" -C "$P" {flags} || {{ echo "extract failed"; exit {EXIT_EXTRACT_FAILED}; }}
+tar -xzf "$T/{PAYLOAD_FILE_NAME}" -C "$P" {flags}{extra_flags} || {{ echo "extract failed"; exit {EXIT_EXTRACT_FAILED}; }}
 rm -rf "$T"
 "#
     )
@@ -285,11 +285,19 @@ fi"#
 }
 
 /// `tar -x` would set the owner and mode of a directory that is already there, and would write
-/// through a symlink that replaced `$P`, so both are refused before anything is extracted.
+/// through a symlink that replaced `$P`, so both are refused before anything is extracted. When the
+/// archive starts with a directory, `mkdir` claims it atomically, so that nobody can create it
+/// between the check and the extraction; otherwise `tar -k` refuses to replace a file that
+/// appeared. `-k` is not used for a directory because it would also stop `tar` from setting the
+/// owner and mode of the directory that was just made.
 fn create_only_step() -> String {
     format!(
         r#"if [ -L "$P" ] || [ ! -d "$P" ]; then echo "the target directory is no longer a plain directory"; exit {EXIT_ANCHOR_UNSAFE}; fi
-if [ -e "$P/$N" ] || [ -L "$P/$N" ]; then echo "already exists on the server"; exit {EXIT_TARGET_EXISTS}; fi"#
+if [ -e "$P/$N" ] || [ -L "$P/$N" ]; then echo "already exists on the server"; exit {EXIT_TARGET_EXISTS}; fi
+case "$(tar -tzf "$T/{PAYLOAD_FILE_NAME}" | head -n 1)" in
+  */) K=""; mkdir "$P/$N" || {{ echo "already exists on the server"; exit {EXIT_TARGET_EXISTS}; }};;
+  *) K="-k";;
+esac"#
     )
 }
 
