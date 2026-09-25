@@ -708,7 +708,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 ### Tiến độ
 
 - [x] Phase 0 — Worktree + commit plan
-- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
+- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
 - [ ] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
@@ -732,9 +732,10 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D10 | 2026-09-24 | v1: máy local unix, server Linux, shell POSIX (bash/zsh/fish qua wrapper) | Broker dùng Unix socket; PowerShell/Windows để v2 |
 | D11 | 2026-09-25 | Chữ trên palette/toast/lỗi trung lập với agent ("Allow agents …"); tên action `workspace:agent_bridge_*` giữ nguyên | Roadmap agent-ops: nhiều MCP client (Codex, Gemini CLI) dùng chung Bridge |
 | D12 | 2026-09-25 | Params `remote.*` có `agent: Option<String>`; audit ghi `agent` + `request_id` | Truy vết theo agent và gắn với lượt duyệt ở O2/O6; thêm sau sẽ phải đổi protocol |
-| D13 | 2026-09-25 | Rebase lên `feature/warp-sync` (31 commit mới); bỏ Task 2.4 (`BridgeResult::Pending`, `SyncReceiver`, `send_request_with_timeout` đã có); Task 1.2 chỉ cần mở `remote_script` + `PAYLOAD_FILE_NAME` (`paths` không cần vì `normalize_remote_path` đã `pub use`) | Đúng ghi chú Phase 2 của plan và thực trạng code |
+| D13 | 2026-09-25 | Rebase lên `feature/warp-sync` (31 commit mới); bỏ Task 2.4 (`BridgeResult::Pending`, `SyncReceiver`, `send_request_with_timeout` đã có); Task 1.2 chỉ cần mở `remote_script` + `PAYLOAD_FILE_NAME` (`paths` được mở ở Task 1.6 để dùng `create_private_dir_all`; `normalize_remote_path` đã `pub use` sẵn) | Đúng ghi chú Phase 2 của plan và thực trạng code |
 | D14 | 2026-09-25 | Lệnh cargo phải kèm `-p warp` (vd. `cargo test -p warp -p warp_cli --lib local_control`) | `-p warp_cli`/`-p local_control` đứng riêng không bật `dlopen` của `yeslogic-fontconfig-sys` → build script fail vì máy thiếu `fontconfig-devel` |
 | D15 | 2026-09-25 | Script write cứng hơn mục 3.6: tạo file mới bằng `noclobber` (`( set -C; cat > P )`, từ chối cả symlink treo); từ chối backup qua `~/.warp-agent` hoặc `backups` là symlink và `chmod 700` cả hai (như backup của Warp Sync); `read_script`/`parse_read_output` nhận `max_bytes` để test; `exit_code` là `i32` (không `null`) | Agent chạy root: `cp` sẽ ghi xuyên symlink/đè file mới xuất hiện; backup qua symlink là đường leo thang đã được Warp Sync chặn |
+| D16 | 2026-09-25 | `Attachments::check` nhận thêm `user`, `host` của session đang gọi; dùng `instant::Instant` (clippy cấm `std::time::Instant`) | `AgentBridgeError::NotAttached { user, host }` cần nêu session mà registry không biết; repo hỗ trợ wasm |
 
 ### Nhật ký
 
@@ -749,3 +750,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 1.2: `pub(crate) mod remote_script` + `pub(crate) const PAYLOAD_FILE_NAME` (đã kiểm lại trên module `warp_sync` mới; `posix_quote`/`wrap_for_any_shell`/`upload_*`/`cleanup_command` đều `pub fn` sẵn; `paths` không cần mở, D13).
 - 2026-09-25 — Task 1.3: `agent_bridge/{mod,error}.rs` (constants 3.7, `AgentBridgeError`, `From` sang `ControlError`/từ `WarpSyncError`), `mod agent_bridge` (tạm `#[allow(dead_code)]`). `From<AgentBridgeError> for ControlError` làm hỏng suy luận `?` ở `handlers/layout.rs` → thêm `Ok::<_, ControlError>`. `NotRemoteSession`/`UnsupportedShell` map sang `InvalidSelector`.
 - 2026-09-25 — Task 1.4: `agent_bridge/script.rs` (+52 test gồm `sh` thật: exec/read/write, symlink, mode/inode giữ nguyên, stdin đóng, timeout). Xem D15.
+- 2026-09-25 — Task 1.5: `agent_bridge/attachments.rs` (9 test). Task 1.6: `agent_bridge/audit.rs` (`append`, xoay vòng, quyền 0700/0600; dùng `warp_sync::paths::create_private_dir_all` nên mở `pub(crate) mod paths`) (7 test). Cuối Phase 1: `cargo test -p warp --lib agent_bridge` 68 test pass; clippy `-p warp -p local_control -p warp_cli --all-targets --tests -D warnings` sạch. Xem D16.

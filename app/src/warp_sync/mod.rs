@@ -13,7 +13,7 @@ pub mod external;
 mod manifest;
 mod model;
 pub mod path_prompt;
-mod paths;
+pub(crate) mod paths;
 pub mod remote_check;
 pub(crate) mod remote_script;
 mod remote_shell;

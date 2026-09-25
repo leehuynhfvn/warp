@@ -1,6 +1,8 @@
 //! Agent Bridge: lets an external agent run commands and read and write files in a Warpified
 //! remote session that the user explicitly attached, with the privileges of that session's shell.
 
+pub(crate) mod attachments;
+pub(crate) mod audit;
 pub(crate) mod error;
 pub(crate) mod script;
 
