@@ -52,13 +52,22 @@ pub(super) fn run_sync_command(
         )
     })?;
     let data = send_action(&target, action, params, SYNC_CLIENT_TIMEOUT)?;
+    // A result this CLI cannot read (for example from a Warp of another version) must not be taken
+    // for success: it may be a request for confirmation.
+    let result = serde_json::from_value::<SyncResult>(data.clone()).map_err(|err| {
+        ControlError::with_details(
+            ErrorCode::Internal,
+            "Warp answered with a sync result this warpctrl does not understand; are they the same version?",
+            err.to_string(),
+        )
+    })?;
 
     match output_format {
         OutputFormat::Json => write_json(&data)?,
         OutputFormat::Ndjson => write_json_line(&data)?,
-        OutputFormat::Pretty | OutputFormat::Text => println!("{}", render_sync_data(&data)),
+        OutputFormat::Pretty | OutputFormat::Text => println!("{}", render_sync_result(&result)),
     }
-    Ok(exit_code(&data))
+    Ok(exit_code(&result))
 }
 
 fn path_request(
@@ -102,17 +111,15 @@ pub(super) fn absolute_path(path: &str) -> Result<String, ControlError> {
 
 /// A confirmation request is not a failure, but scripts must be able to tell that nothing has
 /// happened yet.
-pub(super) fn exit_code(data: &serde_json::Value) -> u8 {
-    match serde_json::from_value::<SyncResult>(data.clone()) {
-        Ok(SyncResult::NeedsConfirmation { .. }) => EXIT_NEEDS_CONFIRMATION,
-        Ok(_) | Err(_) => EXIT_SUCCESS,
-    }
-}
-
-pub(super) fn render_sync_data(data: &serde_json::Value) -> String {
-    match serde_json::from_value::<SyncResult>(data.clone()) {
-        Ok(result) => render_sync_result(&result),
-        Err(_) => serde_json::to_string_pretty(data).unwrap_or_else(|_| data.to_string()),
+pub(super) fn exit_code(result: &SyncResult) -> u8 {
+    match result {
+        SyncResult::NeedsConfirmation { .. } => EXIT_NEEDS_CONFIRMATION,
+        SyncResult::Status { .. }
+        | SyncResult::Downloaded { .. }
+        | SyncResult::Uploaded { .. }
+        | SyncResult::Compared { .. }
+        | SyncResult::Unchanged { .. }
+        | SyncResult::Cancelled => EXIT_SUCCESS,
     }
 }
 

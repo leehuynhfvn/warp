@@ -10,6 +10,7 @@ use super::super::archive::UploadArchive;
 use super::super::diff::FileChange;
 use super::super::remote_script::{ProbeResult, ProbeStatus, RemoteKind, TarFlavor};
 use super::*;
+use crate::warp_sync::MAX_EXTERNAL_PENDING;
 
 struct NeverShell;
 
@@ -62,6 +63,7 @@ fn pending_upload(host_key: &str, remote_path: &str) -> PendingUpload {
             host_key: host_key.to_owned(),
             mirror_root: PathBuf::from("/mirror"),
         },
+        key: (host_key.to_owned(), remote_path.to_owned()),
         window_id: WindowId::new(),
     }
 }
@@ -429,7 +431,8 @@ fn await_upload(
         model
             .try_begin_sync("prod-1", "/etc/nginx")
             .expect("path is free");
-        model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, requester, ctx);
+        let key = ("prod-1".to_owned(), "/etc/nginx".to_owned());
+        model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, key, requester, ctx);
     });
 }
 
@@ -663,5 +666,126 @@ fn failures_reach_a_window_as_events_and_a_client_as_an_error_reply() {
                 if *event_window == window_id
         ));
         assert_eq!(reply_of(&mut receiver).unwrap_err(), WarpSyncError::Timeout);
+    });
+}
+
+/// An upload whose mirror folder carries a machine suffix: the path was locked under the plain
+/// host key before the machine was known.
+const SUFFIXED_HOST_KEY: &str = "prod-1-ab12cd34";
+
+fn suffixed_upload() -> PendingUpload {
+    PendingUpload {
+        key: ("prod-1".to_owned(), "/etc/nginx".to_owned()),
+        ..pending_upload(SUFFIXED_HOST_KEY, "/etc/nginx")
+    }
+}
+
+#[test]
+fn cancelling_an_upload_to_a_suffixed_mirror_releases_the_path_that_was_locked() {
+    let mut model = WarpSyncModel::new();
+    model.try_begin_sync("prod-1", "/etc/nginx").unwrap();
+    let id = model.next_pending_id();
+    model.pending_uploads.insert(id, suffixed_upload());
+
+    model.cancel_pending(id);
+
+    assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+}
+
+#[test]
+fn an_expired_external_upload_to_a_suffixed_mirror_releases_the_path_that_was_locked() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let (requester, _receiver) = Requester::external(WindowId::new(), None);
+        let PendingUpload {
+            shell, prepared, ..
+        } = suffixed_upload();
+        model.update(&mut app, |model, ctx| {
+            model.try_begin_sync("prod-1", "/etc/nginx").unwrap();
+            let key = ("prod-1".to_owned(), "/etc/nginx".to_owned());
+            model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, key, requester, ctx);
+        });
+        let id = sole_external_id(&app, &model);
+
+        model.update(&mut app, |model, _| {
+            assert_eq!(model.cancel_external(id), Ok(()));
+            assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+        });
+    });
+}
+
+#[test]
+fn a_confirmed_upload_to_a_suffixed_mirror_releases_the_path_when_it_finishes() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+        let PendingUpload {
+            shell, prepared, ..
+        } = suffixed_upload();
+        model.update(&mut app, |model, ctx| {
+            model.try_begin_sync("prod-1", "/etc/nginx").unwrap();
+            let key = ("prod-1".to_owned(), "/etc/nginx".to_owned());
+            model.await_upload_confirmation(
+                shell,
+                "prod-1".to_owned(),
+                prepared,
+                key,
+                Requester::Window(window_id),
+                ctx,
+            );
+        });
+        let id = model.read(&app, |model, _| {
+            *model.pending_uploads.keys().next().expect("one pending upload")
+        });
+
+        // The shell used here always times out, so the upload ends in a failure.
+        model.update(&mut app, |model, ctx| model.confirm_upload(id, ctx));
+        Timer::after(Duration::from_millis(300)).await;
+
+        assert!(
+            events
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, WarpSyncEvent::Failed { .. }))
+        );
+        model.update(&mut app, |model, _| {
+            assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+        });
+    });
+}
+
+#[test]
+fn too_many_operations_waiting_for_clients_are_refused_and_release_their_path() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let mut receivers = Vec::new();
+        for index in 0..=MAX_EXTERNAL_PENDING {
+            let path = format!("/etc/f{index}");
+            let (requester, receiver) = Requester::external(WindowId::new(), None);
+            let PendingUpload {
+                shell, prepared, ..
+            } = pending_upload("prod-1", &path);
+            model.update(&mut app, |model, ctx| {
+                model.try_begin_sync("prod-1", &path).unwrap();
+                let key = ("prod-1".to_owned(), path.clone());
+                model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, key, requester, ctx);
+            });
+            receivers.push(receiver);
+        }
+
+        let (accepted, refused) = receivers.split_at_mut(MAX_EXTERNAL_PENDING);
+        for receiver in accepted {
+            assert!(matches!(
+                reply_of(receiver),
+                Ok(SyncReply::NeedsConfirmation { .. })
+            ));
+        }
+        assert_eq!(reply_of(&mut refused[0]).unwrap_err(), WarpSyncError::TooManyPending);
+        model.update(&mut app, |model, _| {
+            assert_eq!(model.external_pending.len(), MAX_EXTERNAL_PENDING);
+            let last = format!("/etc/f{MAX_EXTERNAL_PENDING}");
+            assert!(model.try_begin_sync("prod-1", &last).is_ok(), "the refused path is free");
+        });
     });
 }

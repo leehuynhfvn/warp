@@ -10,7 +10,7 @@ use ::local_control::{ControlError, ErrorCode};
 
 use crate::warp_sync::remote_check::RemoteCheck;
 use crate::warp_sync::{
-    ConfirmationKind, FileChange, FileDifference, SyncReply, UploadSummary, WarpSyncError,
+    ConfirmationKind, FileChange, FileDifference, SyncReply, UploadSummary, WarpSyncError, printable,
 };
 
 pub(super) fn sync_result(reply: SyncReply) -> SyncResult {
@@ -138,7 +138,8 @@ fn display(path: &Path) -> String {
 }
 
 /// The protocol error for a failed Warp Sync operation; the message is what the user would have
-/// seen in Warp.
+/// seen in Warp. Some errors quote what the server printed, so it is made safe to show in a
+/// terminal.
 pub(super) fn control_error(error: WarpSyncError) -> ControlError {
     let code = match &error {
         WarpSyncError::InvalidPath(_) => ErrorCode::InvalidParams,
@@ -163,9 +164,10 @@ pub(super) fn control_error(error: WarpSyncError) -> ControlError {
         | WarpSyncError::LocalIo(_)
         | WarpSyncError::NoEditor
         | WarpSyncError::Editor(_)
-        | WarpSyncError::Baseline(_) => ErrorCode::SyncFailed,
+        | WarpSyncError::Baseline(_)
+        | WarpSyncError::TooManyPending => ErrorCode::SyncFailed,
     };
-    ControlError::new(code, error.to_string())
+    ControlError::new(code, printable(&error.to_string()))
 }
 
 #[cfg(test)]

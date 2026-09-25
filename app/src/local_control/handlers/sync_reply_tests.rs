@@ -216,6 +216,7 @@ fn failures_map_to_codes_a_client_can_act_on() {
         (WarpSyncError::PendingNotFound, ErrorCode::StaleTarget),
         (WarpSyncError::AlreadyInProgress, ErrorCode::TargetStateConflict),
         (WarpSyncError::Timeout, ErrorCode::SyncFailed),
+        (WarpSyncError::TooManyPending, ErrorCode::SyncFailed),
         (
             WarpSyncError::PermissionDenied {
                 user: "alice".to_owned(),
@@ -234,4 +235,19 @@ fn failures_map_to_codes_a_client_can_act_on() {
         assert_eq!(control.code, code, "{message}");
         assert_eq!(control.message, message);
     }
+}
+
+#[test]
+fn error_messages_that_quote_the_server_are_safe_to_print_in_a_terminal() {
+    let error = WarpSyncError::RemoteCommandFailed {
+        exit_code: Some(1),
+        message: "boom\u{1b}]52;c;AAAA\u{7}\nfake: line".to_owned(),
+    };
+
+    let control = control_error(error);
+
+    assert!(!control.message.contains('\u{1b}'));
+    assert!(!control.message.contains('\u{7}'));
+    assert!(!control.message.contains('\n'));
+    assert!(control.message.contains("boom"));
 }

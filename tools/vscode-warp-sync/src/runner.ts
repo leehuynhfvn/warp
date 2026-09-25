@@ -20,10 +20,12 @@ export function runProcess(file: string, args: string[]): Promise<ProcessOutcome
           resolve({ exitCode: code, stdout, stderr });
           return;
         }
-        const failure =
-          code === "ENOENT"
-            ? `Could not run "${file}". Check the setting warpSync.command.`
-            : `Could not run "${file}": ${error.message}`;
+        let failure = `Could not run "${file}": ${error.message}`;
+        if (code === "ENOENT") {
+          failure = `Could not run "${file}". Check the setting warpSync.command.`;
+        } else if (error.killed) {
+          failure = "Warp did not answer in time.";
+        }
         resolve({ exitCode: null, stdout, stderr, failure });
       },
     );

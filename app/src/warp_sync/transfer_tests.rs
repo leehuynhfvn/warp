@@ -1177,10 +1177,24 @@ fn the_plain_name_belongs_to_the_machine_that_first_used_it() {
 }
 
 #[test]
-fn a_host_that_reports_no_machine_id_uses_the_plain_name() {
+fn a_host_that_reports_no_machine_id_cannot_use_a_mirror_that_belongs_to_a_machine() {
     let dir = tempfile::tempdir().unwrap();
     save_manifest_owned_by(dir.path(), "h", Some(MACHINE_A));
 
+    let result = resolve_host_key(dir.path(), "h", None);
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("did not report a machine id")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_host_that_reports_no_machine_id_can_use_a_mirror_nobody_owns() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(resolve_host_key(dir.path(), "h", None).unwrap(), "h");
+
+    save_manifest_owned_by(dir.path(), "h", None);
     assert_eq!(resolve_host_key(dir.path(), "h", None).unwrap(), "h");
 }
 
@@ -1317,5 +1331,29 @@ fn a_comparison_for_another_mirror_folder_is_refused() {
         matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("another machine")),
         "{:?}",
         result.as_ref().err()
+    );
+}
+
+#[test]
+fn an_upload_is_refused_when_the_session_no_longer_reaches_the_prepared_machine() {
+    let env = Env::new();
+    env.download_done();
+    std::fs::write(env.local("a.conf"), "local edit").unwrap();
+    let prepared = env.prepare();
+    let other_machine = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_B,
+    };
+
+    let result = block_on(execute_upload(&other_machine, &prepared));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("no longer reaches")),
+        "{result:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(env.remote("a.conf")).unwrap(),
+        "remote a",
+        "nothing may be written on the other machine"
     );
 }

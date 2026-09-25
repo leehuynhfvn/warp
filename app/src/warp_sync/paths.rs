@@ -106,18 +106,34 @@ fn is_hfs_ignorable(c: char) -> bool {
     )
 }
 
-/// `text` with control characters escaped, so that a remote file name cannot add lines to
-/// something shown to the user.
+/// `text` with control and invisible formatting characters escaped, so that a remote file name
+/// cannot add lines to, or reorder, something shown to the user.
 pub fn printable(text: &str) -> String {
     let mut printable = String::with_capacity(text.len());
     for c in text.chars() {
-        if c.is_control() {
+        if c.is_control() || is_invisible_format(c) {
             printable.extend(c.escape_default());
         } else {
             printable.push(c);
         }
     }
     printable
+}
+
+/// Characters that print nothing or change how the text around them is laid out (zero-width
+/// characters, line and paragraph separators, bidirectional controls), which a host could use to
+/// make a path or name read as something else.
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+    )
 }
 
 /// Directory holding the mirror of everything synced from `hostname`.

@@ -11,7 +11,7 @@ use super::config::{SyncConfig, SyncLimits};
 use super::requester::{
     ConfirmationKind, ExternalReply, Finished, Requester, SyncReply,
 };
-use super::{EXTERNAL_PENDING_TTL, WarpSyncError};
+use super::{EXTERNAL_PENDING_TTL, MAX_EXTERNAL_PENDING, WarpSyncError};
 use super::diff::FileDifference;
 use super::editor::{EditorCli, EditorRequest, MAX_EDITOR_DIFFS, launch};
 use super::paths::{host_key, printable};
@@ -187,6 +187,9 @@ struct PendingDownload {
 struct PendingUpload {
     shell: Arc<dyn RemoteShell>,
     prepared: PreparedUpload,
+    /// The key that `begin` took, which is not `prepared.host_key`: that one names the mirror
+    /// folder of the machine that was found, and may carry a machine suffix.
+    key: SyncKey,
     window_id: WindowId,
 }
 
@@ -204,10 +207,7 @@ impl ExternalPending {
                 pending.request.host_key.clone(),
                 pending.request.remote_path.clone(),
             ),
-            Self::Upload(pending) => (
-                pending.prepared.host_key.clone(),
-                pending.prepared.remote_path.clone(),
-            ),
+            Self::Upload(pending) => pending.key.clone(),
         }
     }
 }
@@ -317,7 +317,7 @@ impl WarpSyncModel {
             },
             move |me, (shell, prepared), ctx| match prepared {
                 Ok(prepared) => {
-                    me.await_upload_confirmation(shell, hostname, prepared, requester, ctx)
+                    me.await_upload_confirmation(shell, hostname, prepared, key, requester, ctx)
                 }
                 Err(error) => {
                     me.finish_sync(&key);
@@ -462,7 +462,7 @@ impl WarpSyncModel {
             self.finish_sync(&(pending.request.host_key, pending.request.remote_path));
         }
         if let Some(pending) = self.pending_uploads.remove(&id) {
-            self.finish_sync(&(pending.prepared.host_key, pending.prepared.remote_path));
+            self.finish_sync(&pending.key);
         }
     }
 
@@ -516,8 +516,17 @@ impl WarpSyncModel {
     }
 
     /// Holds `pending` for a local-control client until it answers or the hold expires. Returns
-    /// the id the client must present.
-    fn hold_external(&mut self, pending: ExternalPending, ctx: &mut ModelContext<Self>) -> Uuid {
+    /// the id the client must present. When too many operations are already held, the path is
+    /// released and the operation is refused.
+    fn hold_external(
+        &mut self,
+        pending: ExternalPending,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<Uuid, WarpSyncError> {
+        if self.external_pending.len() >= MAX_EXTERNAL_PENDING {
+            self.finish_sync(&pending.key());
+            return Err(WarpSyncError::TooManyPending);
+        }
         let id = Uuid::new_v4();
         self.external_pending.insert(id, pending);
         let ttl = self.external_pending_ttl;
@@ -527,7 +536,7 @@ impl WarpSyncModel {
                 me.discard_external(id);
             },
         );
-        id
+        Ok(id)
     }
 
     /// Drops a held operation and releases its path. Returns whether there was one.
@@ -564,7 +573,10 @@ impl WarpSyncModel {
         ctx: &mut ModelContext<Self>,
     ) {
         let PendingUpload {
-            shell, prepared, ..
+            shell,
+            prepared,
+            key,
+            ..
         } = pending;
         announce(
             &requester,
@@ -572,7 +584,6 @@ impl WarpSyncModel {
             ctx,
         );
 
-        let key = (prepared.host_key.clone(), prepared.remote_path.clone());
         ctx.spawn(
             async move {
                 let outcome = execute_upload(shell.as_ref(), &prepared).await;
@@ -649,11 +660,13 @@ impl WarpSyncModel {
                 });
             }
             Requester::External { reply, .. } => {
-                let pending_id = self.hold_external(ExternalPending::Download(pending), ctx);
-                reply.send(Ok(SyncReply::NeedsConfirmation {
-                    pending_id,
-                    kind: ConfirmationKind::overwrite_local_changes(modified_files),
-                }));
+                let held = self
+                    .hold_external(ExternalPending::Download(pending), ctx)
+                    .map(|pending_id| SyncReply::NeedsConfirmation {
+                        pending_id,
+                        kind: ConfirmationKind::overwrite_local_changes(modified_files),
+                    });
+                reply.send(held);
             }
         }
     }
@@ -663,6 +676,7 @@ impl WarpSyncModel {
         shell: Arc<dyn RemoteShell>,
         hostname: String,
         prepared: PreparedUpload,
+        key: SyncKey,
         requester: Requester,
         ctx: &mut ModelContext<Self>,
     ) {
@@ -687,6 +701,7 @@ impl WarpSyncModel {
         let pending = PendingUpload {
             shell,
             prepared,
+            key,
             window_id: requester.window_id(),
         };
         match requester {
@@ -700,11 +715,13 @@ impl WarpSyncModel {
                 });
             }
             Requester::External { reply, .. } => {
-                let pending_id = self.hold_external(ExternalPending::Upload(Box::new(pending)), ctx);
-                reply.send(Ok(SyncReply::NeedsConfirmation {
-                    pending_id,
-                    kind: ConfirmationKind::upload(summary),
-                }));
+                let held = self
+                    .hold_external(ExternalPending::Upload(Box::new(pending)), ctx)
+                    .map(|pending_id| SyncReply::NeedsConfirmation {
+                        pending_id,
+                        kind: ConfirmationKind::upload(summary),
+                    });
+                reply.send(held);
             }
         }
     }

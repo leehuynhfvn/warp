@@ -2,7 +2,7 @@
 use local_control::discovery::InstanceRecord;
 use local_control::protocol::{
     Action, ActionKind, ActionNameParams, BindingNameParams, BooleanValueParams, ColorValueParams,
-    ControlError, DirectionParams, EmptyParams, ErrorCode, FileOpenParams, KeyParams,
+    ControlError, DirectionParams, EmptyParams, FileOpenParams, KeyParams,
     KeyValueParams, PageQueryParams, QueryParams, RenameParams, RequestEnvelope, ResizeParams,
     SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
     TabCreateParams, TextParams, ThemeNameParams,
@@ -802,10 +802,7 @@ pub(super) fn send_action<T: Serialize>(
     let response = local_control::client::send_request_with_timeout(&instance, &request, timeout)?;
     match response.response {
         local_control::protocol::ControlResponse::Ok { data } => Ok(data),
-        local_control::protocol::ControlResponse::Error { .. } => Err(ControlError::new(
-            ErrorCode::Internal,
-            "local-control request failed without an error payload",
-        )),
+        local_control::protocol::ControlResponse::Error { error } => Err(error),
     }
 }
 

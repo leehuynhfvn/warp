@@ -862,19 +862,20 @@ fn sync_confirm_and_cancel_take_a_pending_id_and_only_instance_selectors() {
 
 #[test]
 fn only_a_confirmation_request_exits_with_the_needs_confirmation_code() {
-    let pending = serde_json::to_value(SyncResult::NeedsConfirmation {
+    let pending = SyncResult::NeedsConfirmation {
         pending_id: uuid::Uuid::new_v4(),
         confirmation: SyncConfirmation::OverwriteLocalChanges {
             files: vec!["/etc/a".to_owned()],
         },
-    })
-    .expect("result serializes");
-    let done = serde_json::to_value(SyncResult::Cancelled).expect("result serializes");
+    };
 
     assert_eq!(sync::exit_code(&pending), EXIT_NEEDS_CONFIRMATION);
     assert_eq!(EXIT_NEEDS_CONFIRMATION, 3);
-    assert_eq!(sync::exit_code(&done), EXIT_SUCCESS);
-    assert_eq!(sync::exit_code(&json!({ "unexpected": true })), EXIT_SUCCESS);
+    assert_eq!(sync::exit_code(&SyncResult::Cancelled), EXIT_SUCCESS);
+    assert_eq!(
+        sync::exit_code(&SyncResult::Unchanged { identical_files: 1 }),
+        EXIT_SUCCESS
+    );
 }
 
 #[test]
@@ -1063,11 +1064,4 @@ fn a_comparison_lists_each_difference_with_what_changed() {
          changed locally: /etc/a\n  new on the server: /etc/b\nDiff saved at \
          /m/.warp-sync/diffs/h/etc.diff"
     );
-}
-
-#[test]
-fn data_that_is_not_a_sync_result_is_printed_as_json() {
-    let text = sync::render_sync_data(&json!({ "status": "from_the_future" }));
-
-    assert!(text.contains("from_the_future"), "{text}");
 }

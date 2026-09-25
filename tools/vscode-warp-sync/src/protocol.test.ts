@@ -77,3 +77,9 @@ test("a result with a missing or mistyped field is rejected", () => {
     assert.equal(parseSyncResult(sample), undefined, JSON.stringify(sample));
   }
 });
+
+test("null is not accepted where a field is optional", () => {
+  const withNull = { status: "uploaded", files: 1, dirs: 0, bytes: 5, remote_user: "root", backup_path: null };
+
+  assert.equal(parseSyncResult(withNull), undefined);
+});

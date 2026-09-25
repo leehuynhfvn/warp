@@ -137,8 +137,9 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isString);
 }
 
+// Warp leaves an absent field out; `null` is not something it sends.
 function isOptional(value: unknown, check: (value: unknown) => boolean): boolean {
-  return value === undefined || value === null || check(value);
+  return value === undefined || check(value);
 }
 
 function isSession(value: unknown): value is SyncSession {

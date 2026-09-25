@@ -30,6 +30,7 @@ class Controller implements vscode.Disposable {
   private readonly statusItem: vscode.StatusBarItem;
   private readonly timer: NodeJS.Timeout;
   private mirrorFolder: string | undefined;
+  private latestQuestion = 0;
 
   constructor(
     private readonly client: WarpctrlClient,
@@ -74,8 +75,13 @@ class Controller implements vscode.Disposable {
     this.statusItem.show();
   }
 
-  /** Asks Warp which sessions serve the mirror folder and updates the status bar. */
+  /**
+   * Asks Warp which sessions serve the mirror folder and updates the status bar. Answers that
+   * arrive after a newer question was asked are dropped, so that a slow reply cannot overwrite
+   * a fresher one.
+   */
   async refresh(): Promise<StatusView | undefined> {
+    const question = ++this.latestQuestion;
     const folder = this.candidateFolders()[0];
     if (folder === undefined) {
       await this.setActive(undefined);
@@ -83,6 +89,9 @@ class Controller implements vscode.Disposable {
     }
     try {
       const result = await this.client.status(folder);
+      if (question !== this.latestQuestion) {
+        return undefined;
+      }
       if (result.status !== "status" || result.path === undefined) {
         await this.setActive(undefined);
         return undefined;
@@ -92,6 +101,9 @@ class Controller implements vscode.Disposable {
       this.show(view);
       return view;
     } catch (error) {
+      if (question !== this.latestQuestion) {
+        return undefined;
+      }
       if (error instanceof WarpctrlError && error.code === "invalid_params") {
         await this.setActive(undefined);
         return undefined;
@@ -143,9 +155,18 @@ class Controller implements vscode.Disposable {
     }
   }
 
-  private async forEach(uris: readonly vscode.Uri[], operation: (uri: vscode.Uri) => Promise<boolean>): Promise<void> {
+  /**
+   * Applies `operation` to each file in turn. A file that fails or is declined stops the batch
+   * unless `keepGoing` is set, which is for operations that change nothing.
+   */
+  private async forEach(
+    uris: readonly vscode.Uri[],
+    operation: (uri: vscode.Uri) => Promise<boolean>,
+    keepGoing = false,
+  ): Promise<void> {
     for (const uri of uris) {
-      if (!(await this.guard(() => operation(uri)))) {
+      const went = await this.guard(() => operation(uri));
+      if (!went && !keepGoing) {
         return;
       }
     }
@@ -235,7 +256,7 @@ class Controller implements vscode.Disposable {
   }
 
   compare(uris: readonly vscode.Uri[]): Promise<void> {
-    return this.forEach(uris, (uri) => this.compareOne(uri.fsPath));
+    return this.forEach(uris, (uri) => this.compareOne(uri.fsPath), true);
   }
 
   private async compareOne(fsPath: string): Promise<boolean> {

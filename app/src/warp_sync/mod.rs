@@ -61,3 +61,7 @@ pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long an operation waits for a local-control client to confirm or cancel it before it is
 /// dropped and its path is released.
 pub const EXTERNAL_PENDING_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// How many operations may wait for local-control clients at once. Each one holds an archive of
+/// up to the upload limit in memory.
+pub const MAX_EXTERNAL_PENDING: usize = 8;

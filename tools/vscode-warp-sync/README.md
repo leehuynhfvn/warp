@@ -32,6 +32,18 @@ only calls `warpctrl`; it never talks to the server itself.
 - **Upload** always asks first. The dialog names `user@host`, the number of files, files that would
   be created, files missing from the mirror (never deleted on the server), and warns when the
   server changed since the last sync. Cancelling sends nothing.
+
+## Security notes
+
+- The confirmation is a safeguard against mistakes, not a security boundary. Warp's local control
+  is available to every process that runs as your OS user while **Settings > Scripting** is on, and
+  such a process can prepare and confirm an upload itself, with the privileges of the Warp session
+  (root after `sudo -i`). Turn Scripting off when you do not use it.
+- A mirror contains files chosen by the server, for example `.vscode/tasks.json`. Keep mirror
+  folders in VS Code's **Restricted Mode**: this extension works there, and it needs no trust.
+  Never trust a mirror folder you did not review.
+- `warpSync.command` and `warpSync.mirrorRoot` are machine-scoped, so a workspace cannot change
+  which program the extension starts.
 - **Status bar:** `root@<host>` when a Warp session serves the mirror, a warning otherwise. Click to
   check again.
 

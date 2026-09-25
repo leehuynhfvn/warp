@@ -56,6 +56,8 @@ pub enum WarpSyncError {
     PendingNotFound,
     #[error("No open Warp session is connected to {0}. Open a session to it in Warp and retry.")]
     NoSession(String),
+    #[error("Too many operations are waiting for confirmation. Confirm or cancel some first.")]
+    TooManyPending,
     #[error("{0}")]
     AmbiguousSession(String),
 }

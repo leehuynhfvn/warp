@@ -190,6 +190,38 @@ fn names_with_control_characters_are_refused() {
     ));
 }
 
+#[test]
+fn names_that_would_be_trimmed_or_hide_characters_are_refused() {
+    let mirror = Mirror::new();
+
+    for relative in ["prod-1/etc/trailing ", "prod-1/etc/ leading", "prod-1/etc/tab\t", "prod-1/etc/a\u{7f}b"] {
+        assert!(
+            matches!(mirror.resolve(relative), Err(WarpSyncError::InvalidPath(_))),
+            "{relative:?}"
+        );
+    }
+    assert_eq!(
+        mirror.resolve("prod-1/etc/inner space"),
+        mapped("prod-1", Some("/etc/inner space"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_that_leads_nowhere_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let mirror = Mirror::new();
+    symlink("/nonexistent/outside", mirror.root().join("prod-1/etc/dangling")).unwrap();
+
+    for relative in ["prod-1/etc/dangling", "prod-1/etc/dangling/new"] {
+        assert!(
+            matches!(mirror.resolve(relative), Err(WarpSyncError::InvalidPath(_))),
+            "{relative}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlink_that_leaves_the_mirror_is_refused() {

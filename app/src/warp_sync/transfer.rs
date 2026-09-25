@@ -291,6 +291,7 @@ pub async fn execute_upload(
     shell: &dyn RemoteShell,
     prepared: &PreparedUpload,
 ) -> Result<UploadOutcome, WarpSyncError> {
+    ensure_same_target(shell, prepared).await?;
     let begin = shell.run(&upload_begin_command()).await?;
     let tmp_dir = validate_tmp_dir(&String::from_utf8_lossy(&begin))?;
 
@@ -350,6 +351,23 @@ async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult
         .run(&wrap_for_any_shell(&probe_script(remote_path)))
         .await?;
     parse_probe_output(&String::from_utf8_lossy(&output))
+}
+
+/// The confirmation may come long after the upload was prepared, so check that the session still
+/// reaches the same account on the same machine before anything is written.
+async fn ensure_same_target(
+    shell: &dyn RemoteShell,
+    prepared: &PreparedUpload,
+) -> Result<(), WarpSyncError> {
+    let now = probe(shell, &prepared.remote_path).await?;
+    let before = &prepared.probe;
+    if now.user != before.user || now.uid != before.uid || now.machine_id != before.machine_id {
+        return Err(WarpSyncError::Manifest(
+            "the session no longer reaches the machine or account the upload was prepared for"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// A host that cannot hash files, or whose hashing command fails or takes too long, is reported
@@ -524,6 +542,15 @@ fn resolve_host_key(
     machine_id: Option<&str>,
 ) -> Result<String, WarpSyncError> {
     let Some(machine_id) = machine_id else {
+        // A host that reports no machine id must not be taken for the machine that owns the
+        // mirror: the id is what tells hosts of the same name apart, and the host decides
+        // whether to report it.
+        if load_manifest(mirror_root, host_key)?.machine_id().is_some() {
+            return Err(WarpSyncError::Manifest(
+                "this mirror belongs to a specific machine, but the host did not report a machine id"
+                    .to_owned(),
+            ));
+        }
         return Ok(host_key.to_owned());
     };
     let candidates = [host_key.to_owned(), machine_host_key(host_key, machine_id)];

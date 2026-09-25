@@ -48,7 +48,7 @@ pub(crate) fn status(
     let mirror_root = config.mirror_root.to_string_lossy().into_owned();
     let (sender, receiver) = oneshot::channel();
     let Some(path) = params.path else {
-        deliver(
+        finish(
             sender,
             Ok(SyncResult::Status {
                 mirror_root,
@@ -69,7 +69,7 @@ pub(crate) fn status(
                     path: Some(path_status(mirror, sessions)),
                 })
             });
-            deliver(sender, result);
+            finish(sender, result);
         },
     );
     Ok(receiver)
@@ -91,7 +91,7 @@ pub(crate) fn path_operation(
         async move { resolve_mirror_path(&config.mirror_root, &params.path) },
         move |_, resolved, ctx| match resolved {
             Ok(mirror) => start_operation(operation, kind, mirror, &target, sender, ctx),
-            Err(error) => deliver(sender, Err(control_error(error))),
+            Err(error) => finish(sender, Err(control_error(error))),
         },
     );
     Ok(receiver)
@@ -121,7 +121,7 @@ pub(crate) fn cancel(
     let (sender, receiver) = oneshot::channel();
     let cancelled = WarpSyncModel::handle(ctx)
         .update(ctx, |model, _| model.cancel_external(params.pending_id));
-    deliver(
+    finish(
         sender,
         cancelled
             .map(|()| SyncResult::Cancelled)
@@ -172,7 +172,7 @@ fn start_operation(
         });
     let (remote_path, chosen) = match chosen {
         Ok(chosen) => chosen,
-        Err(error) => return deliver(sender, Err(error)),
+        Err(error) => return finish(sender, Err(error)),
     };
 
     let (requester, replies) = Requester::external(chosen.window_id, Some(host_dir_name));
@@ -186,12 +186,18 @@ fn start_operation(
 }
 
 /// Waits for Warp Sync's answer without holding up the main thread, then hands it to the client.
+/// A confirmation that nobody is left to answer is dropped at once instead of holding its path
+/// until it expires.
 fn forward(
     replies: oneshot::Receiver<Result<SyncReply, WarpSyncError>>,
     sender: SyncSender,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) {
-    ctx.spawn(replies, move |_, reply, _| {
+    ctx.spawn(replies, move |_, reply, ctx| {
+        let unanswered = match &reply {
+            Ok(Ok(SyncReply::NeedsConfirmation { pending_id, .. })) => Some(*pending_id),
+            Ok(Ok(_) | Err(_)) | Err(_) => None,
+        };
         let result = match reply {
             Ok(Ok(reply)) => Ok(sync_result(reply)),
             Ok(Err(error)) => Err(control_error(error)),
@@ -200,11 +206,24 @@ fn forward(
                 "Warp Sync stopped before it answered",
             )),
         };
-        deliver(sender, result);
+        let delivered = deliver(sender, result);
+        if let (false, Some(pending_id)) = (delivered, unanswered) {
+            let dropped = WarpSyncModel::handle(ctx)
+                .update(ctx, |model, _| model.cancel_external(pending_id));
+            if let Err(error) = dropped {
+                log::debug!("A dropped Warp Sync confirmation was already gone: {error}");
+            }
+        }
     });
 }
 
-fn deliver(sender: SyncSender, result: Result<SyncResult, ControlError>) {
+/// Sends `result` to a client that may have stopped waiting.
+fn finish(sender: SyncSender, result: Result<SyncResult, ControlError>) {
+    deliver(sender, result);
+}
+
+/// Sends `result` to the client. Returns whether the client was still waiting.
+fn deliver(sender: SyncSender, result: Result<SyncResult, ControlError>) -> bool {
     let value = result.and_then(|result| {
         serde_json::to_value(result).map_err(|err| {
             ControlError::with_details(
@@ -214,9 +233,11 @@ fn deliver(sender: SyncSender, result: Result<SyncResult, ControlError>) {
             )
         })
     });
-    if sender.send(value).is_err() {
+    let delivered = sender.send(value).is_ok();
+    if !delivered {
         log::debug!("A local-control client stopped waiting for a Warp Sync result");
     }
+    delivered
 }
 
 /// The remote sessions that `target` selects, or all of them when it selects none.

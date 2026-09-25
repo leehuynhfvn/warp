@@ -63,6 +63,11 @@ pub fn resolve_mirror_path(
         return Err(invalid(CHOOSE_INSIDE_HOST));
     };
     let rest: Vec<String> = components.collect();
+    if rest.iter().any(|name| has_unsafe_edges(name)) {
+        return Err(invalid(
+            "a name in the path starts or ends with a space, or contains a control character",
+        ));
+    }
     let remote_path = if rest.is_empty() {
         None
     } else {
@@ -86,6 +91,9 @@ fn split_existing(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>), War
                 return Ok((existing, missing));
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(current).is_ok() {
+                    return Err(invalid("the path goes through a link that leads nowhere"));
+                }
                 let (Some(name), Some(parent)) = (current.file_name(), current.parent()) else {
                     return Err(invalid("the path does not exist"));
                 };
@@ -95,6 +103,12 @@ fn split_existing(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>), War
             Err(err) => return Err(invalid(&format!("the path cannot be used: {err}"))),
         }
     }
+}
+
+/// Names that Warp Sync would read differently from how the file system does: it trims the path
+/// it is given, and control characters cannot be shown faithfully.
+fn has_unsafe_edges(name: &str) -> bool {
+    name != name.trim() || name.chars().any(char::is_control)
 }
 
 fn component_name(component: &Component<'_>) -> Result<String, WarpSyncError> {
