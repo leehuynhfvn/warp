@@ -10,7 +10,7 @@ fn session(id: u64) -> SessionId {
 
 fn attached(access: Access, now: Instant) -> Attachments {
     let mut attachments = Attachments::default();
-    attachments.attach(session(1), access, "root".to_owned(), "prod-1".to_owned(), now);
+    attachments.attach(session(1), access, now);
     attachments
 }
 
@@ -22,7 +22,7 @@ fn check(
 ) -> Result<Access, AgentBridgeError> {
     attachments
         .check(session(id), needed, "alice", "prod-2", now)
-        .map(Attachment::access)
+        .map(|attachment| attachment.status(now).access)
 }
 
 #[test]
@@ -90,12 +90,10 @@ fn using_a_session_extends_it_and_counts_only_commands() {
     attachments.record_use(session(1), false, later);
 
     let after_original_expiry = start + ATTACH_IDLE_TTL + Duration::from_secs(60);
-    let attachment = attachments
-        .get(session(1), after_original_expiry)
+    let status = attachments
+        .status(session(1), after_original_expiry)
         .expect("the use restarted the idle timer");
-    assert_eq!(attachment.exec_count(), 1);
-    assert_eq!(attachment.user(), "root");
-    assert_eq!(attachment.host(), "prod-1");
+    assert_eq!(status.exec_count, 1);
 }
 
 #[test]
@@ -111,18 +109,18 @@ fn attaching_again_replaces_the_access_and_restarts_the_count() {
     let now = Instant::now();
     let mut attachments = attached(Access::Full, now);
     attachments.record_use(session(1), true, now);
-    attachments.attach(session(1), Access::ReadOnly, "root".to_owned(), "prod-1".to_owned(), now);
+    attachments.attach(session(1), Access::ReadOnly, now);
 
-    let attachment = attachments.get(session(1), now).unwrap();
-    assert_eq!(attachment.access(), Access::ReadOnly);
-    assert_eq!(attachment.exec_count(), 0);
+    let status = attachments.status(session(1), now).unwrap();
+    assert_eq!(status.access, Access::ReadOnly);
+    assert_eq!(status.exec_count, 0);
 }
 
 #[test]
 fn detaching_removes_one_session_and_reports_whether_it_was_there() {
     let now = Instant::now();
     let mut attachments = attached(Access::Full, now);
-    attachments.attach(session(2), Access::Full, "root".to_owned(), "prod-2".to_owned(), now);
+    attachments.attach(session(2), Access::Full, now);
 
     assert!(attachments.detach(session(1)));
     assert!(!attachments.detach(session(1)));
@@ -133,9 +131,31 @@ fn detaching_removes_one_session_and_reports_whether_it_was_there() {
 fn detach_all_returns_how_many_sessions_it_removed() {
     let now = Instant::now();
     let mut attachments = attached(Access::Full, now);
-    attachments.attach(session(2), Access::ReadOnly, "root".to_owned(), "prod-2".to_owned(), now);
+    attachments.attach(session(2), Access::ReadOnly, now);
 
     assert_eq!(attachments.detach_all(), 2);
     assert_eq!(attachments.detach_all(), 0);
     assert!(attachments.get(session(1), now).is_none());
+}
+
+#[test]
+fn the_status_says_how_long_the_session_has_been_idle_and_what_is_left() {
+    let start = Instant::now();
+    let attachments = attached(Access::ReadOnly, start);
+    let idle = Duration::from_secs(90);
+
+    let status = attachments.status(session(1), start + idle).unwrap();
+
+    assert_eq!(
+        status,
+        AttachmentStatus {
+            access: Access::ReadOnly,
+            idle,
+            expires_in: ATTACH_IDLE_TTL - idle,
+            exec_count: 0,
+        }
+    );
+    let expired = start + ATTACH_IDLE_TTL + Duration::from_secs(1);
+    assert_eq!(attachments.status(session(1), expired), None);
+    assert_eq!(attachments.status(session(2), start), None);
 }

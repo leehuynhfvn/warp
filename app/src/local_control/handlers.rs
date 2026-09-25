@@ -7,6 +7,7 @@ pub(super) mod close;
 pub(super) mod layout;
 pub(super) mod metadata;
 pub(super) mod metadata_config;
+pub(super) mod remote;
 pub(super) mod settings_surfaces;
 pub(super) mod sync;
 mod sync_reply;

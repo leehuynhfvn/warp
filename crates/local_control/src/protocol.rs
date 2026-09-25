@@ -592,6 +592,56 @@ pub struct RemoteFileWriteResult {
     pub created: bool,
 }
 
+/// Whether a session is on the machine running Warp.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteSessionKind {
+    Local,
+    Remote,
+}
+
+/// What an attached session may be used for.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteAccess {
+    ReadOnly,
+    Full,
+}
+
+/// The user's permission for agents to use a session, and how much of it is left.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteAttachment {
+    pub access: RemoteAccess,
+    pub idle_secs: u64,
+    pub expires_in_secs: u64,
+    pub exec_count: u32,
+}
+
+/// One terminal session in `remote.session.list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionSummary {
+    pub session_id: String,
+    pub window_index: u32,
+    pub tab_index: u32,
+    pub pane_index: u32,
+    pub is_active: bool,
+    pub session_type: RemoteSessionKind,
+    pub host: String,
+    pub user: String,
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Absent unless an agent may use the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<RemoteAttachment>,
+}
+
+/// Result of `remote.session.list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionListResult {
+    pub sessions: Vec<RemoteSessionSummary>,
+}
+
 /// Typed success payloads for catalog actions that need stable structured data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

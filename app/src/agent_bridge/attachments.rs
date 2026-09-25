@@ -3,6 +3,8 @@
 //! `sudo -i`) ends it.
 
 use std::collections::HashMap;
+use std::time::Duration;
+
 use instant::Instant;
 
 use crate::terminal::model::session::SessionId;
@@ -19,30 +21,31 @@ pub(crate) enum Access {
     Full,
 }
 
+/// How an attachment stands at a moment in time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AttachmentStatus {
+    pub access: Access,
+    pub idle: Duration,
+    pub expires_in: Duration,
+    pub exec_count: u32,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Attachment {
     access: Access,
-    user: String,
-    host: String,
     last_used: Instant,
     exec_count: u32,
 }
 
 impl Attachment {
-    pub(crate) fn access(&self) -> Access {
-        self.access
-    }
-
-    pub(crate) fn user(&self) -> &str {
-        &self.user
-    }
-
-    pub(crate) fn host(&self) -> &str {
-        &self.host
-    }
-
-    pub(crate) fn exec_count(&self) -> u32 {
-        self.exec_count
+    fn status(&self, now: Instant) -> AttachmentStatus {
+        let idle = now.saturating_duration_since(self.last_used);
+        AttachmentStatus {
+            access: self.access,
+            idle,
+            expires_in: ATTACH_IDLE_TTL.saturating_sub(idle),
+            exec_count: self.exec_count,
+        }
     }
 
     fn is_expired(&self, now: Instant) -> bool {
@@ -57,20 +60,11 @@ pub(crate) struct Attachments {
 
 impl Attachments {
     /// Attaches `id`, replacing any earlier attachment of it.
-    pub(crate) fn attach(
-        &mut self,
-        id: SessionId,
-        access: Access,
-        user: String,
-        host: String,
-        now: Instant,
-    ) {
+    pub(crate) fn attach(&mut self, id: SessionId, access: Access, now: Instant) {
         self.by_session.insert(
             id,
             Attachment {
                 access,
-                user,
-                host,
                 last_used: now,
                 exec_count: 0,
             },
@@ -132,6 +126,10 @@ impl Attachments {
         self.by_session
             .get(&id)
             .filter(|attachment| !attachment.is_expired(now))
+    }
+
+    pub(crate) fn status(&self, id: SessionId, now: Instant) -> Option<AttachmentStatus> {
+        self.get(id, now).map(|attachment| attachment.status(now))
     }
 }
 

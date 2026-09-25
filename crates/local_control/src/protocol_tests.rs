@@ -218,13 +218,7 @@ fn direct_surface_actions_have_stable_names() {
 }
 
 /// Actions declared in the catalog whose app-side handler has not landed yet.
-const STUB_ACTIONS: &[ActionKind] = &[
-    ActionKind::RemoteSessionList,
-    ActionKind::RemoteExec,
-    ActionKind::RemoteFileRead,
-    ActionKind::RemoteFileWrite,
-    ActionKind::RemoteOutputRecent,
-];
+const STUB_ACTIONS: &[ActionKind] = &[ActionKind::RemoteOutputRecent];
 
 #[test]
 fn catalog_actions_share_uniform_authorization() {

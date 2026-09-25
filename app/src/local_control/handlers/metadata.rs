@@ -120,11 +120,11 @@ pub(super) struct PaneEntry {
 
 pub(super) struct SessionEntry {
     pub(super) window_id: WindowId,
-    window_index: usize,
+    pub(super) window_index: usize,
     tab_id: String,
     pub(super) tab_index: usize,
     pub(super) pane_id: PaneId,
-    pane_index: usize,
+    pub(super) pane_index: usize,
     pub(super) is_active: bool,
     pub(super) pane_group: ViewHandle<PaneGroup>,
 }

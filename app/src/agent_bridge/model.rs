@@ -1,7 +1,7 @@
 use instant::Instant;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
-use super::attachments::{Access, Attachment, Attachments};
+use super::attachments::{Access, AttachmentStatus, Attachments};
 use super::error::AgentBridgeError;
 use crate::terminal::model::session::SessionId;
 
@@ -19,16 +19,8 @@ impl Entity for AgentBridgeModel {
 impl SingletonEntity for AgentBridgeModel {}
 
 impl AgentBridgeModel {
-    pub(crate) fn attach(
-        &mut self,
-        id: SessionId,
-        access: Access,
-        user: String,
-        host: String,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.attachments
-            .attach(id, access, user, host, Instant::now());
+    pub(crate) fn attach(&mut self, id: SessionId, access: Access, ctx: &mut ModelContext<Self>) {
+        self.attachments.attach(id, access, Instant::now());
         ctx.notify();
     }
 
@@ -66,7 +58,7 @@ impl AgentBridgeModel {
         self.attachments.record_use(id, is_exec, Instant::now());
     }
 
-    pub(crate) fn get(&self, id: SessionId) -> Option<&Attachment> {
-        self.attachments.get(id, Instant::now())
+    pub(crate) fn status(&self, id: SessionId) -> Option<AttachmentStatus> {
+        self.attachments.status(id, Instant::now())
     }
 }

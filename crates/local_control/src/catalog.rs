@@ -313,10 +313,10 @@ define_action_catalog! {
     }
 
     remote {
-        RemoteSessionList => { name: "remote.session.list", status: Stub, target: Instance, params: None, result: RemoteSessionList },
-        RemoteExec => { name: "remote.exec", status: Stub, target: Session, params: RemoteExec, result: RemoteExecResult },
-        RemoteFileRead => { name: "remote.file.read", status: Stub, target: Session, params: RemoteFileRead, result: RemoteFileContent },
-        RemoteFileWrite => { name: "remote.file.write", status: Stub, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
+        RemoteSessionList => { name: "remote.session.list", status: Implemented, target: Instance, params: None, result: RemoteSessionList },
+        RemoteExec => { name: "remote.exec", status: Implemented, target: Session, params: RemoteExec, result: RemoteExecResult },
+        RemoteFileRead => { name: "remote.file.read", status: Implemented, target: Session, params: RemoteFileRead, result: RemoteFileContent },
+        RemoteFileWrite => { name: "remote.file.write", status: Implemented, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
         RemoteOutputRecent => { name: "remote.output.recent", status: Stub, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },
     }
 

@@ -13,7 +13,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::sync::{self, PathOperation, SyncReceiver};
 use crate::local_control::handlers::{
-    app_state, close, metadata, metadata_config, settings_surfaces,
+    app_state, close, metadata, metadata_config, remote, settings_surfaces,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -207,11 +207,11 @@ impl LocalControlBridge {
             ActionKind::WindowClose => close::window_close(&self.instance_id, &request, ctx),
             ActionKind::TabClose => close::tab_close(&self.instance_id, &request, ctx),
             ActionKind::PaneClose => close::pane_close(&self.instance_id, &request, ctx),
-            ActionKind::RemoteSessionList
-            | ActionKind::RemoteExec
-            | ActionKind::RemoteFileRead
-            | ActionKind::RemoteFileWrite
-            | ActionKind::RemoteOutputRecent => Err(ControlError::new(
+            ActionKind::RemoteSessionList => remote::session_list(ctx),
+            ActionKind::RemoteExec | ActionKind::RemoteFileRead | ActionKind::RemoteFileWrite => {
+                return pending(request.request_id, remote::start(&request, ctx));
+            }
+            ActionKind::RemoteOutputRecent => Err(ControlError::new(
                 ErrorCode::UnsupportedAction,
                 format!(
                     "{} is not implemented by this local-control bridge",
