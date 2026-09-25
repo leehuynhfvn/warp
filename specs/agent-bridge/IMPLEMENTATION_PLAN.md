@@ -710,7 +710,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] Phase 0 — Worktree + commit plan
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
 - [x] 2.1 Flag · [x] 2.2 ops · [x] 2.3 model · [x] 2.4 bridge async (bỏ qua, D13) · [x] 2.5 handlers · [x] 2.6 palette · [x] 2.7 CLI · [x] 2.8 review
-- [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
+- [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: `exec -- 'id -un; hostname'` 0,183 s tổng (CLI+HTTP+PTY), `duration_ms` 43; bước 1–6 đúng kỳ vọng (root thật, 6,9 MB `seq` bị cắt head/tail, quote/cwd đúng); còn bước 7–9 (ghi file, read-only/revoke/exit, audit/Scripting)
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
 - [ ] 4.1 recent_output · [ ] 4.2 indicator · [ ] 4.3 format
@@ -763,3 +763,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 2.6: 4 `WorkspaceAction::AgentBridge*` (nhóm `false` của `should_save_app_state_on_action`), 5 binding `workspace:agent_bridge_*` trong `if FeatureFlag::AgentBridge`, handler + toast trong `workspace/view.rs`, chữ trong `agent_bridge/messages.rs` (trung lập với agent, D11; `setup_command` quote đường dẫn exe). Attach kiểm tra trước `ensure_supported` (PowerShell/local → toast lỗi). Test `messages` + 328 test `workspace::`/keybinding vẫn pass.
 - 2026-09-25 — Task 2.7: `warpctrl remote {sessions,exec,read,write}` (`warp_cli/src/local_control/remote.rs`, thêm dep `base64`); exit code của `exec` = exit code lệnh remote (124 khi timeout); `write` bắt buộc đúng một trong `--expected-sha256`/`--create`; CLI gửi `agent: "warpctrl-cli"`. 7 test parse/render; `REMOTE_ACTIONS_WITHOUT_CLI` chỉ còn `remote.output.recent`.
 - 2026-09-25 — Task 2.8: review bằng rust-reviewer + security-reviewer; không có CRITICAL. Đã sửa các mục trong D20 (gồm 1 lỗi thật do tôi gây ra: import `#[cfg]` bị gắn nhầm ở `workspace/view.rs`), bác 1 mục sai (reviewer nói `ctx.spawn` chạy trên main thread — thực tế chạy trên background executor). Phần còn lại là D21. `cargo test -p warp -p warp_cli --lib -- agent_bridge local_control`: 172 + 38 test pass.
+- 2026-09-25 — Checkpoint A (một phần, bước 1–6): người dùng xác nhận đúng kỳ vọng; độ trễ 0,183 s/lệnh (43 ms trên server). Lưu ý build: máy không có `warp-channel-config` nên `./script/run` build kênh OSS (`warp-oss`), phải chạy `./script/run --features warp_control_cli,warp_sync,agent_bridge` và bật Settings > Scripting. Session id của pane có dấu cách (`Pane Pane Terminal (2209)`), cần đặt trong dấu nháy khi dùng `--session`.
