@@ -1,7 +1,7 @@
 # Warp Sync for VS Code
 
-Download, compare and upload the files of a [Warp Sync](../../specs/warp-sync/IMPLEMENTATION_PLAN.md)
-mirror without leaving VS Code. The commands run through the Warp terminal that is connected to the
+Download, compare and upload the files of a Warp Sync mirror without leaving VS Code (design:
+`specs/warp-sync/IMPLEMENTATION_PLAN.md` in the Warp repository). The commands run through the Warp terminal that is connected to the
 server, so they have the privileges of that shell (for example root after `sudo -i`). The extension
 only calls `warpctrl`; it never talks to the server itself.
 
