@@ -22,6 +22,7 @@ fn pending_download(host_key: &str, remote_path: &str) -> PendingDownload {
             remote_path: remote_path.to_owned(),
             host_key: host_key.to_owned(),
             mirror_root: PathBuf::from("/mirror"),
+            limits: SyncLimits::default(),
             allow_overwrite_local_changes: false,
         },
         window_id: WindowId::new(),

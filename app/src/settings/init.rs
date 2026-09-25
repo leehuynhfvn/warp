@@ -20,7 +20,7 @@ use super::{
     InputSettings, LocalControlSettings, PaneSettings, SameLinePromptBlockSettings, ScrollSettings,
     SelectionSettings, SharedObjectLimitBannerSettings, SshSettings, ThemeSettings,
     TuiAutoupdateSettings, TuiThemeSettings, TuiVoiceSettings, TuiZeroStateSettings,
-    VimBannerSettings, WarpDrivePrivacySettings,
+    VimBannerSettings, WarpDrivePrivacySettings, WarpSyncSettings,
 };
 use crate::ai::cloud_agent_settings::CloudAgentSettings;
 use crate::appearance;
@@ -106,6 +106,9 @@ pub fn register_all_settings(ctx: &mut AppContext) {
     SemanticSelection::register(ctx);
     if FeatureFlag::WarpControlCli.is_enabled() {
         LocalControlSettings::register(ctx);
+    }
+    if FeatureFlag::WarpSync.is_enabled() {
+        WarpSyncSettings::register(ctx);
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]

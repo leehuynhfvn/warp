@@ -17,7 +17,7 @@ use tar::{Archive, Builder, Entry, EntryType, Header};
 
 use super::manifest::{EntryKind, EntryMeta, Manifest};
 use super::paths::{local_path_for, split_parent_name};
-use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, MAX_UPLOAD_BYTES, WarpSyncError};
+use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, WarpSyncError};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
@@ -474,6 +474,7 @@ pub fn build_upload(
     manifest: &Manifest,
     mirror_root: &Path,
     host_key: &str,
+    max_upload_bytes: usize,
 ) -> Result<UploadArchive, WarpSyncError> {
     let known = manifest.entries_under(root);
     if known.is_empty() {
@@ -535,11 +536,11 @@ pub fn build_upload(
     summary.bytes = encoder
         .finish()
         .map_err(|err| local_io_message("pack", &err))?;
-    if summary.bytes.len() > MAX_UPLOAD_BYTES {
+    if summary.bytes.len() > max_upload_bytes {
         return Err(too_large(format!(
             "the upload is {} KiB compressed; the limit is {} KiB",
             summary.bytes.len().div_ceil(1024),
-            MAX_UPLOAD_BYTES / 1024
+            max_upload_bytes / 1024
         )));
     }
     summary.new_files = new_files;

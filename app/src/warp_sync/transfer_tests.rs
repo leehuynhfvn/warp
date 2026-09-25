@@ -148,6 +148,7 @@ impl Env {
             remote_path: self.remote_path.clone(),
             host_key: HOST_KEY.to_owned(),
             mirror_root: self.mirror_root(),
+            limits: SyncLimits::default(),
             allow_overwrite_local_changes,
         }
     }
@@ -157,6 +158,7 @@ impl Env {
             remote_path: self.remote_path.clone(),
             host_key: HOST_KEY.to_owned(),
             mirror_root: self.mirror_root(),
+            limits: SyncLimits::default(),
         }
     }
 
@@ -376,19 +378,38 @@ fn download_size_limit_is_enforced() {
     let mut probe =
         parse_probe_output("status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=1\ntar=gnu\nbase64=yes\n")
             .unwrap();
-    assert!(ensure_download_size(&probe).is_ok());
+    let limits = SyncLimits::default();
+    assert!(ensure_download_size(&probe, limits).is_ok());
 
-    probe.size_kib = Some(MAX_DOWNLOAD_KIB);
-    assert!(ensure_download_size(&probe).is_ok());
+    probe.size_kib = Some(limits.max_download_kib);
+    assert!(ensure_download_size(&probe, limits).is_ok());
 
-    probe.size_kib = Some(MAX_DOWNLOAD_KIB + 1);
+    probe.size_kib = Some(limits.max_download_kib + 1);
     assert!(matches!(
-        ensure_download_size(&probe),
+        ensure_download_size(&probe, limits),
         Err(WarpSyncError::TooLarge { .. })
     ));
 
     probe.size_kib = None;
-    assert!(ensure_download_size(&probe).is_ok());
+    assert!(ensure_download_size(&probe, limits).is_ok());
+}
+
+#[test]
+fn download_size_limit_follows_the_configured_limit() {
+    let mut probe =
+        parse_probe_output("status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=2048\ntar=gnu\nbase64=yes\n")
+            .unwrap();
+
+    assert!(ensure_download_size(&probe, SyncLimits::from_mib(2, 4)).is_ok());
+    assert!(matches!(
+        ensure_download_size(&probe, SyncLimits::from_mib(1, 4)),
+        Err(WarpSyncError::TooLarge { .. })
+    ));
+    probe.size_kib = Some(2049);
+    assert!(matches!(
+        ensure_download_size(&probe, SyncLimits::from_mib(2, 4)),
+        Err(WarpSyncError::TooLarge { .. })
+    ));
 }
 
 #[test]
@@ -763,10 +784,12 @@ fn a_remote_entry_named_like_the_parking_directory_does_not_clobber_the_download
 
 #[test]
 fn oversized_output_is_rejected_even_when_du_said_otherwise() {
-    assert!(ensure_received_size(0).is_ok());
-    assert!(ensure_received_size((MAX_DOWNLOAD_KIB * BYTES_PER_KIB) as usize).is_ok());
+    let limits = SyncLimits::default();
+    let limit_bytes = (limits.max_download_kib * BYTES_PER_KIB) as usize;
+    assert!(ensure_received_size(0, limits).is_ok());
+    assert!(ensure_received_size(limit_bytes, limits).is_ok());
     assert!(matches!(
-        ensure_received_size((MAX_DOWNLOAD_KIB * BYTES_PER_KIB) as usize + 1),
+        ensure_received_size(limit_bytes + 1, limits),
         Err(WarpSyncError::TooLarge { .. })
     ));
 }

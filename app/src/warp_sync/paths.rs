@@ -16,11 +16,6 @@ const HOST_KEY_HASH_BYTES: usize = 4;
 /// Top-level directories that hold kernel or runtime state rather than files worth mirroring.
 const PSEUDO_FS_ROOTS: [&str; 4] = ["proc", "sys", "dev", "run"];
 
-/// Directory under which every host's mirror lives.
-pub fn mirror_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".warp").join("mirrors"))
-}
-
 /// Turns a hostname into a single safe directory name. The hostname is reported by the remote
 /// host, so a name that had to be altered gets a hash suffix; otherwise a host could pick a name
 /// that sanitizes to the directory of another one.
@@ -50,8 +45,8 @@ pub fn host_key(hostname: &str) -> String {
 }
 
 /// Directory holding the mirror of everything synced from `hostname`.
-pub fn host_mirror_dir(hostname: &str) -> Option<PathBuf> {
-    mirror_root().map(|root| root.join(host_key(hostname)))
+pub fn host_mirror_dir(mirror_root: &Path, hostname: &str) -> PathBuf {
+    mirror_root.join(host_key(hostname))
 }
 
 /// Resolves user input into a canonical absolute remote path, resolving relative input against

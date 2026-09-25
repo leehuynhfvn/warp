@@ -489,7 +489,8 @@ use crate::warp_sync::path_prompt::{
     PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent,
 };
 use crate::warp_sync::{
-    WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path,
+    SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir,
+    normalize_remote_path,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -18959,9 +18960,8 @@ impl Workspace {
     fn warp_sync_open_mirror(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
         let mirror_dir = self.active_warp_sync_session(ctx).and_then(|(session, _)| {
-            let dir = host_mirror_dir(session.hostname()).ok_or_else(|| {
-                WarpSyncError::LocalIo("the home directory could not be determined".to_owned())
-            })?;
+            let mirror_root = SyncConfig::from_settings(ctx)?.mirror_root;
+            let dir = host_mirror_dir(&mirror_root, session.hostname());
             std::fs::create_dir_all(&dir).map_err(|err| {
                 WarpSyncError::LocalIo(format!("could not create {}: {err}", dir.display()))
             })?;

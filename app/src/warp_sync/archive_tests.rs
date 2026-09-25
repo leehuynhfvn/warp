@@ -4,6 +4,8 @@ use tempfile::TempDir;
 
 use super::*;
 
+const TEST_MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+
 struct TestEntry {
     path: &'static [u8],
     kind: EntryType,
@@ -120,7 +122,13 @@ impl Mirror {
     }
 
     fn build(&self) -> Result<UploadArchive, WarpSyncError> {
-        build_upload("/etc/conf", &self.manifest, self.root(), "h")
+        build_upload(
+            "/etc/conf",
+            &self.manifest,
+            self.root(),
+            "h",
+            TEST_MAX_UPLOAD_BYTES,
+        )
     }
 }
 
@@ -509,7 +517,14 @@ fn upload_of_a_single_mirrored_file() {
         BTreeMap::from([("/etc/conf/a.conf".to_owned(), meta)]),
     );
 
-    let upload = build_upload("/etc/conf/a.conf", &mirror.manifest, mirror.root(), "h").unwrap();
+    let upload = build_upload(
+        "/etc/conf/a.conf",
+        &mirror.manifest,
+        mirror.root(),
+        "h",
+        TEST_MAX_UPLOAD_BYTES,
+    )
+    .unwrap();
 
     assert_eq!((upload.files, upload.dirs), (1, 0));
     let report = extract_download(
@@ -560,7 +575,13 @@ fn upload_keeps_setgid_directories() {
 fn upload_without_a_manifest_entry_is_not_mirrored() {
     let mirror = Mirror::new();
 
-    let result = build_upload("/etc/other", &mirror.manifest, mirror.root(), "h");
+    let result = build_upload(
+        "/etc/other",
+        &mirror.manifest,
+        mirror.root(),
+        "h",
+        TEST_MAX_UPLOAD_BYTES,
+    );
 
     assert!(matches!(result, Err(WarpSyncError::NotMirrored(_))));
 }
@@ -583,9 +604,18 @@ fn upload_rejects_a_file_that_became_a_directory() {
 }
 
 #[test]
+fn the_upload_limit_is_taken_from_the_caller() {
+    let mirror = Mirror::new();
+
+    let result = build_upload("/etc/conf", &mirror.manifest, mirror.root(), "h", 10);
+
+    assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })));
+}
+
+#[test]
 fn upload_over_the_size_limit_is_rejected() {
     let mirror = Mirror::new();
-    let noise: Vec<u8> = (0..MAX_UPLOAD_BYTES as u64 + 512 * 1024)
+    let noise: Vec<u8> = (0..TEST_MAX_UPLOAD_BYTES as u64 + 512 * 1024)
         .scan(0x2545_f491_4f6c_dd1du64, |state, _| {
             *state ^= *state << 13;
             *state ^= *state >> 7;

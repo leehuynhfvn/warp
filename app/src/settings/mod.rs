@@ -40,6 +40,7 @@ mod tui_theme;
 mod tui_voice;
 mod tui_zero_state;
 mod vim_banner;
+mod warp_sync;
 
 #[cfg(test)]
 #[path = "schema_validation_tests.rs"]
@@ -80,6 +81,7 @@ pub use tui_theme::*;
 pub use tui_voice::*;
 pub use tui_zero_state::*;
 pub use vim_banner::*;
+pub use warp_sync::*;
 use warp_core::user_preferences::GetUserPreferences as _;
 
 /// Describes errors encountered when loading settings from `settings.toml`.

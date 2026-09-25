@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
+use warpui::{AppContext, Entity, ModelContext, SingletonEntity, WindowId};
 
 use super::WarpSyncError;
-use super::paths::{host_key, mirror_root};
+use super::config::{SyncConfig, SyncLimits};
+use super::paths::host_key;
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
@@ -88,6 +89,7 @@ struct Begun {
     hostname: String,
     host_key: String,
     mirror_root: PathBuf,
+    limits: SyncLimits,
 }
 
 struct PendingDownload {
@@ -128,7 +130,7 @@ impl WarpSyncModel {
         window_id: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
-        let begun = match self.begin(session, &remote_path) {
+        let begun = match self.begin(session, &remote_path, ctx) {
             Ok(begun) => begun,
             Err(error) => return ctx.emit(WarpSyncEvent::Failed { window_id, error }),
         };
@@ -140,6 +142,7 @@ impl WarpSyncModel {
             remote_path,
             host_key: begun.host_key,
             mirror_root: begun.mirror_root,
+            limits: begun.limits,
             allow_overwrite_local_changes: false,
         };
         self.spawn_download(begun.shell, request, window_id, ctx);
@@ -167,7 +170,7 @@ impl WarpSyncModel {
         window_id: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
-        let begun = match self.begin(session, &remote_path) {
+        let begun = match self.begin(session, &remote_path, ctx) {
             Ok(begun) => begun,
             Err(error) => return ctx.emit(WarpSyncEvent::Failed { window_id, error }),
         };
@@ -181,6 +184,7 @@ impl WarpSyncModel {
             remote_path,
             host_key: begun.host_key,
             mirror_root: begun.mirror_root,
+            limits: begun.limits,
         };
         let shell = begun.shell;
         let hostname = begun.hostname;
@@ -255,11 +259,17 @@ impl WarpSyncModel {
     }
 
     /// Validates the session and marks the path as in progress.
-    fn begin(&mut self, session: Arc<Session>, remote_path: &str) -> Result<Begun, WarpSyncError> {
+    fn begin(
+        &mut self,
+        session: Arc<Session>,
+        remote_path: &str,
+        app: &AppContext,
+    ) -> Result<Begun, WarpSyncError> {
         let shell = SessionShell::new(session)?;
-        let mirror_root = mirror_root().ok_or_else(|| {
-            WarpSyncError::LocalIo("the home directory could not be determined".to_owned())
-        })?;
+        let SyncConfig {
+            mirror_root,
+            limits,
+        } = SyncConfig::from_settings(app)?;
         let host_key = host_key(shell.hostname());
         self.try_begin_sync(&host_key, remote_path)?;
         Ok(Begun {
@@ -267,6 +277,7 @@ impl WarpSyncModel {
             shell: Arc::new(shell),
             host_key,
             mirror_root,
+            limits,
         })
     }
 

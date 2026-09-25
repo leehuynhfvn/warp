@@ -18,6 +18,7 @@ use super::paths::{
     create_private_dir_all, local_path_for, machine_host_key, manifest_path, recovery_dir,
     split_parent_name, staging_dir,
 };
+use super::config::SyncLimits;
 use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
     ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, checksum_script,
@@ -26,7 +27,7 @@ use super::remote_script::{
     wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
-use super::{MAX_DOWNLOAD_KIB, WarpSyncError};
+use super::WarpSyncError;
 
 const MAX_BACKUP_STEM_CHARS: usize = 150;
 const BACKUP_NONCE_CHARS: usize = 8;
@@ -47,6 +48,7 @@ pub struct DownloadRequest {
     pub remote_path: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
+    pub limits: SyncLimits,
     /// Whether local edits under the path may be overwritten.
     pub allow_overwrite_local_changes: bool,
 }
@@ -76,6 +78,7 @@ pub struct UploadRequest {
     pub remote_path: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
+    pub limits: SyncLimits,
 }
 
 /// An upload that has been packed and checked against the remote host but not sent yet.
@@ -106,7 +109,7 @@ pub async fn download(
 ) -> Result<DownloadResult, WarpSyncError> {
     let probe = probe(shell, &request.remote_path).await?;
     ensure_readable(&probe, &request.remote_path)?;
-    ensure_download_size(&probe)?;
+    ensure_download_size(&probe, request.limits)?;
 
     let request = &DownloadRequest {
         host_key: resolve_host_key(
@@ -135,7 +138,7 @@ pub async fn download(
         .run(&wrap_for_any_shell(&download_script(&parent, &name)))
         .await?;
     // `du` can under-report (sparse files) or fail, so the size check above is not enough.
-    ensure_received_size(tgz.len())?;
+    ensure_received_size(tgz.len(), request.limits)?;
 
     ensure_mirror_root(&request.mirror_root)?;
     let staging = staging_dir(&request.mirror_root);
@@ -174,6 +177,7 @@ pub async fn prepare_upload(
         &manifest,
         &request.mirror_root,
         &host_key,
+        request.limits.max_upload_bytes,
     )?;
     let remote_check = check_remote(shell, &request.remote_path, &manifest, &archive).await?;
     Ok(PreparedUpload {
@@ -262,24 +266,26 @@ fn ensure_readable(probe: &ProbeResult, remote_path: &str) -> Result<(), WarpSyn
     }
 }
 
-fn ensure_download_size(probe: &ProbeResult) -> Result<(), WarpSyncError> {
+fn ensure_download_size(probe: &ProbeResult, limits: SyncLimits) -> Result<(), WarpSyncError> {
     match probe.size_kib {
-        Some(size_kib) if size_kib > MAX_DOWNLOAD_KIB => Err(WarpSyncError::TooLarge {
+        Some(size_kib) if size_kib > limits.max_download_kib => Err(WarpSyncError::TooLarge {
             limit_desc: format!(
-                "{size_kib} KiB on the remote host; the limit is {MAX_DOWNLOAD_KIB} KiB"
+                "{size_kib} KiB on the remote host; the limit is {} KiB",
+                limits.max_download_kib
             ),
         }),
         Some(_) | None => Ok(()),
     }
 }
 
-fn ensure_received_size(received_bytes: usize) -> Result<(), WarpSyncError> {
-    let limit_bytes = MAX_DOWNLOAD_KIB * BYTES_PER_KIB;
+fn ensure_received_size(received_bytes: usize, limits: SyncLimits) -> Result<(), WarpSyncError> {
+    let limit_bytes = limits.max_download_kib * BYTES_PER_KIB;
     if received_bytes as u64 > limit_bytes {
         return Err(WarpSyncError::TooLarge {
             limit_desc: format!(
-                "the remote host sent {} KiB; the limit is {MAX_DOWNLOAD_KIB} KiB",
-                received_bytes as u64 / BYTES_PER_KIB
+                "the remote host sent {} KiB; the limit is {} KiB",
+                received_bytes as u64 / BYTES_PER_KIB,
+                limits.max_download_kib
             ),
         });
     }

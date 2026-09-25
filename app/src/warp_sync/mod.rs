@@ -3,6 +3,7 @@
 //! privileges as the shell the user is looking at.
 
 mod archive;
+pub mod config;
 pub mod confirm_dialog;
 mod error;
 mod manifest;
@@ -18,11 +19,15 @@ use std::time::Duration;
 
 pub use error::WarpSyncError;
 pub use model::{WarpSyncEvent, WarpSyncModel};
+pub use config::SyncConfig;
 pub use paths::{host_mirror_dir, normalize_remote_path, selection_to_remote_path};
 
-/// Upper bound on the remote size (`du -sk`) of a download. Output travels through the PTY
-/// hex-encoded, which doubles its size.
-pub const MAX_DOWNLOAD_KIB: u64 = 32 * 1024;
+/// Default upper bound, in MiB, on the remote size (`du -sk`) of a download. Output travels
+/// through the PTY hex-encoded, which doubles its size.
+pub const DEFAULT_MAX_DOWNLOAD_MIB: u32 = 32;
+
+/// Largest download limit that can be configured.
+pub const MAX_CONFIGURABLE_DOWNLOAD_MIB: u32 = 128;
 
 /// Upper bound on the total uncompressed bytes extracted from a downloaded archive.
 pub const MAX_EXTRACTED_BYTES: u64 = 256 * 1024 * 1024;
@@ -30,9 +35,12 @@ pub const MAX_EXTRACTED_BYTES: u64 = 256 * 1024 * 1024;
 /// Upper bound on the number of entries in a downloaded archive.
 pub const MAX_ENTRIES: usize = 20_000;
 
-/// Upper bound on the compressed size of an upload, which has to be typed through the remote
-/// shell's line editor.
-pub const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+/// Default upper bound, in MiB, on the compressed size of an upload, which has to be typed
+/// through the remote shell's line editor.
+pub const DEFAULT_MAX_UPLOAD_MIB: u32 = 4;
+
+/// Largest upload limit that can be configured.
+pub const MAX_CONFIGURABLE_UPLOAD_MIB: u32 = 16;
 
 /// Length of one base64 upload chunk. Must be a multiple of 4 so that every chunk decodes on its
 /// own.
