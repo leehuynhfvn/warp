@@ -20,7 +20,6 @@ use pathfinder_geometry::vector::Vector2F;
 use privacy_page::{PrivacyPageView, PrivacyPageViewEvent};
 use referrals_page::{ReferralsPageEvent, ReferralsPageView};
 use scripting_page::ScriptingSettingsPageView;
-use warp_sync_page::WarpSyncSettingsPageView;
 use settings_file_footer::{SettingsFooterKind, SettingsFooterMouseStates, render_footer};
 use settings_page::{
     HEADER_PADDING, MatchData, SettingsPage, SettingsPageEvent, SettingsPageMeta,
@@ -36,6 +35,7 @@ use warp_core::send_telemetry_from_ctx;
 use warp_core::settings::ToggleableSetting as _;
 use warp_core::ui::theme::color::internal_colors;
 use warp_editor::editor::NavigationKey;
+use warp_sync_page::WarpSyncSettingsPageView;
 use warpify_page::{WarpifyPageAction, WarpifyPageView};
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
@@ -113,7 +113,6 @@ mod privacy_page;
 mod referrals_page;
 mod remove_custom_endpoint_confirmation_dialog;
 mod scripting_page;
-mod warp_sync_page;
 mod set_default_model_modal;
 mod settings_file_footer;
 pub(crate) mod settings_page;
@@ -125,6 +124,7 @@ mod transfer_ownership_confirmation_modal;
 pub mod update_environment_form;
 mod warp_agent_page;
 mod warp_drive_page;
+mod warp_sync_page;
 mod warpify_page;
 
 pub(crate) use admin_actions::AdminActions;

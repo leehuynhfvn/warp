@@ -10,6 +10,7 @@ use similar::TextDiff;
 use super::WarpSyncError;
 use super::archive::LocalFile;
 use super::manifest::{EntryKind, EntryMeta};
+use super::paths::printable;
 
 /// Files larger than this are listed as different but not diffed line by line.
 const MAX_DIFFED_FILE_BYTES: u64 = 1024 * 1024;
@@ -155,7 +156,7 @@ pub fn render_report(remote_root: &str, hostname: &str, comparison: &Comparison)
         report.push_str(&format!(
             "#   {}: {}\n",
             difference.change.label(),
-            difference.remote_path
+            printable(&difference.remote_path)
         ));
     }
     report.push('\n');
@@ -234,14 +235,13 @@ impl DiffText {
             self.skipped += 1;
             return Ok(());
         }
+        let remote_path = printable(remote_path);
         match (read_side(server_copy)?, read_side(mirror_copy)?) {
             (Side::Text(server), Side::Text(mirror)) => {
-                let server_label = server_copy.map_or(NO_FILE.to_owned(), |_| {
-                    format!("server:{remote_path}")
-                });
-                let mirror_label = mirror_copy.map_or(NO_FILE.to_owned(), |_| {
-                    format!("mirror:{remote_path}")
-                });
+                let server_label =
+                    server_copy.map_or(NO_FILE.to_owned(), |_| format!("server:{remote_path}"));
+                let mirror_label =
+                    mirror_copy.map_or(NO_FILE.to_owned(), |_| format!("mirror:{remote_path}"));
                 let diff = TextDiff::configure()
                     .timeout(DIFF_TIMEOUT)
                     .diff_lines(&server, &mirror)

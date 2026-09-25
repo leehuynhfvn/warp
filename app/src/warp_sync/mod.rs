@@ -18,9 +18,9 @@ mod transfer;
 
 use std::time::Duration;
 
+pub use config::SyncConfig;
 pub use error::WarpSyncError;
 pub use model::{WarpSyncEvent, WarpSyncModel};
-pub use config::SyncConfig;
 pub use paths::{host_mirror_dir, normalize_remote_path, selection_to_remote_path};
 
 /// Default upper bound, in MiB, on the remote size (`du -sk`) of a download. Output travels

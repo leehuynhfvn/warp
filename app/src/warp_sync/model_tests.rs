@@ -285,3 +285,21 @@ fn a_comparison_with_differences_carries_the_diff_location() {
     assert_eq!(summary.identical_files, 3);
     assert_eq!(summary.hostname, "prod-1");
 }
+
+#[test]
+fn the_announcement_names_the_path_and_the_diff_file() {
+    let event = compare_event(
+        WindowId::new(),
+        "prod-1".to_owned(),
+        "/etc".to_owned(),
+        compare_outcome(Some(PathBuf::from("/m/etc.diff")), 1),
+    );
+    let WarpSyncEvent::CompareFinished { summary, .. } = event else {
+        panic!("expected a comparison, got {event:?}");
+    };
+
+    assert_eq!(
+        summary.announcement(),
+        "Compared /etc: 1 difference. The diff is saved at /m/etc.diff"
+    );
+}

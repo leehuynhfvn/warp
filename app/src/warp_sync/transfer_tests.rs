@@ -92,7 +92,11 @@ impl RemoteShell for WithoutHashTool<'_> {
         let script = command
             .split_whitespace()
             .nth(2)
-            .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
+            .and_then(|encoded| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .ok()
+            })
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
             .unwrap_or_default();
         if script.contains("-exec $H") {
@@ -190,6 +194,7 @@ impl Env {
     fn compare_request(&self) -> CompareRequest {
         CompareRequest {
             remote_path: self.remote_path.clone(),
+            hostname: "prod-1".to_owned(),
             host_key: HOST_KEY.to_owned(),
             mirror_root: self.mirror_root(),
             limits: SyncLimits::default(),
@@ -410,9 +415,10 @@ fn download_size_limit_is_enforced() {
 
 #[test]
 fn download_size_limit_follows_the_configured_limit() {
-    let mut probe =
-        parse_probe_output("status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=2048\ntar=gnu\nbase64=yes\n")
-            .unwrap();
+    let mut probe = parse_probe_output(
+        "status=ok\nuser=u\nuid=1\nkind=dir\nsize_kib=2048\ntar=gnu\nbase64=yes\n",
+    )
+    .unwrap();
 
     assert!(ensure_download_size(&probe, SyncLimits::from_mib(2, 4)).is_ok());
     assert!(matches!(
@@ -547,7 +553,11 @@ fn a_failing_hash_command_does_not_block_the_upload() {
             let script = command
                 .split_whitespace()
                 .nth(2)
-                .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
+                .and_then(|encoded| {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .ok()
+                })
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .unwrap_or_default();
             if script.contains("-exec $H") {
@@ -618,8 +628,15 @@ fn compare_reports_changes_on_both_sides_and_writes_a_diff() {
     let diff_path = outcome.diff_path.expect("there are differences");
     assert!(diff_path.starts_with(env.mirror_root().join(".warp-sync/diffs")));
     let diff = fs::read_to_string(&diff_path).unwrap();
-    assert!(diff.contains("-remote a\n\\ No newline at end of file\n+edited locally"), "{diff}");
-    assert!(diff.contains("-edited on the server") || diff.contains("+remote b"), "{diff}");
+    assert!(diff.starts_with("# Warp Sync: prod-1:"), "{diff}");
+    assert!(
+        diff.contains("-remote a\n\\ No newline at end of file\n+edited locally"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("-edited on the server") || diff.contains("+remote b"),
+        "{diff}"
+    );
 }
 
 #[cfg(unix)]
@@ -675,6 +692,38 @@ fn compare_of_a_missing_path_is_not_found() {
     let result = env.compare();
 
     assert!(matches!(result, Err(WarpSyncError::NotFound(_))));
+}
+
+#[test]
+fn a_hash_command_that_times_out_does_not_block_the_upload() {
+    struct TimesOut<'a>(&'a LocalSh);
+
+    #[async_trait]
+    impl RemoteShell for TimesOut<'_> {
+        async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
+            use base64::Engine as _;
+            let script = command
+                .split_whitespace()
+                .nth(2)
+                .and_then(|encoded| {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .ok()
+                })
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            if script.contains("-exec $H") {
+                return Err(WarpSyncError::Timeout);
+            }
+            self.0.run(command).await
+        }
+    }
+    let env = Env::new();
+    env.download_done();
+
+    let prepared = block_on(prepare_upload(&TimesOut(&env.shell), &env.upload_request())).unwrap();
+
+    assert_eq!(prepared.remote_check, RemoteCheck::Unavailable);
 }
 
 #[test]

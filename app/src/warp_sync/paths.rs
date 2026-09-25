@@ -70,6 +70,20 @@ pub fn diff_path(mirror_root: &Path, host_key: &str, remote_path: &str) -> PathB
         .join(format!("{stem}.diff"))
 }
 
+/// `text` with control characters escaped, so that a remote file name cannot add lines to
+/// something shown to the user.
+pub fn printable(text: &str) -> String {
+    let mut printable = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            printable.extend(c.escape_default());
+        } else {
+            printable.push(c);
+        }
+    }
+    printable
+}
+
 /// Directory holding the mirror of everything synced from `hostname`.
 pub fn host_mirror_dir(mirror_root: &Path, hostname: &str) -> PathBuf {
     mirror_root.join(host_key(hostname))

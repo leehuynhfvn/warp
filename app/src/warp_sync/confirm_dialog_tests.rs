@@ -154,8 +154,16 @@ fn compare_result_lists_each_difference_with_who_changed_it() {
     let request = ConfirmRequest::compare_result(&compare_summary());
 
     assert_eq!(request.title, "2 differences with root@prod-1");
-    assert!(request.body.starts_with("prod-1:/etc/nginx\n\n2 files differ, 5 identical."));
-    assert!(request.body.contains("• changed on the server: /etc/nginx/a.conf"));
+    assert!(
+        request
+            .body
+            .starts_with("prod-1:/etc/nginx\n\n2 files differ, 5 identical.")
+    );
+    assert!(
+        request
+            .body
+            .contains("• changed on the server: /etc/nginx/a.conf")
+    );
     assert!(request.body.contains("• new locally: /etc/nginx/b.conf"));
 }
 
@@ -195,4 +203,11 @@ fn upload_and_overwrite_dialogs_are_destructive() {
 
     assert_eq!(overwrite.style, ConfirmStyle::Destructive);
     assert_eq!(upload.style, ConfirmStyle::Destructive);
+}
+
+#[test]
+fn control_characters_in_remote_paths_are_escaped() {
+    let list = bullet_list(&["/etc/a\nb".to_owned()]);
+
+    assert_eq!(list, "• /etc/a\\nb");
 }

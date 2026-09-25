@@ -13,6 +13,7 @@ use warpui::{
 };
 
 use super::model::{CompareSummary, PendingId, UploadSummary, format_size, pluralize_count};
+use super::paths::printable;
 use super::remote_check::{RemoteCheck, RemoteConflicts};
 use crate::appearance::Appearance;
 use crate::ui_components::dialog::{Dialog, dialog_styles};
@@ -129,7 +130,7 @@ fn compare_body(summary: &CompareSummary) -> String {
         .map(|difference| format!("{}: {}", difference.change.label(), difference.remote_path))
         .collect();
     [
-        format!("{}:{}", summary.hostname, summary.remote_path),
+        format!("{}:{}", summary.hostname, printable(&summary.remote_path)),
         format!(
             "{} differ, {} identical.",
             pluralize_count(summary.differences.len(), "file"),
@@ -223,7 +224,7 @@ fn bullet_list(paths: &[String]) -> String {
     let mut lines: Vec<String> = paths
         .iter()
         .take(MAX_LISTED_PATHS)
-        .map(|path| format!("• {path}"))
+        .map(|path| format!("• {}", printable(path)))
         .collect();
     if paths.len() > MAX_LISTED_PATHS {
         lines.push(format!("… and {} more", paths.len() - MAX_LISTED_PATHS));

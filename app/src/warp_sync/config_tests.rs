@@ -9,19 +9,24 @@ fn resolve(configured: &str) -> Result<PathBuf, WarpSyncError> {
 #[test]
 fn an_empty_setting_uses_the_default_folder() {
     assert_eq!(resolve("").unwrap(), Path::new("/home/dev/.warp/mirrors"));
-    assert_eq!(resolve("  \t").unwrap(), Path::new("/home/dev/.warp/mirrors"));
+    assert_eq!(
+        resolve("  \t").unwrap(),
+        Path::new("/home/dev/.warp/mirrors")
+    );
 }
 
 #[test]
 fn a_leading_tilde_stands_for_the_home_directory() {
-    assert_eq!(resolve("~").unwrap(), Path::new(HOME));
     assert_eq!(resolve("~/sync").unwrap(), Path::new("/home/dev/sync"));
     assert_eq!(resolve("~/a/b").unwrap(), Path::new("/home/dev/a/b"));
 }
 
 #[test]
 fn an_absolute_path_is_kept() {
-    assert_eq!(resolve(" /srv/mirrors ").unwrap(), Path::new("/srv/mirrors"));
+    assert_eq!(
+        resolve(" /srv/mirrors ").unwrap(),
+        Path::new("/srv/mirrors")
+    );
 }
 
 #[test]
@@ -68,4 +73,27 @@ fn limits_stay_within_what_is_supported() {
         too_big,
         SyncLimits::from_mib(MAX_CONFIGURABLE_DOWNLOAD_MIB, MAX_CONFIGURABLE_UPLOAD_MIB)
     );
+}
+
+#[test]
+fn folders_that_hold_the_home_directory_are_rejected() {
+    for input in ["~", "/", "/home", "/home/dev", "/home/dev/", "~/"] {
+        assert!(
+            matches!(resolve(input), Err(WarpSyncError::LocalIo(_))),
+            "{input}"
+        );
+    }
+    assert!(resolve_mirror_root("/", None).is_err());
+}
+
+#[test]
+fn folders_beside_or_below_the_home_directory_are_accepted() {
+    for input in [
+        "/home/dev2",
+        "/home/dev/mirrors",
+        "/srv",
+        "~/.local/mirrors",
+    ] {
+        assert!(resolve(input).is_ok(), "{input}");
+    }
 }

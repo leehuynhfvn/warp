@@ -81,8 +81,8 @@ pub use tui_theme::*;
 pub use tui_voice::*;
 pub use tui_zero_state::*;
 pub use vim_banner::*;
-pub use warp_sync::*;
 use warp_core::user_preferences::GetUserPreferences as _;
+pub use warp_sync::*;
 
 /// Describes errors encountered when loading settings from `settings.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]

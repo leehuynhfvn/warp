@@ -137,6 +137,11 @@ impl WarpSyncPathPrompt {
         match event {
             EditorEvent::Enter => self.submit(ctx),
             EditorEvent::Escape => ctx.emit(WarpSyncPathPromptEvent::Cancel),
+            EditorEvent::Edited(_) => {
+                if self.error.take().is_some() {
+                    ctx.notify();
+                }
+            }
             _ => {}
         }
     }
@@ -170,13 +175,10 @@ impl View for WarpSyncPathPrompt {
             .finish();
         let mut content = Flex::column().with_child(input);
         if let Some(error) = &self.error {
-            let error_text = Text::new_inline(
-                error.clone(),
-                appearance.ui_font_family(),
-                ERROR_FONT_SIZE,
-            )
-            .with_color(theme.ui_error_color())
-            .finish();
+            let error_text =
+                Text::new_inline(error.clone(), appearance.ui_font_family(), ERROR_FONT_SIZE)
+                    .with_color(theme.ui_error_color())
+                    .finish();
             content.add_child(
                 Container::new(error_text)
                     .with_margin_top(ERROR_MARGIN_TOP)

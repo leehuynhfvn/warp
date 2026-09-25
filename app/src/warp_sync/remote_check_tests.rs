@@ -110,11 +110,8 @@ fn entries_without_a_recorded_hash_or_that_are_directories_are_ignored() {
 
 #[test]
 fn a_new_local_file_that_exists_on_the_host_is_a_conflict() {
-    let conflicts = find_remote_conflicts(
-        &known(&[]),
-        &archive(&[A, B], &[]),
-        &remote(&[(A, HASH_1)]),
-    );
+    let conflicts =
+        find_remote_conflicts(&known(&[]), &archive(&[A, B], &[]), &remote(&[(A, HASH_1)]));
 
     assert_eq!(conflicts.already_exist, vec![A.to_owned()]);
     assert!(!conflicts.is_empty());

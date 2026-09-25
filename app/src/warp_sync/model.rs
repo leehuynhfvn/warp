@@ -6,14 +6,15 @@ use warpui::{AppContext, Entity, ModelContext, SingletonEntity, WindowId};
 
 use super::WarpSyncError;
 use super::config::{SyncConfig, SyncLimits};
-use super::paths::host_key;
+use super::diff::FileDifference;
+use super::paths::{host_key, printable};
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
-use super::diff::FileDifference;
 use super::transfer::{
-    CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult, PreparedUpload,
-    UploadOutcome, UploadRequest, compare, download, execute_upload, prepare_upload,
+    CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult,
+    PreparedUpload, UploadOutcome, UploadRequest, compare, download, execute_upload,
+    prepare_upload,
 };
 use crate::terminal::model::session::Session;
 
@@ -62,6 +63,19 @@ pub struct CompareSummary {
     pub identical_files: usize,
     /// The written comparison.
     pub diff_path: PathBuf,
+}
+
+impl CompareSummary {
+    /// One line that says where the comparison ended up, for when the summary cannot be shown in
+    /// a dialog.
+    pub fn announcement(&self) -> String {
+        format!(
+            "Compared {}: {}. The diff is saved at {}",
+            printable(&self.remote_path),
+            pluralize_count(self.differences.len(), "difference"),
+            self.diff_path.display()
+        )
+    }
 }
 
 /// Progress of Warp Sync operations. Every event names the window that started the operation, so
@@ -243,6 +257,7 @@ impl WarpSyncModel {
         let key = (begun.host_key.clone(), remote_path.clone());
         let request = CompareRequest {
             remote_path,
+            hostname: begun.hostname.clone(),
             host_key: begun.host_key,
             mirror_root: begun.mirror_root,
             limits: begun.limits,
@@ -323,13 +338,13 @@ impl WarpSyncModel {
         &mut self,
         session: Arc<Session>,
         remote_path: &str,
-        app: &AppContext,
+        ctx: &AppContext,
     ) -> Result<Begun, WarpSyncError> {
         let shell = SessionShell::new(session)?;
         let SyncConfig {
             mirror_root,
             limits,
-        } = SyncConfig::from_settings(app)?;
+        } = SyncConfig::from_settings(ctx)?;
         let host_key = host_key(shell.hostname());
         self.try_begin_sync(&host_key, remote_path)?;
         Ok(Begun {

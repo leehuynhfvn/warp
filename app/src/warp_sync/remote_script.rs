@@ -319,7 +319,7 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
 /// means the host has no hashing tool. Lines that do not have the `<hash>  <path>` shape (such as
 /// the escaped names GNU coreutils print for paths containing a newline) are ignored.
 pub fn parse_checksum_output(output: &str) -> Option<BTreeMap<String, String>> {
-    if output.lines().any(|line| line.trim() == NO_HASH_TOOL) {
+    if output.trim() == NO_HASH_TOOL {
         return None;
     }
     Some(output.lines().filter_map(parse_checksum_line).collect())

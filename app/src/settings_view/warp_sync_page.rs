@@ -260,7 +260,11 @@ impl SettingsWidget for MirrorRootWidget {
             ),
             ToggleState::Enabled,
             appearance,
-            text_input(&view.mirror_root_editor, MIRROR_ROOT_INPUT_WIDTH, appearance),
+            text_input(
+                &view.mirror_root_editor,
+                MIRROR_ROOT_INPUT_WIDTH,
+                appearance,
+            ),
             Some(
                 "Where files downloaded from remote hosts are kept. Leave empty for \
                  ~/.warp/mirrors. Existing mirrors are not moved."

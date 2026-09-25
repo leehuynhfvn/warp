@@ -559,6 +559,19 @@ fn parse_checksum_output_reports_a_missing_hash_tool() {
 }
 
 #[test]
+fn a_file_name_cannot_pose_as_a_missing_hash_tool() {
+    let output = format!("{h}  /a\nno_hash_tool\n", h = "e".repeat(64));
+
+    let parsed = parse_checksum_output(&output).expect("the output has hashes");
+
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(
+        parse_checksum_output("x\nno_hash_tool\n"),
+        Some(BTreeMap::new())
+    );
+}
+
+#[test]
 fn parse_checksum_output_skips_lines_that_are_not_hashes() {
     let output = format!(
         "sha256sum: /root/x: Permission denied\n\\{h}  /odd\\nname\n{h}  \n{short}  /a\n",

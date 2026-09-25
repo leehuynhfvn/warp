@@ -50,8 +50,8 @@ pub struct SyncConfig {
 }
 
 impl SyncConfig {
-    pub fn from_settings(app: &AppContext) -> Result<Self, WarpSyncError> {
-        let settings = WarpSyncSettings::as_ref(app);
+    pub fn from_settings(ctx: &AppContext) -> Result<Self, WarpSyncError> {
+        let settings = WarpSyncSettings::as_ref(ctx);
         Ok(Self {
             mirror_root: resolve_mirror_root(
                 settings.mirror_root.value(),
@@ -67,7 +67,10 @@ impl SyncConfig {
 
 /// Turns the configured mirror folder into an absolute path. An empty setting means the default
 /// (`~/.warp/mirrors`); a leading `~` stands for the home directory.
-pub fn resolve_mirror_root(configured: &str, home: Option<&Path>) -> Result<PathBuf, WarpSyncError> {
+pub fn resolve_mirror_root(
+    configured: &str,
+    home: Option<&Path>,
+) -> Result<PathBuf, WarpSyncError> {
     let configured = configured.trim();
     if configured.contains('\0') {
         return Err(invalid_mirror_root("it contains a NUL character"));
@@ -77,6 +80,14 @@ pub fn resolve_mirror_root(configured: &str, home: Option<&Path>) -> Result<Path
             .map(|home| home.join(".warp").join("mirrors"))
             .ok_or_else(home_unknown);
     }
+    resolve_configured_path(configured, home)
+        .and_then(|path| ensure_dedicated_mirror_root(path, home))
+}
+
+fn resolve_configured_path(
+    configured: &str,
+    home: Option<&Path>,
+) -> Result<PathBuf, WarpSyncError> {
     if let Some(rest) = configured.strip_prefix(HOME_PREFIX)
         && (rest.is_empty() || rest.starts_with('/'))
     {
@@ -87,6 +98,22 @@ pub fn resolve_mirror_root(configured: &str, home: Option<&Path>) -> Result<Path
     if !path.is_absolute() {
         return Err(invalid_mirror_root(
             "use an absolute path, or one that starts with ~/",
+        ));
+    }
+    Ok(path)
+}
+
+/// Rejects folders that hold more than mirrors. A remote host picks the name of its directory
+/// inside the mirror folder, so a folder such as the home directory would let it choose which
+/// of the user's own directories a download replaces.
+fn ensure_dedicated_mirror_root(
+    path: PathBuf,
+    home: Option<&Path>,
+) -> Result<PathBuf, WarpSyncError> {
+    let holds_home = home.is_some_and(|home| home.starts_with(&path));
+    if path.parent().is_none() || holds_home {
+        return Err(invalid_mirror_root(
+            "choose a folder that is dedicated to mirrors, not your home directory or one of its parents",
         ));
     }
     Ok(path)

@@ -485,12 +485,9 @@ use crate::view_components::{
 use crate::warp_sync::confirm_dialog::{
     ConfirmKind, ConfirmRequest, WarpSyncConfirmDialog, WarpSyncConfirmEvent,
 };
-use crate::warp_sync::path_prompt::{
-    PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent,
-};
+use crate::warp_sync::path_prompt::{PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent};
 use crate::warp_sync::{
-    SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir,
-    normalize_remote_path,
+    SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -18936,10 +18933,12 @@ impl Workspace {
                 return;
             }
         };
-        let request = self.active_warp_sync_session(ctx).and_then(|(session, pwd)| {
-            let remote_path = normalize_remote_path(input, pwd.as_deref())?;
-            Ok((session, remote_path))
-        });
+        let request = self
+            .active_warp_sync_session(ctx)
+            .and_then(|(session, pwd)| {
+                let remote_path = normalize_remote_path(input, pwd.as_deref())?;
+                Ok((session, remote_path))
+            });
         if let Err(error @ WarpSyncError::InvalidPath(_)) = &request {
             // Keep the prompt open so that the user can correct the path.
             self.warp_sync_path_prompt
@@ -18962,9 +18961,7 @@ impl Workspace {
             (
                 Err(error),
                 PathPromptKind::Download | PathPromptKind::Upload | PathPromptKind::Compare,
-            ) => {
-                warp_sync.report_failure(window_id, error, ctx)
-            }
+            ) => warp_sync.report_failure(window_id, error, ctx),
         });
     }
 
@@ -19038,8 +19035,20 @@ impl Workspace {
                 self.show_warp_sync_confirm_dialog(request, ctx);
             }
             WarpSyncEvent::CompareFinished { summary, .. } => {
-                let request = ConfirmRequest::compare_result(summary);
-                self.show_warp_sync_confirm_dialog(request, ctx);
+                // A dialog that is already open may be waiting for a decision that cancelling
+                // would discard, so the result is announced without taking its place.
+                if self
+                    .current_workspace_state
+                    .is_warp_sync_confirm_dialog_open
+                {
+                    self.show_warp_sync_toast(
+                        DismissibleToast::success(summary.announcement()),
+                        ctx,
+                    );
+                } else {
+                    let request = ConfirmRequest::compare_result(summary);
+                    self.show_warp_sync_confirm_dialog(request, ctx);
+                }
             }
         }
     }

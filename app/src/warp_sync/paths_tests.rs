@@ -320,3 +320,9 @@ fn diff_path_names_are_bounded_and_never_empty() {
     assert!(long_name.file_name().unwrap().len() <= MAX_DIFF_STEM_CHARS + ".diff".len());
     assert_eq!(root_name, Path::new("/m/.warp-sync/diffs/h/root.diff"));
 }
+
+#[test]
+fn printable_escapes_control_characters_only() {
+    assert_eq!(printable("a\nb\tc\u{1b}[0m"), "a\\nb\\tc\\u{1b}[0m");
+    assert_eq!(printable("héllo wörld/'x'"), "héllo wörld/'x'");
+}

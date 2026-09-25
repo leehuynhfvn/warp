@@ -12,16 +12,17 @@ use tempfile::NamedTempFile;
 use uuid::Uuid;
 use warp_core::{safe_info, safe_warn};
 
+use super::WarpSyncError;
 use super::archive::{
     SkipReason, UploadArchive, build_upload, extract_download, local_files, locally_modified_files,
 };
+use super::config::SyncLimits;
+use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
 use super::manifest::{EntryMeta, Manifest, SyncRecord};
 use super::paths::{
     create_private_dir_all, diff_path, local_path_for, machine_host_key, manifest_path,
     recovery_dir, split_parent_name, staging_dir,
 };
-use super::config::SyncLimits;
-use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
 use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
     ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, checksum_script,
@@ -30,7 +31,6 @@ use super::remote_script::{
     wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
-use super::WarpSyncError;
 
 const MAX_BACKUP_STEM_CHARS: usize = 150;
 const BACKUP_NONCE_CHARS: usize = 8;
@@ -110,6 +110,8 @@ pub struct UploadOutcome {
 pub struct CompareRequest {
     /// Normalized absolute remote path.
     pub remote_path: String,
+    /// The host's name as it reports itself, for the report.
+    pub hostname: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
     pub limits: SyncLimits,
@@ -291,8 +293,8 @@ async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult
     parse_probe_output(&String::from_utf8_lossy(&output))
 }
 
-/// A host that cannot hash files, or whose hashing command fails, is reported as
-/// [`RemoteCheck::Unavailable`] rather than blocking the upload.
+/// A host that cannot hash files, or whose hashing command fails or takes too long, is reported
+/// as [`RemoteCheck::Unavailable`] rather than blocking the upload.
 async fn check_remote(
     shell: &dyn RemoteShell,
     remote_path: &str,
@@ -304,17 +306,21 @@ async fn check_remote(
         .await
     {
         Ok(output) => output,
-        Err(WarpSyncError::RemoteCommandFailed { .. }) => return Ok(RemoteCheck::Unavailable),
+        Err(WarpSyncError::RemoteCommandFailed { .. } | WarpSyncError::Timeout) => {
+            return Ok(RemoteCheck::Unavailable);
+        }
         Err(err) => return Err(err),
     };
-    Ok(match parse_checksum_output(&String::from_utf8_lossy(&output)) {
-        Some(remote) => RemoteCheck::Checked(find_remote_conflicts(
-            &manifest.entries_under(remote_path),
-            archive,
-            &remote,
-        )),
-        None => RemoteCheck::Unavailable,
-    })
+    Ok(
+        match parse_checksum_output(&String::from_utf8_lossy(&output)) {
+            Some(remote) => RemoteCheck::Checked(find_remote_conflicts(
+                &manifest.entries_under(remote_path),
+                archive,
+                &remote,
+            )),
+            None => RemoteCheck::Unavailable,
+        },
+    )
 }
 
 fn ensure_readable(probe: &ProbeResult, remote_path: &str) -> Result<(), WarpSyncError> {
@@ -375,7 +381,7 @@ fn compare_with_download(
         return Ok((comparison, None));
     }
     let path = diff_path(&request.mirror_root, host_key, &request.remote_path);
-    let text = render_report(&request.remote_path, host_key, &comparison);
+    let text = render_report(&request.remote_path, &request.hostname, &comparison);
     write_private_file(&path, &text)?;
     Ok((comparison, Some(path)))
 }

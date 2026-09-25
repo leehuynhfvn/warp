@@ -178,7 +178,9 @@ fn the_diff_shows_the_server_as_old_and_the_mirror_as_new() {
 #[test]
 fn a_file_missing_on_one_side_is_diffed_against_nothing() {
     let mut fixture = Fixture::new();
-    fixture.server("only-server", b"a\n").mirror("only-mirror", b"b\n");
+    fixture
+        .server("only-server", b"a\n")
+        .mirror("only-mirror", b"b\n");
 
     let diff = fixture.compare().unified_diff;
 
@@ -191,7 +193,9 @@ fn a_file_missing_on_one_side_is_diffed_against_nothing() {
 #[test]
 fn binary_files_are_listed_without_a_line_diff() {
     let mut fixture = Fixture::new();
-    fixture.server("blob", b"\x00\x01\x02").mirror("blob", b"\x00\x01\x03");
+    fixture
+        .server("blob", b"\x00\x01\x02")
+        .mirror("blob", b"\x00\x01\x03");
 
     let comparison = fixture.compare();
 
@@ -205,7 +209,9 @@ fn binary_files_are_listed_without_a_line_diff() {
 #[test]
 fn files_that_are_not_utf8_count_as_binary() {
     let mut fixture = Fixture::new();
-    fixture.server("latin", b"caf\xe9\n").mirror("latin", b"cafe\n");
+    fixture
+        .server("latin", b"caf\xe9\n")
+        .mirror("latin", b"cafe\n");
 
     let diff = fixture.compare().unified_diff;
 
@@ -216,7 +222,9 @@ fn files_that_are_not_utf8_count_as_binary() {
 fn large_files_are_listed_without_a_line_diff() {
     let mut fixture = Fixture::new();
     let large = "x\n".repeat(MAX_DIFFED_FILE_BYTES as usize / 2 + 1);
-    fixture.server("big", large.as_bytes()).mirror("big", b"small\n");
+    fixture
+        .server("big", large.as_bytes())
+        .mirror("big", b"small\n");
 
     let comparison = fixture.compare();
 
@@ -312,4 +320,15 @@ fn a_disk_path_follows_the_remote_path_below_the_root() {
         Path::new("/staging/conf/sub/a")
     );
     assert_eq!(disk_path(copy, "/etc/conf", "/etc/conf"), copy);
+}
+
+#[test]
+fn control_characters_in_names_cannot_add_lines_to_the_report() {
+    let mut fixture = Fixture::new();
+    fixture.server("a\nb", b"\x00").mirror("a\nb", b"\x01");
+
+    let report = render_report(ROOT, "prod-1", &fixture.compare());
+
+    assert!(report.contains("/etc/conf/a\\nb"), "{report}");
+    assert!(!report.contains("a\nb"), "{report}");
 }

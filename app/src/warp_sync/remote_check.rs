@@ -39,7 +39,10 @@ pub fn find_remote_conflicts(
 ) -> RemoteConflicts {
     let mut conflicts = RemoteConflicts::default();
     for (path, meta) in known {
-        let Some(recorded) = meta.sha256.as_deref().filter(|_| meta.kind == EntryKind::File)
+        let Some(recorded) = meta
+            .sha256
+            .as_deref()
+            .filter(|_| meta.kind == EntryKind::File)
         else {
             continue;
         };
