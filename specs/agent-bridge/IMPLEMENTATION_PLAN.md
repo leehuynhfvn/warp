@@ -709,7 +709,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 - [x] Phase 0 — Worktree + commit plan
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
-- [ ] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
+- [x] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
@@ -751,3 +751,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 1.3: `agent_bridge/{mod,error}.rs` (constants 3.7, `AgentBridgeError`, `From` sang `ControlError`/từ `WarpSyncError`), `mod agent_bridge` (tạm `#[allow(dead_code)]`). `From<AgentBridgeError> for ControlError` làm hỏng suy luận `?` ở `handlers/layout.rs` → thêm `Ok::<_, ControlError>`. `NotRemoteSession`/`UnsupportedShell` map sang `InvalidSelector`.
 - 2026-09-25 — Task 1.4: `agent_bridge/script.rs` (+52 test gồm `sh` thật: exec/read/write, symlink, mode/inode giữ nguyên, stdin đóng, timeout). Xem D15.
 - 2026-09-25 — Task 1.5: `agent_bridge/attachments.rs` (9 test). Task 1.6: `agent_bridge/audit.rs` (`append`, xoay vòng, quyền 0700/0600; dùng `warp_sync::paths::create_private_dir_all` nên mở `pub(crate) mod paths`) (7 test). Cuối Phase 1: `cargo test -p warp --lib agent_bridge` 68 test pass; clippy `-p warp -p local_control -p warp_cli --all-targets --tests -D warnings` sạch. Xem D16.
+- 2026-09-25 — Task 2.1: `FeatureFlag::AgentBridge` + `DOGFOOD_FLAGS`; theo khuôn của `WarpSync` còn thêm cargo feature `agent_bridge` (`app/Cargo.toml`) và ánh xạ `#[cfg(feature)]` trong `app/src/features.rs` (skill add-feature-flag).

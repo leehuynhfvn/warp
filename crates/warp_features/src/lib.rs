@@ -1005,6 +1005,10 @@ pub enum FeatureFlag {
     /// Gates Warp Sync, which mirrors remote files and directories to a local directory and
     /// uploads edits back through the active remote session.
     WarpSync,
+
+    /// Gates the Agent Bridge, which lets an external agent run commands and read and write files
+    /// in a remote session the user attached, through local control.
+    AgentBridge,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =
@@ -1083,6 +1087,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::LrcActivitySignal,
     FeatureFlag::StoredScreenshots,
     FeatureFlag::WarpSync,
+    FeatureFlag::AgentBridge,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).
