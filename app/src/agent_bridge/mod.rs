@@ -4,12 +4,15 @@
 pub(crate) mod attachments;
 pub(crate) mod audit;
 pub(crate) mod error;
+pub(crate) mod messages;
 pub(crate) mod model;
 pub(crate) mod ops;
 pub(crate) mod path;
 pub(crate) mod script;
 
 use std::time::Duration;
+
+pub(crate) use messages::{attached_message, revoked_all_message, revoked_message, setup_command};
 
 /// Upper bound on the length of a command. The wrapped script is typed through the remote
 /// shell's line editor.

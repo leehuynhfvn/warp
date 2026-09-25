@@ -413,6 +413,41 @@ pub fn init(app: &mut AppContext) {
         ]);
     }
 
+    if FeatureFlag::AgentBridge.is_enabled() {
+        app.register_editable_bindings([
+            EditableBinding::new(
+                "workspace:agent_bridge_attach",
+                "Agent Bridge: Allow agents to control this session",
+                WorkspaceAction::AgentBridgeAttach { read_only: false },
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_attach_read_only",
+                "Agent Bridge: Allow agents to read this session (read-only)",
+                WorkspaceAction::AgentBridgeAttach { read_only: true },
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_revoke",
+                "Agent Bridge: Revoke access to this session",
+                WorkspaceAction::AgentBridgeRevoke,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_revoke_all",
+                "Agent Bridge: Revoke all sessions",
+                WorkspaceAction::AgentBridgeRevokeAll,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_copy_setup_command",
+                "Agent Bridge: Copy Claude Code setup command",
+                WorkspaceAction::AgentBridgeCopySetupCommand,
+            )
+            .with_context_predicate(id!("Workspace")),
+        ]);
+    }
+
     if FeatureFlag::UIZoom.is_enabled() {
         app.register_fixed_bindings([
             FixedBinding::custom(

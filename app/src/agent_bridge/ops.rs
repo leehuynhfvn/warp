@@ -67,15 +67,21 @@ pub(crate) struct SessionRunner {
 
 impl SessionRunner {
     pub(crate) fn new(session: Arc<Session>) -> Result<Self, AgentBridgeError> {
-        match session.session_type() {
-            SessionType::WarpifiedRemote { .. } => {}
-            SessionType::Local => return Err(AgentBridgeError::NotRemoteSession),
-        }
-        match session.shell().shell_type() {
-            ShellType::PowerShell => return Err(AgentBridgeError::UnsupportedShell),
-            ShellType::Zsh | ShellType::Bash | ShellType::Fish => {}
-        }
+        ensure_supported(&session)?;
         Ok(Self { session })
+    }
+}
+
+/// Checks that agents can use `session` at all: it has to be a Warpified remote session whose
+/// shell the scripts run in.
+pub(crate) fn ensure_supported(session: &Session) -> Result<(), AgentBridgeError> {
+    match session.session_type() {
+        SessionType::WarpifiedRemote { .. } => {}
+        SessionType::Local => return Err(AgentBridgeError::NotRemoteSession),
+    }
+    match session.shell().shell_type() {
+        ShellType::PowerShell => Err(AgentBridgeError::UnsupportedShell),
+        ShellType::Zsh | ShellType::Bash | ShellType::Fish => Ok(()),
     }
 }
 

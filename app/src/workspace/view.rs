@@ -162,6 +162,15 @@ use super::util::{
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
+use crate::agent_bridge::error::AgentBridgeError;
+use crate::agent_bridge::model::AgentBridgeModel;
+use crate::agent_bridge::ops::ensure_supported as ensure_agent_bridge_supported;
+use crate::agent_bridge::{
+    attached_message as agent_bridge_attached_message,
+    revoked_all_message as agent_bridge_revoked_all_message,
+    revoked_message as agent_bridge_revoked_message, setup_command as agent_bridge_setup_command,
+};
 use crate::ai::agent::CancellationReason;
 use crate::ai::agent::api::ServerConversationToken;
 #[cfg(not(target_family = "wasm"))]
@@ -489,7 +498,7 @@ use crate::warp_sync::editor::{EditorCli, EditorRequest};
 use crate::warp_sync::path_prompt::{PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent};
 use crate::warp_sync::{
     MirrorLocation, SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir,
-    normalize_remote_path,
+    normalize_remote_path, printable,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -18867,6 +18876,78 @@ impl Workspace {
         Ok((session, remote_path))
     }
 
+    /// The session of the active pane, remote or not.
+    fn active_terminal_session(&mut self, ctx: &mut ViewContext<Self>) -> Option<Arc<Session>> {
+        let view = self.active_session_view(ctx)?;
+        view.read(ctx, |view, ctx| view.active_session().as_ref(ctx).session(ctx))
+    }
+
+    fn agent_bridge_attach(&mut self, read_only: bool, ctx: &mut ViewContext<Self>) {
+        let attached = match self.active_terminal_session(ctx) {
+            Some(session) => ensure_agent_bridge_supported(&session).map(|()| session),
+            None => Err(AgentBridgeError::NotRemoteSession),
+        };
+        let toast = match attached {
+            Ok(session) => {
+                let access = if read_only {
+                    AgentBridgeAccess::ReadOnly
+                } else {
+                    AgentBridgeAccess::Full
+                };
+                AgentBridgeModel::handle(ctx)
+                    .update(ctx, |model, ctx| model.attach(session.id(), access, ctx));
+                DismissibleToast::default(agent_bridge_attached_message(
+                    access,
+                    &printable(session.user()),
+                    &printable(session.hostname()),
+                ))
+            }
+            Err(error) => DismissibleToast::error(error.to_string()),
+        };
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
+    fn agent_bridge_revoke(&mut self, ctx: &mut ViewContext<Self>) {
+        let was_attached = self.active_terminal_session(ctx).is_some_and(|session| {
+            AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.detach(session.id(), ctx))
+        });
+        let toast = DismissibleToast::default(agent_bridge_revoked_message(was_attached).to_owned());
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
+    fn agent_bridge_revoke_all(&mut self, ctx: &mut ViewContext<Self>) {
+        let count =
+            AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.detach_all(ctx));
+        let toast = DismissibleToast::default(agent_bridge_revoked_all_message(count));
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
+    fn agent_bridge_copy_setup_command(&mut self, ctx: &mut ViewContext<Self>) {
+        let toast = match std::env::current_exe() {
+            Ok(executable) => {
+                ctx.clipboard()
+                    .write(ClipboardContent::plain_text(agent_bridge_setup_command(
+                        &executable,
+                    )));
+                DismissibleToast::default(
+                    "Copied the command that adds the Agent Bridge to Claude Code. Run it in a \
+                     terminal."
+                        .to_owned(),
+                )
+            }
+            Err(err) => {
+                DismissibleToast::error(format!("Could not find the Warp executable: {err}"))
+            }
+        };
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
+    fn add_agent_bridge_toast(&mut self, toast: DismissibleToast<WorkspaceAction>, ctx: &mut ViewContext<Self>) {
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(toast, ctx);
+        });
+    }
+
     fn warp_sync_download_current_directory(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
         let request = self.warp_sync_current_directory(ctx);
@@ -25512,6 +25593,10 @@ impl TypedActionView for Workspace {
             WarpSyncComparePath => self.open_warp_sync_path_prompt(PathPromptKind::Compare, ctx),
             WarpSyncDownloadPath => self.open_warp_sync_path_prompt(PathPromptKind::Download, ctx),
             WarpSyncUploadPath => self.open_warp_sync_path_prompt(PathPromptKind::Upload, ctx),
+            AgentBridgeAttach { read_only } => self.agent_bridge_attach(*read_only, ctx),
+            AgentBridgeRevoke => self.agent_bridge_revoke(ctx),
+            AgentBridgeRevokeAll => self.agent_bridge_revoke_all(ctx),
+            AgentBridgeCopySetupCommand => self.agent_bridge_copy_setup_command(ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
             WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),
