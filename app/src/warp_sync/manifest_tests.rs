@@ -139,6 +139,25 @@ fn nearest_dir_ancestor_skips_files_and_the_path_itself() {
 }
 
 #[test]
+fn nearest_dir_names_the_ancestor_as_well_as_describing_it() {
+    let mut manifest = Manifest::new("h");
+    manifest.replace_subtree(
+        "/etc",
+        entries(&[
+            ("/etc", EntryKind::Dir, 1),
+            ("/etc/nginx", EntryKind::Dir, 2),
+            ("/etc/nginx/nginx.conf", EntryKind::File, 3),
+        ]),
+    );
+
+    let (path, meta) = manifest.nearest_dir("/etc/nginx/a/b/c").unwrap();
+    assert_eq!((path, meta.uid), ("/etc/nginx", 2));
+    let (path, _) = manifest.nearest_dir("/etc/nginx/nginx.conf/x").unwrap();
+    assert_eq!(path, "/etc/nginx");
+    assert!(manifest.nearest_dir("/etc").is_none());
+}
+
+#[test]
 fn sync_records_are_kept_per_root() {
     let mut manifest = Manifest::new("h");
     manifest.record_sync(

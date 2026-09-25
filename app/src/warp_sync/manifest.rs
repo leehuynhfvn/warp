@@ -144,14 +144,19 @@ impl Manifest {
 
     /// The closest recorded directory that strictly contains `path`.
     pub fn nearest_dir_ancestor(&self, path: &str) -> Option<&EntryMeta> {
+        self.nearest_dir(path).map(|(_, meta)| meta)
+    }
+
+    /// Like [`Self::nearest_dir_ancestor`], and also names the directory.
+    pub fn nearest_dir(&self, path: &str) -> Option<(&str, &EntryMeta)> {
         let mut current = path;
         while let Some((parent, _)) = current.rsplit_once('/') {
-            if let Some(meta) = self
+            if let Some((key, meta)) = self
                 .entries
-                .get(parent)
-                .filter(|meta| meta.kind == EntryKind::Dir)
+                .get_key_value(parent)
+                .filter(|(_, meta)| meta.kind == EntryKind::Dir)
             {
-                return Some(meta);
+                return Some((key.as_str(), meta));
             }
             current = parent;
         }

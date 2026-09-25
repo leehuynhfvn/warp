@@ -211,6 +211,39 @@ fn split_parent_name_of_top_level_path() {
 }
 
 #[test]
+fn components_below_lists_the_levels_between_an_ancestor_and_a_path() {
+    assert_eq!(
+        components_below("/etc/nginx", "/etc/nginx/a/b/c.conf").unwrap(),
+        ["a", "b", "c.conf"]
+    );
+    assert_eq!(components_below("/etc", "/etc/x").unwrap(), ["x"]);
+}
+
+#[test]
+fn components_below_rejects_anything_that_is_not_a_plain_descendant() {
+    for (ancestor, path) in [
+        ("/etc/nginx", "/etc/nginx"),
+        ("/etc/nginx", "/etc/nginx2/x"),
+        ("/etc/nginx", "/etc/ng"),
+        ("/etc/nginx", "/etc/nginx/a/../b"),
+        ("/etc/nginx", "/etc/nginx/./a"),
+        ("/etc/nginx", "/etc/nginx//a"),
+        ("/etc/nginx", "/etc/nginx/a/"),
+        ("/etc/nginx", "/etc/nginx/a/.git/config"),
+        ("/etc/nginx", "/etc/nginx/a/.GIT"),
+        ("/etc/nginx", "/etc/nginx/a\nb\0"),
+        ("/etc/nginx/", "/etc/nginx/a"),
+        ("/etc", "/var/etc/x"),
+    ] {
+        let result = components_below(ancestor, path);
+        assert!(
+            matches!(result, Err(WarpSyncError::InvalidPath(_))),
+            "{ancestor} -> {path}: {result:?}"
+        );
+    }
+}
+
+#[test]
 fn local_path_mirrors_remote_layout() {
     let root = Path::new("/home/me/.warp/mirrors");
     assert_eq!(

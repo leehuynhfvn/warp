@@ -212,6 +212,38 @@ pub fn split_parent_name(remote_abs: &str) -> (String, String) {
     }
 }
 
+/// The levels of `path` below `ancestor`, outermost first. Both are normalized absolute paths, so
+/// anything but plain names (which would let the result climb out of `ancestor`) is refused.
+pub fn components_below(ancestor: &str, path: &str) -> Result<Vec<String>, WarpSyncError> {
+    let rest = path
+        .strip_prefix(ancestor)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|_| !ancestor.ends_with('/'))
+        .ok_or_else(|| {
+            invalid(&format!(
+                "{} is not below {}",
+                printable(path),
+                printable(ancestor)
+            ))
+        })?;
+    rest.split('/')
+        .map(|level| {
+            let is_plain = !level.is_empty()
+                && !matches!(level, "." | "..")
+                && !level.chars().any(char::is_control)
+                && !is_git_metadata_name(level);
+            if is_plain {
+                Ok(level.to_owned())
+            } else {
+                Err(invalid(&format!(
+                    "{} has a component that cannot be created",
+                    printable(path)
+                )))
+            }
+        })
+        .collect()
+}
+
 /// Location in the local mirror of a normalized absolute remote path.
 pub fn local_path_for(mirror_root: &Path, host_key: &str, remote_abs: &str) -> PathBuf {
     mirror_root

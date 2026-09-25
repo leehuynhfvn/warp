@@ -16,7 +16,9 @@ use sha2::{Digest, Sha256};
 use tar::{Archive, Builder, Entry, EntryType, Header};
 
 use super::manifest::{EntryKind, EntryMeta, Manifest};
-use super::paths::{is_git_metadata_name, local_path_for, split_parent_name};
+use super::paths::{
+    components_below, is_git_metadata_name, local_path_for, printable, split_parent_name,
+};
 use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, WarpSyncError};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -529,6 +531,87 @@ pub fn build_upload(
     if known.is_empty() {
         return Err(WarpSyncError::NotMirrored(root.to_owned()));
     }
+    let (_, name) = split_parent_name(root);
+    let plan = PackPlan {
+        root,
+        archive_root: name,
+        created: None,
+        known,
+        max_upload_bytes,
+    };
+    pack(&plan, manifest, mirror_root, host_key)
+}
+
+/// Packs the mirror of `root`, which the manifest does not know, to be extracted into `anchor`:
+/// the closest synced directory above it. A directory entry is written for every level between
+/// `anchor` and `root`, owned like `anchor`, so that the server creates them.
+pub fn build_new_upload(
+    root: &str,
+    anchor: &str,
+    manifest: &Manifest,
+    mirror_root: &Path,
+    host_key: &str,
+    max_upload_bytes: usize,
+) -> Result<UploadArchive, WarpSyncError> {
+    let levels = components_below(anchor, root)?;
+    if !manifest.entries_under(root).is_empty() {
+        return Err(WarpSyncError::Manifest(format!(
+            "{} is already in the manifest",
+            printable(root)
+        )));
+    }
+    let owner = match manifest.nearest_dir(root) {
+        Some((closest, owner)) if closest == anchor => owner,
+        Some(_) | None => {
+            return Err(WarpSyncError::Manifest(format!(
+                "{} is not the closest synced directory above {}",
+                printable(anchor),
+                printable(root)
+            )));
+        }
+    };
+    let in_between = levels.len().saturating_sub(1);
+    let plan = PackPlan {
+        root,
+        archive_root: levels.join("/"),
+        created: Some(CreatedLevels {
+            anchor,
+            owner,
+            levels: (1..=in_between).map(|depth| levels[..depth].join("/")).collect(),
+        }),
+        known: BTreeMap::new(),
+        max_upload_bytes,
+    };
+    pack(&plan, manifest, mirror_root, host_key)
+}
+
+struct PackPlan<'a> {
+    /// Remote path of the entry that is packed.
+    root: &'a str,
+    /// Where `root` goes in the archive, relative to the directory it is extracted into.
+    archive_root: String,
+    /// The directories that have to be created above `root`; `None` for an entry that exists.
+    created: Option<CreatedLevels<'a>>,
+    known: BTreeMap<String, EntryMeta>,
+    max_upload_bytes: usize,
+}
+
+struct CreatedLevels<'a> {
+    /// The synced directory that the archive is extracted into.
+    anchor: &'a str,
+    /// The entry of `anchor`, whose ownership the levels take.
+    owner: &'a EntryMeta,
+    /// Archive paths of the levels between `anchor` and the packed entry, outermost first.
+    levels: Vec<String>,
+}
+
+fn pack(
+    plan: &PackPlan<'_>,
+    manifest: &Manifest,
+    mirror_root: &Path,
+    host_key: &str,
+) -> Result<UploadArchive, WarpSyncError> {
+    let root = plan.root;
     let local_root = local_path_for(mirror_root, host_key, root);
     let items = collect_local(&local_root, root)?;
 
@@ -544,7 +627,6 @@ pub fn build_upload(
         )));
     }
 
-    let (_, name) = split_parent_name(root);
     let mut builder = Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
     let mut present = BTreeSet::new();
     let mut new_files = Vec::new();
@@ -556,9 +638,18 @@ pub fn build_upload(
         new_files: Vec::new(),
         missing_locally: Vec::new(),
     };
+    if let Some(created) = &plan.created {
+        let mtime = items.first().map_or(0, |item| item.mtime);
+        let meta = created_level_meta(created.owner, mtime);
+        for level in &created.levels {
+            append_dir(&mut builder, level, &meta)?;
+            new_files.push(format!("{}/{level}", created.anchor));
+            summary.dirs += 1;
+        }
+    }
     for item in &items {
         let remote_path = item.remote_path(root);
-        let meta = match known.get(&remote_path) {
+        let meta = match plan.known.get(&remote_path) {
             Some(meta) => check_kind(meta, item, &remote_path)?.clone(),
             None => {
                 new_files.push(remote_path.clone());
@@ -570,7 +661,7 @@ pub fn build_upload(
         if meta.kind == EntryKind::File && meta.mode & SETUID_SETGID_BITS != 0 {
             return Err(WarpSyncError::SpecialMode(remote_path));
         }
-        append_item(&mut builder, item, &name, &meta)?;
+        append_item(&mut builder, item, &plan.archive_root, &meta)?;
         if item.is_dir {
             summary.dirs += 1;
         } else {
@@ -585,17 +676,19 @@ pub fn build_upload(
     summary.bytes = encoder
         .finish()
         .map_err(|err| local_io_message("pack", &err))?;
-    if summary.bytes.len() > max_upload_bytes {
+    if summary.bytes.len() > plan.max_upload_bytes {
         return Err(too_large(format!(
             "the upload is {} KiB compressed; the limit is {} KiB",
             summary.bytes.len().div_ceil(1024),
-            max_upload_bytes / 1024
+            plan.max_upload_bytes / 1024
         )));
     }
     summary.new_files = new_files;
-    summary.missing_locally = known
-        .into_keys()
-        .filter(|path| !present.contains(path))
+    summary.missing_locally = plan
+        .known
+        .keys()
+        .filter(|path| !present.contains(*path))
+        .cloned()
         .collect();
     Ok(summary)
 }
@@ -653,12 +746,7 @@ fn new_entry_mode(item: &LocalItem) -> u32 {
     item.mode.map_or(fallback, |mode| mode & mask)
 }
 
-fn append_item<W: Write>(
-    builder: &mut Builder<W>,
-    item: &LocalItem,
-    name: &str,
-    meta: &EntryMeta,
-) -> Result<(), WarpSyncError> {
+fn entry_header(meta: &EntryMeta, mtime: u64) -> Header {
     let mut header = Header::new_gnu();
     header.set_entry_type(match meta.kind {
         EntryKind::File => EntryType::Regular,
@@ -667,12 +755,48 @@ fn append_item<W: Write>(
     header.set_mode(meta.mode);
     header.set_uid(u64::from(meta.uid));
     header.set_gid(u64::from(meta.gid));
-    header.set_mtime(item.mtime);
+    header.set_mtime(mtime);
     // Names too long for the header field are left blank; the numeric ids still identify the
     // owner.
     header.set_username(&meta.uname).ok();
     header.set_groupname(&meta.gname).ok();
+    header
+}
 
+/// A directory created only to hold the packed entry: owned like `owner`, and readable by all.
+fn created_level_meta(owner: &EntryMeta, mtime: u64) -> EntryMeta {
+    EntryMeta {
+        kind: EntryKind::Dir,
+        mode: NEW_DIR_MODE,
+        uid: owner.uid,
+        gid: owner.gid,
+        uname: owner.uname.clone(),
+        gname: owner.gname.clone(),
+        mtime,
+        size: None,
+        sha256: None,
+    }
+}
+
+fn append_dir<W: Write>(
+    builder: &mut Builder<W>,
+    archive_path: &str,
+    meta: &EntryMeta,
+) -> Result<(), WarpSyncError> {
+    let mut header = entry_header(meta, meta.mtime);
+    header.set_size(0);
+    builder
+        .append_data(&mut header, archive_path, io::empty())
+        .map_err(|err| local_io_message("pack", &err))
+}
+
+fn append_item<W: Write>(
+    builder: &mut Builder<W>,
+    item: &LocalItem,
+    name: &str,
+    meta: &EntryMeta,
+) -> Result<(), WarpSyncError> {
+    let mut header = entry_header(meta, item.mtime);
     let archive_path = if item.relative.is_empty() {
         name.to_owned()
     } else {

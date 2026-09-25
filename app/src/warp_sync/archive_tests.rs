@@ -626,6 +626,156 @@ fn a_new_directory_never_gets_special_bits_from_the_local_copy() {
     assert_eq!(report.entries["/etc/conf/sub"].mode, 0o775);
 }
 
+impl Mirror {
+    fn build_new(&self, root: &str) -> Result<UploadArchive, WarpSyncError> {
+        build_new_upload(
+            root,
+            "/etc/conf",
+            &self.manifest,
+            self.root(),
+            "h",
+            TEST_MAX_UPLOAD_BYTES,
+        )
+    }
+
+    fn with_new_file(relative: &str, contents: &str) -> Self {
+        let mirror = Self::new();
+        let path = mirror.local(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+        mirror
+    }
+}
+
+/// Unpacks a new-path upload the way the server, and the manifest update, will see it.
+fn entries_of_new_upload(upload: &UploadArchive, top_level: &str) -> ExtractReport {
+    let staging = tempfile::tempdir().unwrap();
+    extract_download(&upload.bytes, top_level, "/etc/conf", &staging.path().join("s")).unwrap()
+}
+
+#[test]
+fn a_new_path_is_packed_under_its_levels_with_the_owner_of_the_anchor() {
+    let mirror = Mirror::with_new_file("one/two/new.conf", "new");
+
+    let upload = mirror.build_new("/etc/conf/one/two/new.conf").unwrap();
+
+    assert_eq!((upload.files, upload.dirs), (1, 2));
+    assert_eq!(
+        upload.new_files,
+        [
+            "/etc/conf/one",
+            "/etc/conf/one/two",
+            "/etc/conf/one/two/new.conf"
+        ]
+    );
+    assert!(upload.missing_locally.is_empty());
+    let report = entries_of_new_upload(&upload, "one");
+    assert_eq!(report.entries.len(), 3);
+    for path in ["/etc/conf/one", "/etc/conf/one/two"] {
+        let level = &report.entries[path];
+        assert_eq!(
+            (level.kind, level.mode, level.uid, level.gid, level.uname.as_str()),
+            (EntryKind::Dir, 0o755, 33, 33, "www-data"),
+            "{path}"
+        );
+    }
+    let file = &report.entries["/etc/conf/one/two/new.conf"];
+    assert_eq!((file.uid, file.gid, file.gname.as_str()), (33, 33, "www-data"));
+    assert_eq!(file.size, Some(3));
+}
+
+#[test]
+fn a_new_directory_is_packed_with_everything_below_it_and_nothing_beside_it() {
+    let mirror = Mirror::with_new_file("one/a.conf", "a");
+    fs::write(mirror.local("one/b.conf"), "b").unwrap();
+    fs::write(mirror.local("sibling.conf"), "not part of it").unwrap();
+    fs::write(mirror.local("a.conf"), "edited, not part of it").unwrap();
+
+    let upload = mirror.build_new("/etc/conf/one").unwrap();
+
+    assert_eq!((upload.files, upload.dirs), (2, 1));
+    let report = entries_of_new_upload(&upload, "one");
+    let mut paths: Vec<&str> = report.entries.keys().map(String::as_str).collect();
+    paths.sort_unstable();
+    assert_eq!(
+        paths,
+        [
+            "/etc/conf/one",
+            "/etc/conf/one/a.conf",
+            "/etc/conf/one/b.conf"
+        ]
+    );
+}
+
+#[test]
+fn a_new_path_that_the_manifest_already_knows_is_not_new() {
+    let mirror = Mirror::new();
+
+    let result = mirror.build_new("/etc/conf/a.conf");
+
+    assert!(matches!(result, Err(WarpSyncError::Manifest(_))), "{result:?}");
+}
+
+#[test]
+fn a_new_path_must_be_below_the_closest_synced_directory() {
+    let mut mirror = Mirror::with_new_file("sub/new.conf", "x");
+    let sub = mirror.manifest.nearest_dir_ancestor("/etc/conf/a.conf").unwrap().clone();
+    mirror
+        .manifest
+        .upsert_entries(BTreeMap::from([("/etc/conf/sub".to_owned(), sub)]));
+
+    let result = mirror.build_new("/etc/conf/sub/new.conf");
+
+    assert!(matches!(result, Err(WarpSyncError::Manifest(_))), "{result:?}");
+}
+
+#[test]
+fn a_new_path_with_levels_that_could_climb_out_is_refused() {
+    let mirror = Mirror::new();
+    for root in [
+        "/etc/conf/../x",
+        "/etc/conf/a/../../x",
+        "/etc/conf/./x",
+        "/etc/conf",
+        "/etc/other/x",
+    ] {
+        let result = mirror.build_new(root);
+
+        assert!(matches!(result, Err(WarpSyncError::InvalidPath(_))), "{root}: {result:?}");
+    }
+}
+
+#[test]
+fn a_new_path_without_a_local_copy_is_not_mirrored() {
+    let mirror = Mirror::new();
+
+    let result = mirror.build_new("/etc/conf/nowhere/x.conf");
+
+    assert!(matches!(result, Err(WarpSyncError::NotMirrored(_))), "{result:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_path_upload_refuses_setuid_files_and_respects_the_size_limit() {
+    let mirror = Mirror::with_new_file("one/x.sh", "x");
+    set_local_mode(&mirror.local("one/x.sh"), 0o4755);
+    assert!(matches!(
+        mirror.build_new("/etc/conf/one"),
+        Err(WarpSyncError::SpecialMode(_))
+    ));
+
+    set_local_mode(&mirror.local("one/x.sh"), 0o644);
+    let too_small = build_new_upload(
+        "/etc/conf/one",
+        "/etc/conf",
+        &mirror.manifest,
+        mirror.root(),
+        "h",
+        10,
+    );
+    assert!(matches!(too_small, Err(WarpSyncError::TooLarge { .. })));
+}
+
 #[test]
 fn upload_of_a_single_mirrored_file() {
     let mut mirror = Mirror::new();
