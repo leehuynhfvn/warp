@@ -313,6 +313,54 @@ fn links_and_special_files_are_skipped_not_created() {
 }
 
 #[test]
+fn git_metadata_is_skipped_and_reported_once() {
+    let staging = tempfile::tempdir().unwrap();
+    let tgz = build_tgz(&[
+        TestEntry::dir(b"conf/"),
+        TestEntry::dir(b"conf/.git/"),
+        TestEntry::file(b"conf/.git/config", b"[core]\n\tfsmonitor = touch /tmp/x\n"),
+        TestEntry::dir(b"conf/sub/"),
+        TestEntry::file(b"conf/sub/.git", b"gitdir: /home/user/repo/.git\n"),
+        TestEntry::dir(b"conf/.GIT/"),
+        TestEntry::file(b"conf/.GIT/hooks/pre-commit", b"#!/bin/sh\n"),
+        TestEntry::file(b"conf/.gitignore", b"*.conf\n"),
+    ]);
+
+    let report = extract(&tgz, staging.path()).unwrap();
+
+    assert_eq!(
+        report.skipped,
+        [
+            ("conf/.git/".to_owned(), SkipReason::GitMetadata),
+            ("conf/sub/.git".to_owned(), SkipReason::GitMetadata),
+            ("conf/.GIT/".to_owned(), SkipReason::GitMetadata),
+        ]
+    );
+    assert!(!staging.path().join("conf/.git").exists());
+    assert!(!staging.path().join("conf/sub/.git").exists());
+    assert!(!staging.path().join("conf/.GIT").exists());
+    assert!(staging.path().join("conf/.gitignore").exists());
+    assert!(!report.entries.keys().any(|path| path.contains("/.git/")));
+}
+
+#[test]
+fn upload_leaves_out_git_metadata_created_locally() {
+    let mirror = Mirror::new();
+    fs::create_dir(mirror.local(".git")).unwrap();
+    fs::write(mirror.local(".git/config"), "[core]").unwrap();
+
+    let upload = mirror.build().unwrap();
+
+    assert!(upload.new_files.is_empty(), "{:?}", upload.new_files);
+    assert!(
+        !entries_of_upload(&upload)
+            .entries
+            .keys()
+            .any(|path| path.contains(".git"))
+    );
+}
+
+#[test]
 fn entries_below_a_skipped_symlink_stay_inside_staging() {
     let sandbox = tempfile::tempdir().unwrap();
     let staging = sandbox.path().join("staging");

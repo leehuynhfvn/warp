@@ -278,6 +278,51 @@ fn download_mirrors_a_directory_and_records_the_manifest() {
     assert!(manifest.last_sync(&env.remote_path).is_some());
 }
 
+/// What the Git baseline at the root of the host's mirror has for `relative` under the synced
+/// path, or `None` when it has nothing.
+fn baseline_contents(env: &Env, relative: &str) -> Option<String> {
+    let host_dir = env.mirror_root().join(HOST_KEY);
+    let path = format!("{}/{relative}", env.remote_path.trim_start_matches('/'));
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&host_dir)
+        .args(["show", &format!("HEAD:{path}")])
+        .output()
+        .unwrap();
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).unwrap())
+}
+
+#[test]
+fn download_and_upload_keep_the_git_baseline_at_what_the_server_has() {
+    let env = Env::new();
+
+    let downloaded = env.download_done();
+    assert_eq!(downloaded.host_dir, env.mirror_root().join(HOST_KEY));
+    assert_eq!(downloaded.baseline_warning, None);
+    assert_eq!(
+        baseline_contents(&env, "a.conf").as_deref(),
+        Some("remote a")
+    );
+
+    fs::write(env.local("a.conf"), "edited a").unwrap();
+    fs::remove_file(env.local("b.conf")).unwrap();
+    let uploaded = env.upload().unwrap();
+
+    assert_eq!(uploaded.baseline_warning, None);
+    assert_eq!(
+        baseline_contents(&env, "a.conf").as_deref(),
+        Some("edited a")
+    );
+    // Still on the server, since uploading does not delete.
+    assert_eq!(
+        baseline_contents(&env, "b.conf").as_deref(),
+        Some("remote b")
+    );
+}
+
 #[test]
 fn download_of_a_single_file() {
     let env = Env::new();
@@ -652,6 +697,71 @@ fn the_comparison_file_is_private() {
 
     let mode = fs::metadata(diff_path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
+}
+
+/// Where the latest comparison keeps the server's copy of `relative` under the synced path.
+fn server_copy(env: &Env, outcome: &CompareOutcome, relative: &str) -> PathBuf {
+    outcome
+        .server_copy_dir
+        .join(env.remote_path.trim_start_matches('/'))
+        .join(relative)
+}
+
+#[test]
+fn compare_keeps_a_read_only_copy_of_the_server_side() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.remote("a.conf"), "edited on the server").unwrap();
+
+    let outcome = env.compare().unwrap();
+
+    assert_eq!(outcome.host_dir, env.mirror_root().join(HOST_KEY));
+    let copy = server_copy(&env, &outcome, "a.conf");
+    assert_eq!(fs::read_to_string(&copy).unwrap(), "edited on the server");
+    assert_eq!(
+        fs::read_to_string(server_copy(&env, &outcome, "sub/c.conf")).unwrap(),
+        "remote c"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&copy).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o400);
+    }
+}
+
+#[test]
+fn a_later_comparison_replaces_the_server_copy() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.remote("a.conf"), "first").unwrap();
+    env.compare().unwrap();
+    fs::write(env.remote("a.conf"), "second").unwrap();
+    fs::remove_file(env.remote("b.conf")).unwrap();
+
+    let outcome = env.compare().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(server_copy(&env, &outcome, "a.conf")).unwrap(),
+        "second"
+    );
+    assert!(!server_copy(&env, &outcome, "b.conf").exists());
+}
+
+#[test]
+fn a_comparison_without_differences_removes_the_previous_one() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited").unwrap();
+    let earlier = env.compare().unwrap();
+    let diff_path = earlier.diff_path.clone().unwrap();
+    fs::write(env.local("a.conf"), "remote a").unwrap();
+
+    let outcome = env.compare().unwrap();
+
+    assert_eq!(outcome.diff_path, None);
+    assert!(!diff_path.exists());
+    assert!(!server_copy(&env, &outcome, "").exists());
 }
 
 #[test]

@@ -42,6 +42,15 @@ pub enum WarpSyncError {
     LocalIo(String),
     #[error("A sync for this path is already in progress")]
     AlreadyInProgress,
+    #[error(
+        "No editor to open the mirror with: choose VS Code, VS Code Insiders, Cursor or Windsurf \
+         under \"Choose an editor to open file links\" in Settings > Features"
+    )]
+    NoEditor,
+    #[error("Could not open the editor: {0}")]
+    Editor(String),
+    #[error("Could not record the Git baseline: {0}")]
+    Baseline(String),
 }
 
 fn format_remote_failure(exit_code: Option<i32>, message: &str) -> String {

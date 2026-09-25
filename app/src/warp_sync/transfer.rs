@@ -1,7 +1,7 @@
 //! Orchestrates a download or upload between the remote host and the local mirror. Everything
 //! here is `async` and blocking-IO heavy, so callers run it on a background executor.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -16,16 +16,17 @@ use super::WarpSyncError;
 use super::archive::{
     SkipReason, UploadArchive, build_upload, extract_download, local_files, locally_modified_files,
 };
+use super::baseline::{self, BaselineOutcome, commit_message};
 use super::config::SyncLimits;
 use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
-use super::manifest::{EntryMeta, Manifest, SyncRecord};
+use super::manifest::{EntryKind, EntryMeta, Manifest, SyncRecord};
 use super::paths::{
-    create_private_dir_all, diff_path, local_path_for, machine_host_key, manifest_path,
-    recovery_dir, split_parent_name, staging_dir,
+    compare_dir, create_private_dir_all, diff_path, local_path_for, machine_host_key,
+    manifest_path, recovery_dir, split_parent_name, staging_dir,
 };
 use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
-    ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, checksum_script,
+    ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit, checksum_script,
     cleanup_command, download_script, parse_checksum_output, parse_probe_output, probe_script,
     upload_begin_command, upload_chunk_commands, upload_commit_script, validate_tmp_dir,
     wrap_for_any_shell,
@@ -35,6 +36,8 @@ use super::remote_shell::RemoteShell;
 const MAX_BACKUP_STEM_CHARS: usize = 150;
 const BACKUP_NONCE_CHARS: usize = 8;
 const BYTES_PER_KIB: u64 = 1024;
+#[cfg(unix)]
+const READ_ONLY_FILE_MODE: u32 = 0o400;
 
 /// Subdirectories of a staging directory. They are siblings, so that no remote file name can make
 /// one collide with the other.
@@ -58,12 +61,17 @@ pub struct DownloadRequest {
 
 #[derive(Debug)]
 pub struct DownloadOutcome {
+    /// The mirror of the whole host.
+    pub host_dir: PathBuf,
     pub local_path: PathBuf,
+    pub is_file: bool,
     pub files: usize,
     pub dirs: usize,
     pub total_bytes: u64,
     pub skipped: Vec<(String, SkipReason)>,
     pub remote_user: String,
+    /// Why the Git baseline could not be recorded, if it could not.
+    pub baseline_warning: Option<String>,
 }
 
 #[derive(Debug)]
@@ -104,6 +112,8 @@ pub struct UploadOutcome {
     /// Remote path of the backup of what was overwritten, if anything was.
     pub backup_path: Option<String>,
     pub remote_user: String,
+    /// Why the Git baseline could not be recorded, if it could not.
+    pub baseline_warning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +135,10 @@ pub struct CompareOutcome {
     /// The written comparison, present when there are differences.
     pub diff_path: Option<PathBuf>,
     pub remote_user: String,
+    /// The mirror of the whole host.
+    pub host_dir: PathBuf,
+    /// Where the server's copy is kept, laid out like `host_dir`.
+    pub server_copy_dir: PathBuf,
 }
 
 pub async fn download(
@@ -168,8 +182,13 @@ pub async fn download(
     let staging = staging_dir(&request.mirror_root);
     let applied = apply_download(&tgz, request, &probe, &staging);
     remove_staging(&staging);
-    let result = applied?;
-    if let DownloadResult::Done(outcome) = &result {
+    let mut result = applied?;
+    if let DownloadResult::Done(outcome) = &mut result {
+        outcome.baseline_warning = baseline_warning(baseline::record_download(
+            &outcome.host_dir,
+            &request.remote_path,
+            &commit_message("Download", &request.remote_path, &outcome.remote_user),
+        ));
         safe_info!(
             safe: ("Warp Sync: downloaded {} files", outcome.files),
             full: ("Warp Sync: downloaded {} files from {}", outcome.files, request.remote_path)
@@ -214,6 +233,8 @@ pub async fn compare(
         identical_files: comparison.identical_files,
         diff_path,
         remote_user: probe.user,
+        host_dir: request.mirror_root.join(&host_key),
+        server_copy_dir: compare_dir(&request.mirror_root, &host_key),
     })
 }
 
@@ -267,11 +288,17 @@ pub async fn execute_upload(
             return Err(err);
         }
     };
-    record_upload(prepared).map_err(|err| {
+    let uploaded_files = record_upload(prepared).map_err(|err| {
         WarpSyncError::Manifest(format!(
             "the upload succeeded but the local record could not be updated: {err}"
         ))
     })?;
+    let baseline_warning = baseline_warning(baseline::record_upload(
+        &prepared.mirror_root.join(&prepared.host_key),
+        &prepared.remote_path,
+        &uploaded_files,
+        &commit_message("Upload", &prepared.remote_path, &prepared.probe.user),
+    ));
 
     safe_info!(
         safe: ("Warp Sync: uploaded {} files", prepared.archive.files),
@@ -283,7 +310,26 @@ pub async fn execute_upload(
         content_bytes: prepared.archive.content_bytes,
         backup_path,
         remote_user: prepared.probe.user.clone(),
+        baseline_warning,
     })
+}
+
+/// Turns a baseline that could not be recorded into a note for the user: the sync itself worked.
+fn baseline_warning(recorded: Result<BaselineOutcome, WarpSyncError>) -> Option<String> {
+    match recorded {
+        Ok(BaselineOutcome::Recorded | BaselineOutcome::Unchanged) => None,
+        Ok(BaselineOutcome::GitUnavailable) => {
+            log::info!("Warp Sync: git is not installed, so the mirror has no Git baseline");
+            None
+        }
+        Err(err) => {
+            safe_warn!(
+                safe: ("Warp Sync: could not record the Git baseline"),
+                full: ("Warp Sync: could not record the Git baseline: {err}")
+            );
+            Some(err.to_string())
+        }
+    }
 }
 
 async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult, WarpSyncError> {
@@ -377,13 +423,60 @@ fn compare_with_download(
         local_files: &local,
         recorded,
     })?;
+    let path = diff_path(&request.mirror_root, host_key, &request.remote_path);
+    let server_copy = compare_dir(&request.mirror_root, host_key)
+        .join(request.remote_path.trim_start_matches('/'));
+    remove_path(&server_copy)?;
     if comparison.differences.is_empty() {
+        remove_path(&path)?;
         return Ok((comparison, None));
     }
-    let path = diff_path(&request.mirror_root, host_key, &request.remote_path);
     let text = render_report(&request.remote_path, &request.hostname, &comparison);
     write_private_file(&path, &text)?;
+    keep_server_copy(&extracted.join(&name), &server_copy)?;
     Ok((comparison, Some(path)))
+}
+
+/// Moves the server's copy from staging to where the editor opens it. Its files are made
+/// read-only, since editing them changes nothing on the server.
+fn keep_server_copy(staged: &Path, kept: &Path) -> Result<(), WarpSyncError> {
+    if let Some(parent) = kept.parent() {
+        create_private_dir_all(parent).map_err(|err| local_io("create", parent, &err))?;
+    }
+    fs::rename(staged, kept).map_err(|err| local_io("move", staged, &err))?;
+    make_files_read_only(kept)
+}
+
+#[cfg(unix)]
+fn make_files_read_only(path: &Path) -> Result<(), WarpSyncError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path).map_err(|err| local_io("read", path, &err))?;
+    if metadata.is_dir() {
+        for child in fs::read_dir(path).map_err(|err| local_io("read", path, &err))? {
+            let child = child.map_err(|err| local_io("read", path, &err))?;
+            make_files_read_only(&child.path())?;
+        }
+        return Ok(());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(READ_ONLY_FILE_MODE))
+        .map_err(|err| local_io("set permissions on", path, &err))
+}
+
+#[cfg(not(unix))]
+fn make_files_read_only(_path: &Path) -> Result<(), WarpSyncError> {
+    Ok(())
+}
+
+/// Removes a file or directory tree, if there is one.
+fn remove_path(path: &Path) -> Result<(), WarpSyncError> {
+    let removed = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => Err(err),
+    };
+    removed.map_err(|err| local_io("remove", path, &err))
 }
 
 /// Writes `contents` to `path` through a temporary file that only the current user can read, since
@@ -485,12 +578,15 @@ fn apply_download(
     )?;
 
     let outcome = DownloadOutcome {
+        host_dir: request.mirror_root.join(&request.host_key),
         local_path,
+        is_file: probe.kind == RemoteKind::File,
         files: report.files,
         dirs: report.dirs,
         total_bytes: report.total_bytes,
         skipped: report.skipped,
         remote_user: probe.user.clone(),
+        baseline_warning: None,
     };
     manifest.replace_subtree(&request.remote_path, report.entries);
     manifest.record_sync(
@@ -634,15 +730,23 @@ async fn remove_remote_tmp_dir(shell: &dyn RemoteShell, tmp_dir: &RemoteTmpDir) 
     }
 }
 
-/// Updates the manifest with what was just uploaded. Entries that the mirror no longer has are
-/// kept, since they still exist on the remote host.
-fn record_upload(prepared: &PreparedUpload) -> Result<(), WarpSyncError> {
+/// Updates the manifest with what was just uploaded, and returns the remote paths of the uploaded
+/// files. Entries that the mirror no longer has are kept, since they still exist on the remote
+/// host.
+fn record_upload(prepared: &PreparedUpload) -> Result<BTreeSet<String>, WarpSyncError> {
     let (parent, name) = split_parent_name(&prepared.remote_path);
     ensure_mirror_root(&prepared.mirror_root)?;
     let staging = staging_dir(&prepared.mirror_root);
     let report = extract_download(&prepared.archive.bytes, &name, &parent, &staging);
     remove_staging(&staging);
     let report = report?;
+
+    let uploaded_files = report
+        .entries
+        .iter()
+        .filter(|(_, meta)| meta.kind == EntryKind::File)
+        .map(|(path, _)| path.clone())
+        .collect();
 
     let _manifests = lock_manifests();
     let mut manifest = load_manifest(&prepared.mirror_root, &prepared.host_key)?;
@@ -654,7 +758,8 @@ fn record_upload(prepared: &PreparedUpload) -> Result<(), WarpSyncError> {
             at_unix: now_unix(),
         },
     );
-    manifest.save_atomic(&manifest_path(&prepared.mirror_root, &prepared.host_key))
+    manifest.save_atomic(&manifest_path(&prepared.mirror_root, &prepared.host_key))?;
+    Ok(uploaded_files)
 }
 
 /// A file-name stem that identifies the host, the path and the time, using only characters that

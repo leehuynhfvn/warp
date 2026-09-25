@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use pathfinder_geometry::vector::vec2f;
@@ -12,6 +13,7 @@ use warpui::{
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
+use super::editor::{EditorCli, EditorRequest};
 use super::model::{CompareSummary, PendingId, UploadSummary, format_size, pluralize_count};
 use super::paths::printable;
 use super::remote_check::{RemoteCheck, RemoteConflicts};
@@ -44,8 +46,12 @@ pub enum ConfirmKind {
     OverwriteLocalChanges { id: PendingId },
     /// Resumes an upload.
     Upload { id: PendingId },
-    /// Opens the written comparison.
-    CompareResult { diff_path: PathBuf },
+    /// Opens the comparison: side by side in the external editor when there is one, otherwise
+    /// the written comparison in Warp.
+    CompareResult {
+        diff_path: PathBuf,
+        editor_request: Option<EditorRequest>,
+    },
 }
 
 impl ConfirmKind {
@@ -71,7 +77,7 @@ pub struct ConfirmRequest {
     pub kind: ConfirmKind,
     title: String,
     body: String,
-    confirm_label: &'static str,
+    confirm_label: Cow<'static, str>,
     cancel_label: &'static str,
     style: ConfirmStyle,
 }
@@ -87,7 +93,7 @@ impl ConfirmRequest {
             kind: ConfirmKind::OverwriteLocalChanges { id },
             title: "Overwrite local changes?".to_owned(),
             body,
-            confirm_label: "Overwrite",
+            confirm_label: "Overwrite".into(),
             cancel_label: CANCEL_LABEL,
             style: ConfirmStyle::Destructive,
         }
@@ -98,16 +104,21 @@ impl ConfirmRequest {
             kind: ConfirmKind::Upload { id },
             title: format!("Upload to {}@{}?", summary.remote_user, summary.hostname),
             body: upload_body(summary),
-            confirm_label: "Upload",
+            confirm_label: "Upload".into(),
             cancel_label: CANCEL_LABEL,
             style: ConfirmStyle::Destructive,
         }
     }
 
-    pub fn compare_result(summary: &CompareSummary) -> Self {
+    pub fn compare_result(summary: &CompareSummary, editor: Option<EditorCli>) -> Self {
+        let confirm_label = match editor {
+            Some(editor) => format!("Open in {}", editor.name()).into(),
+            None => "Open diff".into(),
+        };
         Self {
             kind: ConfirmKind::CompareResult {
                 diff_path: summary.diff_path.clone(),
+                editor_request: editor.map(|_| summary.editor_request()),
             },
             title: format!(
                 "{} with {}@{}",
@@ -115,15 +126,15 @@ impl ConfirmRequest {
                 summary.remote_user,
                 summary.hostname
             ),
-            body: compare_body(summary),
-            confirm_label: "Open diff",
+            body: compare_body(summary, editor.is_some()),
+            confirm_label,
             cancel_label: "Close",
             style: ConfirmStyle::Neutral,
         }
     }
 }
 
-fn compare_body(summary: &CompareSummary) -> String {
+fn compare_body(summary: &CompareSummary, opens_in_editor: bool) -> String {
     let changes: Vec<String> = summary
         .differences
         .iter()
@@ -137,9 +148,14 @@ fn compare_body(summary: &CompareSummary) -> String {
             summary.identical_files
         ),
         bullet_list(&changes),
-        "In the diff, '-' is the server and '+' is your local mirror. Uploading makes the server \
-         match the local mirror."
-            .to_owned(),
+        if opens_in_editor {
+            "Side by side, the server is on the left and your local mirror on the right. \
+             Uploading makes the server match the local mirror."
+        } else {
+            "In the diff, '-' is the server and '+' is your local mirror. Uploading makes the \
+             server match the local mirror."
+        }
+        .to_owned(),
     ]
     .join("\n\n")
 }
@@ -264,7 +280,7 @@ impl WarpSyncConfirmDialog {
         ctx: &mut ViewContext<Self>,
     ) -> Option<ConfirmRequest> {
         self.confirm_button.update(ctx, |button, ctx| {
-            button.set_label(request.confirm_label, ctx);
+            button.set_label(request.confirm_label.clone(), ctx);
             match request.style {
                 ConfirmStyle::Destructive => button.set_theme(DangerPrimaryTheme, ctx),
                 ConfirmStyle::Neutral => button.set_theme(PrimaryTheme, ctx),

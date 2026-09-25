@@ -1,5 +1,6 @@
 use super::super::diff::{FileChange, FileDifference};
 use super::*;
+use crate::util::file::external_editor::Editor;
 
 fn paths(count: usize) -> Vec<String> {
     (0..count).map(|i| format!("/etc/f{i}")).collect()
@@ -146,12 +147,18 @@ fn compare_summary() -> CompareSummary {
         ],
         identical_files: 5,
         diff_path: PathBuf::from("/mirror/.warp-sync/diffs/prod-1/etc_nginx.diff"),
+        host_dir: PathBuf::from("/mirror/prod-1"),
+        server_copy_dir: PathBuf::from("/mirror/.warp-sync/compare/prod-1"),
     }
+}
+
+fn vs_code() -> Option<EditorCli> {
+    EditorCli::for_editor(Editor::VSCode)
 }
 
 #[test]
 fn compare_result_lists_each_difference_with_who_changed_it() {
-    let request = ConfirmRequest::compare_result(&compare_summary());
+    let request = ConfirmRequest::compare_result(&compare_summary(), None);
 
     assert_eq!(request.title, "2 differences with root@prod-1");
     assert!(
@@ -171,18 +178,36 @@ fn compare_result_lists_each_difference_with_who_changed_it() {
 fn compare_result_opens_the_diff_and_is_not_destructive() {
     let summary = compare_summary();
 
-    let request = ConfirmRequest::compare_result(&summary);
+    let request = ConfirmRequest::compare_result(&summary, None);
 
     assert_eq!(
         request.kind,
         ConfirmKind::CompareResult {
-            diff_path: summary.diff_path
+            diff_path: summary.diff_path,
+            editor_request: None,
         }
     );
     assert_eq!(request.kind.pending_id(), None);
     assert_eq!(request.confirm_label, "Open diff");
     assert_eq!(request.cancel_label, "Close");
     assert_eq!(request.style, ConfirmStyle::Neutral);
+}
+
+#[test]
+fn compare_result_opens_side_by_side_in_the_external_editor() {
+    let summary = compare_summary();
+
+    let request = ConfirmRequest::compare_result(&summary, vs_code());
+
+    assert_eq!(request.confirm_label, "Open in VS Code");
+    assert!(request.body.contains("the server is on the left"));
+    assert_eq!(
+        request.kind,
+        ConfirmKind::CompareResult {
+            diff_path: summary.diff_path.clone(),
+            editor_request: Some(summary.editor_request()),
+        }
+    );
 }
 
 #[test]

@@ -404,6 +404,12 @@ pub fn init(app: &mut AppContext) {
                 WorkspaceAction::WarpSyncOpenMirror,
             )
             .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:warp_sync_open_mirror_in_editor",
+                "Warp Sync: Open local mirror in external editor",
+                WorkspaceAction::WarpSyncOpenMirrorInEditor,
+            )
+            .with_context_predicate(id!("Workspace")),
         ]);
     }
 

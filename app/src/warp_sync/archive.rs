@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tar::{Archive, Builder, Entry, EntryType, Header};
 
 use super::manifest::{EntryKind, EntryMeta, Manifest};
-use super::paths::{local_path_for, split_parent_name};
+use super::paths::{is_git_metadata_name, local_path_for, split_parent_name};
 use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, WarpSyncError};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -61,6 +61,8 @@ pub enum SkipReason {
     /// Device, pipe or other entry that is not a regular file or directory.
     Special,
     NonUtf8Name,
+    /// A `.git` directory or file, which is never mirrored.
+    GitMetadata,
 }
 
 impl fmt::Display for SkipReason {
@@ -70,6 +72,7 @@ impl fmt::Display for SkipReason {
             Self::Hardlink => "hard link",
             Self::Special => "special file",
             Self::NonUtf8Name => "name is not valid UTF-8",
+            Self::GitMetadata => "Git metadata",
         };
         f.write_str(description)
     }
@@ -210,6 +213,14 @@ struct Extractor<'a> {
 
 impl Extractor<'_> {
     fn handle<R: Read>(&mut self, entry: &mut Entry<'_, R>) -> Result<(), WarpSyncError> {
+        if let Some(is_git_root) = git_metadata(&entry.path_bytes()) {
+            // Only the `.git` entry itself is reported; its contents follow it in the archive.
+            return if is_git_root {
+                self.skip(entry, SkipReason::GitMetadata)
+            } else {
+                Ok(())
+            };
+        }
         let kind = match entry.header().entry_type() {
             EntryType::Regular => EntryKind::File,
             EntryType::Directory => EntryKind::Dir,
@@ -299,6 +310,19 @@ impl Extractor<'_> {
         self.report.total_bytes = total;
         Ok(())
     }
+}
+
+/// Whether an archive path is inside Git metadata: `Some(true)` for the `.git` entry itself,
+/// `Some(false)` for anything below it.
+fn git_metadata(path: &[u8]) -> Option<bool> {
+    let components: Vec<&[u8]> = path
+        .split(|byte| *byte == b'/')
+        .filter(|component| !component.is_empty() && *component != b".")
+        .collect();
+    let position = components
+        .iter()
+        .position(|component| is_git_metadata_name(&String::from_utf8_lossy(component)))?;
+    Some(position + 1 == components.len())
 }
 
 /// Copies the entry to `dest`, returning the hex SHA-256 of its contents.
@@ -439,7 +463,7 @@ fn collect_local(local_root: &Path, root: &str) -> Result<Vec<LocalItem>, WarpSy
 
 type PendingChild = (PathBuf, String, fs::Metadata);
 
-/// Regular files and directories directly inside `dir`, sorted by name.
+/// Regular files and directories directly inside `dir`, except Git metadata, sorted by name.
 fn read_children(dir: &Path, relative: &str) -> Result<Vec<PendingChild>, WarpSyncError> {
     let mut children = Vec::new();
     for child in fs::read_dir(dir).map_err(|err| local_io("read", dir, &err))? {
@@ -456,6 +480,9 @@ fn read_children(dir: &Path, relative: &str) -> Result<Vec<PendingChild>, WarpSy
                 path.display()
             )));
         };
+        if is_git_metadata_name(file_name) {
+            continue;
+        }
         let child_relative = if relative.is_empty() {
             file_name.to_owned()
         } else {

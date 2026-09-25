@@ -3,9 +3,11 @@
 //! privileges as the shell the user is looking at.
 
 mod archive;
+mod baseline;
 pub mod config;
 pub mod confirm_dialog;
 mod diff;
+pub mod editor;
 mod error;
 mod manifest;
 mod model;
@@ -20,7 +22,7 @@ use std::time::Duration;
 
 pub use config::SyncConfig;
 pub use error::WarpSyncError;
-pub use model::{WarpSyncEvent, WarpSyncModel};
+pub use model::{MirrorLocation, WarpSyncEvent, WarpSyncModel};
 pub use paths::{host_mirror_dir, normalize_remote_path, selection_to_remote_path};
 
 /// Default upper bound, in MiB, on the remote size (`du -sk`) of a download. Output travels

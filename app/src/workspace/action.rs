@@ -498,6 +498,12 @@ pub enum WorkspaceAction {
     WarpSyncComparePath,
     /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
     WarpSyncOpenMirror,
+    /// Open the Warp Sync mirror of the active remote session's host in the external editor.
+    WarpSyncOpenMirrorInEditor,
+    /// Open a Warp Sync mirror, or a comparison with the server, in the external editor.
+    WarpSyncOpenInEditor {
+        request: crate::warp_sync::editor::EditorRequest,
+    },
     TerminateApp,
     CloseWindow,
     /// Help the user call the Warp executable with the [`crate::args::DEBUG_DUMP_FLAG`].
@@ -1096,6 +1102,8 @@ impl WorkspaceAction {
             | WarpSyncDownloadPath
             | WarpSyncUploadPath
             | WarpSyncOpenMirror
+            | WarpSyncOpenMirrorInEditor
+            | WarpSyncOpenInEditor { .. }
             | DragTab { .. }
             | StartTabDrag
             | DragGroup { .. }

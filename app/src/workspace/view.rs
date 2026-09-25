@@ -485,9 +485,11 @@ use crate::view_components::{
 use crate::warp_sync::confirm_dialog::{
     ConfirmKind, ConfirmRequest, WarpSyncConfirmDialog, WarpSyncConfirmEvent,
 };
+use crate::warp_sync::editor::{EditorCli, EditorRequest};
 use crate::warp_sync::path_prompt::{PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent};
 use crate::warp_sync::{
-    SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path,
+    MirrorLocation, SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir,
+    normalize_remote_path,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -18972,21 +18974,52 @@ impl Workspace {
     }
 
     fn warp_sync_open_mirror(&mut self, ctx: &mut ViewContext<Self>) {
+        match self.warp_sync_host_mirror_dir(ctx) {
+            Ok(dir) => ctx.open_file_path_in_explorer(&dir),
+            Err(error) => self.report_warp_sync_failure(error, ctx),
+        }
+    }
+
+    fn warp_sync_open_mirror_in_editor(&mut self, ctx: &mut ViewContext<Self>) {
+        match self.warp_sync_host_mirror_dir(ctx) {
+            Ok(workspace) => self.warp_sync_open_in_editor(
+                EditorRequest::OpenMirror {
+                    workspace,
+                    file: None,
+                },
+                ctx,
+            ),
+            Err(error) => self.report_warp_sync_failure(error, ctx),
+        }
+    }
+
+    fn warp_sync_open_in_editor(&mut self, request: EditorRequest, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let mirror_dir = self.active_warp_sync_session(ctx).and_then(|(session, _)| {
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
+            warp_sync.open_in_editor(request, window_id, ctx)
+        });
+    }
+
+    fn report_warp_sync_failure(&mut self, error: WarpSyncError, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
+            warp_sync.report_failure(window_id, error, ctx)
+        });
+    }
+
+    /// The mirror of the active remote session's host, created if it does not exist yet.
+    fn warp_sync_host_mirror_dir(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<PathBuf, WarpSyncError> {
+        self.active_warp_sync_session(ctx).and_then(|(session, _)| {
             let mirror_root = SyncConfig::from_settings(ctx)?.mirror_root;
             let dir = host_mirror_dir(&mirror_root, session.hostname());
             std::fs::create_dir_all(&dir).map_err(|err| {
                 WarpSyncError::LocalIo(format!("could not create {}: {err}", dir.display()))
             })?;
             Ok(dir)
-        });
-        match mirror_dir {
-            Ok(dir) => ctx.open_file_path_in_explorer(&dir),
-            Err(error) => WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
-                warp_sync.report_failure(window_id, error, ctx)
-            }),
-        }
+        })
     }
 
     fn handle_warp_sync_event(&mut self, event: &WarpSyncEvent, ctx: &mut ViewContext<Self>) {
@@ -19007,15 +19040,11 @@ impl Workspace {
                 self.show_warp_sync_toast(DismissibleToast::default(description.clone()), ctx);
             }
             WarpSyncEvent::Succeeded {
-                message, open_path, ..
+                message, location, ..
             } => {
                 let mut toast = DismissibleToast::success(message.clone());
-                if let Some(path) = open_path {
-                    toast = toast.with_link(
-                        ToastLink::new("Open folder".to_owned()).with_onclick_action(
-                            WorkspaceAction::OpenInExplorer { path: path.clone() },
-                        ),
-                    );
+                if let Some(location) = location {
+                    toast = toast.with_link(warp_sync_open_link(location, ctx));
                 }
                 self.show_warp_sync_toast(toast, ctx);
             }
@@ -19046,7 +19075,8 @@ impl Workspace {
                         ctx,
                     );
                 } else {
-                    let request = ConfirmRequest::compare_result(summary);
+                    let request =
+                        ConfirmRequest::compare_result(summary, EditorCli::from_settings(ctx));
                     self.show_warp_sync_confirm_dialog(request, ctx);
                 }
             }
@@ -19097,7 +19127,16 @@ impl Workspace {
                     WarpSyncModel::handle(ctx)
                         .update(ctx, |model, ctx| model.confirm_upload(*id, ctx));
                 }
-                ConfirmKind::CompareResult { diff_path } => {
+                ConfirmKind::CompareResult {
+                    editor_request: Some(editor_request),
+                    ..
+                } => {
+                    self.warp_sync_open_in_editor(editor_request.clone(), ctx);
+                }
+                ConfirmKind::CompareResult {
+                    diff_path,
+                    editor_request: None,
+                } => {
                     self.open_file_with_target(
                         diff_path.clone(),
                         FileTarget::CodeEditor(EditorLayout::SplitPane),
@@ -25474,6 +25513,8 @@ impl TypedActionView for Workspace {
             WarpSyncDownloadPath => self.open_warp_sync_path_prompt(PathPromptKind::Download, ctx),
             WarpSyncUploadPath => self.open_warp_sync_path_prompt(PathPromptKind::Upload, ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
+            WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
+            WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),
             NewTabInAgentMode {
                 entrypoint,
                 zero_state_prompt_suggestion_type,
@@ -30158,6 +30199,26 @@ fn compute_default_panel_widths(
         (left, right)
     } else {
         (DEFAULT_LEFT_PANEL_WIDTH, DEFAULT_RIGHT_PANEL_WIDTH)
+    }
+}
+
+/// Opens a downloaded path in the external editor when one that can show the mirror is chosen,
+/// and in the file explorer otherwise.
+fn warp_sync_open_link(location: &MirrorLocation, ctx: &AppContext) -> ToastLink<WorkspaceAction> {
+    match EditorCli::from_settings(ctx) {
+        Some(cli) => ToastLink::new(format!("Open in {}", cli.name())).with_onclick_action(
+            WorkspaceAction::WarpSyncOpenInEditor {
+                request: EditorRequest::OpenMirror {
+                    workspace: location.host_dir.clone(),
+                    file: location.is_file.then(|| location.local_path.clone()),
+                },
+            },
+        ),
+        None => ToastLink::new("Open folder".to_owned()).with_onclick_action(
+            WorkspaceAction::OpenInExplorer {
+                path: location.local_path.clone(),
+            },
+        ),
     }
 }
 

@@ -476,6 +476,60 @@ giới hạn); phát hiện xung đột remote (fingerprint lúc download vs tr�
 truyền xoá; kênh streaming qua daemon cho file lớn khi SSH trực tiếp bằng root; nhận diện path
 remote khi hover.
 
+### Phase 6 — Sửa mirror bằng VS Code (user yêu cầu 2026-09-25)
+
+Mục tiêu: sửa file của server trong VS Code qua mirror, xem diff native trong VS Code, rồi vẫn
+upload bằng một thao tác trong Warp. Không đổi transport, script remote hay định dạng manifest.
+
+**Chọn editor.** Dùng lại setting có sẵn *Settings → Features → Open files with*
+(`EditorSettings::open_file_editor`). Chỉ các editor họ VS Code có CLI hỗ trợ `--diff`:
+`VSCode` → `code`, `VSCodeInsiders` → `code-insiders`, `Cursor` → `cursor`, `Windsurf` → `windsurf`.
+Setting khác → hành vi cũ (Open folder bằng file manager, diff mở trong editor của Warp); palette
+"Open in editor" báo lỗi hướng dẫn chọn editor. Không thêm setting mới. CLI chạy bằng
+`command::blocking::Command` trên background (không qua shell; path luôn tuyệt đối nên không bị hiểu
+nhầm là option); lỗi → toast (`WarpSyncError::Editor`), `NotFound` → gợi ý cài lệnh `code`.
+Workspace VS Code luôn là **thư mục host** `<mirror_root>/<host_key>` (để Source Control thấy repo ở 6.2).
+
+**Task 6.1 — Mở mirror bằng VS Code.** Module `warp_sync/editor.rs`: `EditorCli::for_editor`
+(thuần, có test), `EditorRequest { OpenMirror { workspace, file }, OpenDiffs { workspace, diffs, files } }`,
+`invocations(&EditorRequest) -> Vec<Vec<OsString>>` (thuần, có test), `launch`. Mở thư mục:
+`code <host_dir>`; mở file: `code <host_dir> <file>`; diff: `code -r --diff <server> <mirror>`.
+UI: toast sau khi download có link "Open in <editor>" (thay "Open folder" khi có editor);
+palette `workspace:warp_sync_open_mirror_in_editor`.
+
+**Task 6.2 — Git baseline trong mirror.** Module `warp_sync/baseline.rs`. Thư mục host là một git repo
+(`<host_dir>/.git`, tạo khi cần, commit rỗng ban đầu; `info/exclude` có `/.vscode/`). HEAD = "trạng thái
+server ở lần sync cuối", nên Source Control của VS Code hiện đúng những gì đã sửa local chưa upload.
+- Sau download `P`: `git add -A -f -- P` rồi `git commit -- P` (nếu có thay đổi) — gồm cả file bị xoá trên server.
+- Sau upload `P`: chỉ commit **đúng các file trong archive** (`--pathspec-from-file` NUL). File đã xoá
+  local vẫn còn trên server (không lan truyền xoá), nên phải còn trong HEAD và hiện "deleted" trong VS Code.
+- Commit với pathspec dùng ngữ nghĩa `--only`: không cuốn theo thứ user đã stage trong VS Code.
+- An toàn: mọi lệnh chạy `git --git-dir … --work-tree … --literal-pathspecs` với
+  `-c core.hooksPath=/dev/null -c core.fsmonitor=false -c commit.gpgsign=false -c core.autocrlf=false`,
+  user/email cố định, bỏ mọi biến môi trường `GIT_*`, `GIT_TERMINAL_PROMPT=0`; khoá `BASELINE_LOCK`.
+- Thư mục `.git` lồng từ server (vd etckeeper `/etc/.git`) **không được mirror**: giải nén bỏ qua mọi
+  entry có thành phần `.git` (`SkipReason::GitMetadata`, chỉ báo một lần cho thư mục gốc `.git`), duyệt
+  mirror local cũng bỏ qua `.git`, `normalize_remote_path` từ chối path có thành phần `.git`.
+  Lý do: repo lồng khiến git coi cả thư mục là gitlink, và `.git/config` do server quyết định (vd
+  `core.fsmonitor`) có thể chạy lệnh trên máy local khi git/VS Code quét repo.
+- Không có `git` → bỏ qua lặng lẽ (log info). Lỗi git khác **không** làm hỏng sync: toast thành công
+  kèm câu "could not record the Git baseline: …".
+- Mirror có sẵn trước Phase 6 chưa có baseline: file hiện "untracked" tới lần download kế tiếp.
+
+**Task 6.3 — Compare mở bằng `code --diff`.** `transfer::compare` giữ bản server mới tải ở
+`<mirror_root>/.warp-sync/compare/<host_key>/<path>` (thay bản cũ; file đặt 0400) thay vì xoá. Dialog
+kết quả: nút "Open in <editor>" → mở workspace host, `--diff` cho tối đa `MAX_EDITOR_DIFFS` (10) file có
+cả hai phía, và mở thêm file report `.diff` khi còn khác biệt không hiện được bằng `--diff` (chỉ một
+phía, hoặc vượt giới hạn). Không có editor họ VS Code → giữ nút "Open diff" (editor của Warp). Không còn
+khác biệt → xoá report và bản compare cũ của path đó (sửa nit "diff cũ còn lại").
+
+**Task 6.4 — (CHỈ GHI CHÚ, chưa làm) Live sync: tự upload khi Save.** Watcher (`crates/watcher`,
+debounce 1–2 s, bỏ `.swp`/`4913`/`*~`) trên path được bật riêng; upload qua đúng session + remote user đã
+bật (kiểm `id -u` trước mỗi lần, session mất → dừng, không fallback). Ràng buộc cứng: in-band command bị
+huỷ khi shell đang chạy lệnh của user (`pty_controller.rs:265-271`) → phải xếp hàng chờ shell rảnh. Giữ
+kiểm tra xung đột + backup, chỉ bỏ dialog; mặc định tắt, có chỉ báo "Live sync" rõ ràng; chỉ upload file
+đã đổi (hiện upload đóng gói cả path).
+
 ---
 
 ## 5. Checklist test tay (cho người dùng)
@@ -510,6 +564,22 @@ Upload:
 11. Upload không có `sudo -i` vào file của root → lỗi extract, `/tmp/warp-sync.*` được dọn.
 12. Cancel ở dialog → không có lệnh nào chạy trên server.
 
+Phase 6 (VS Code) — trước tiên đặt *Settings → Features → "Choose an editor to open file links"* = VS Code:
+13. Download `/etc/nginx` → toast có link "Open in VS Code" → VS Code mở workspace `~/.warp/mirrors/<host>`
+    (cả host, không chỉ thư mục vừa tải); Download một file → mở workspace + đúng file đó.
+14. Source Control của VS Code: ngay sau download thì sạch; sửa `nginx.conf` → hiện "M", bấm vào thấy diff
+    với bản server lần sync cuối. `git -C ~/.warp/mirrors/<host> log` có commit "Download /etc/nginx as root".
+15. Upload từ Warp → Source Control sạch lại; xoá một file local rồi upload → file đó vẫn hiện "D" (server
+    vẫn còn file, upload không xoá).
+16. Sửa file trên server (`echo x >> /etc/nginx/nginx.conf`) → Compare → dialog có nút "Open in VS Code" →
+    VS Code mở tab diff: trái = bản server (read-only), phải = mirror. Thêm/xoá file một phía → report `.diff`
+    cũng được mở. Compare lại khi đã hết khác biệt → toast "No differences", file report cũ bị xoá.
+17. Palette "Warp Sync: Open local mirror in external editor" mở workspace host. Đổi setting về "Default App"
+    → toast lại là "Open folder", Compare lại là "Open diff" (editor của Warp); palette báo lỗi hướng dẫn.
+18. Server có etckeeper (`/etc/.git`) → Download `/etc` → toast báo skipped, mirror **không** có `etc/.git`;
+    palette nhập `/etc/.git` → lỗi "Git metadata (`.git`) is not synced".
+19. Máy không có `git` (hoặc tạm đổi PATH) → download/upload vẫn thành công, không có baseline, không báo lỗi.
+
 ---
 
 ## 6. Rủi ro đã biết
@@ -541,6 +611,8 @@ Upload:
 - [x] ⛔ CHECKPOINT B (user) — user xác nhận đã test upload (2026-09-25)
 - [x] 5.1 Phát hiện xung đột remote · [x] 5.2 Modal nhập path · [x] 5.3 Trang Settings · [x] 5.4 Compare with remote (diff)
   (Phạm vi Phase 5 do user chọn: 4 mục trên; xong 2026-09-25, chờ user test tay. Các mục còn lại — symlink, lan truyền xoá, streaming qua daemon, hover — không làm.)
+- [x] 6.1 Mở mirror bằng VS Code · [x] 6.2 Git baseline trong mirror · [x] 6.3 Compare bằng `code --diff` · 6.4 Live sync — chỉ ghi chú, chưa làm
+  (Xong 2026-09-25, chờ user test tay mục 13–19 ở mục 5.)
 
 ### Quyết định
 
@@ -557,6 +629,9 @@ Upload:
 | D9 | 2026-09-24 | Manifest ghi dưới `MANIFEST_LOCK` (đọc-sửa-ghi); `save` lỗi thì hoàn tác swap | Hai sync path không lồng nhau trên cùng host từng có thể mất entry của nhau; lỗi lưu manifest từng làm mất mirror cũ |
 | D10 | 2026-09-24 | Mirror root tạo mode 0700; bản local bỏ bit group/other-write và setuid/setgid/sticky | Mirror chứa bản sao file của root; thư mục 1777 từng thành 0777 ở local |
 | D11 | 2026-09-25 | Định danh host = hostname + `machine-id` của server (probe đọc `/etc/machine-id`, fallback dbus). Thư mục mirror giữ tên hostname cho máy đầu tiên dùng nó; máy khác trùng tên dùng `<host>-<hash machine-id>`. Manifest lưu `machine_id`; upload chỉ dùng mirror khớp machine-id (không thì `NotMirrored`); dialog upload hiện đuôi machine-id | Hostname do host tự báo nên hai server trùng tên từng dùng chung mirror → có thể upload nội dung của A lên B. Host không có machine-id vẫn dùng tên thường (không bảo vệ được). VM clone từ cùng image có thể trùng machine-id |
+| D12 | 2026-09-25 | Editor ngoài = setting có sẵn "Choose an editor to open file links", chỉ họ VS Code (`code`/`code-insiders`/`cursor`/`windsurf`); không thêm setting | Cần CLI có `--diff`; tránh thêm setting + mục palette bật/tắt; người dùng editor khác giữ hành vi cũ |
+| D13 | 2026-09-25 | Baseline = git repo ở thư mục host, HEAD = trạng thái server lần sync cuối; không có git → bỏ qua; lỗi git chỉ là cảnh báo trong toast | Source Control của VS Code cho diff native, nhiều file, không cần viết UI; baseline là phụ, không được làm hỏng sync |
+| D14 | 2026-09-25 | Không mirror Git metadata: bỏ mọi thành phần mà một filesystem nào đó hiểu là `.git` (không phân biệt hoa/thường, NTFS `.git.`/`GIT~1`/`::$stream`, ký tự HFS+ bỏ qua); `info/attributes` vô hiệu hoá filter/diff/merge/text; repo `sharedRepository=0600` | Security review: `.GIT` trên macOS/Windows sẽ thành `.git` thật do server điều khiển → VS Code chạy hook/config của server; `.gitattributes` của server có thể gọi filter driver trong config của user |
 
 ### Nhật ký
 
@@ -576,3 +651,4 @@ Upload:
 - 2026-09-25 — 5.3 xong: nhóm settings `WarpSyncSettings` (`app/src/settings/warp_sync.rs`, chỉ đăng ký khi `FeatureFlag::WarpSync` bật, `SyncToCloud::Never`): `warp_sync.mirror_root` (rỗng = `~/.warp/mirrors`; hỗ trợ `~/`; phải tuyệt đối), `warp_sync.max_download_mib` (mặc định 32, tối đa 128), `warp_sync.max_upload_mib` (mặc định 4, tối đa 16). Hằng `MAX_DOWNLOAD_KIB`/`MAX_UPLOAD_BYTES` được thay bằng `SyncLimits` (`warp_sync/config.rs`) truyền qua `DownloadRequest`/`UploadRequest`/`build_upload`; `SyncConfig::from_settings` đọc setting ở `WarpSyncModel::begin` và ở `warp_sync_open_mirror`. `paths::mirror_root()` bị xoá; `host_mirror_dir` nhận `mirror_root`. Trang Settings `SettingsSection::WarpSync` ("Warp Sync", ẩn khi flag tắt; nav chèn trước Shared blocks) có 3 ô nhập, commit khi Enter/blur, giá trị không hợp lệ thì hoàn về giá trị đang lưu. Đổi mirror folder **không** di chuyển mirror cũ (ghi trong mô tả). Không thêm mục Command Palette bật/tắt vì đây không phải setting dạng toggle. 288 test warp_sync/settings + 563 test gồm settings_view pass.
 - 2026-09-25 — 5.4 xong: `transfer::compare` tải bản mới của path vào staging (không đụng mirror/manifest), rồi `diff::compare_trees` so với mirror theo sha256 và gán nhãn theo manifest (`ChangedLocally` / `ChangedOnServer` / `ChangedOnBoth` / `NewOnServer` / `DeletedLocally` / `NewLocally` / `DeletedOnServer`; không có baseline → `ChangedUnknown`). Diff unified (crate `similar`, timeout 2 s/file; file > 1 MiB hoặc nhị phân chỉ liệt kê; cắt ở 8 MiB) ghi ra `<mirror_root>/.warp-sync/diffs/<host_key>/<path>.diff` (0600, ngoài mirror để không bị nhầm là file đã sync). `-` là server, `+` là mirror local. UI: dialog kết quả dùng lại `WarpSyncConfirmDialog` (`ConfirmKind::CompareResult`, nút "Open diff" mở file bằng code editor của Warp, nút Đóng; nút không đỏ vì không phá dữ liệu); không có khác biệt → toast thành công. Vào từ context menu "Warp Sync: Compare with local mirror" và palette `workspace:warp_sync_compare_cwd` / `workspace:warp_sync_compare_path` (prompt nhập path). `ConfirmRequest.id` được thay bằng `ConfirmKind { OverwriteLocalChanges{id}, Upload{id}, CompareResult{diff_path} }`. Compare yêu cầu path đã được download (không thì `NotMirrored`). 1043 test (warp_sync + settings_view + workspace + terminal::view) pass; clippy `-D warnings` sạch.
 - 2026-09-25 — Phase 5 review (`code-reviewer` + `security-reviewer`), đã sửa: mirror folder không được là `/`, `$HOME` hay thư mục cha của `$HOME` (host từ xa chọn tên thư mục con nên mirror root chung với dữ liệu user có thể bị thay); sentinel `no_hash_tool` chỉ nhận khi là **toàn bộ** output (tên file không giả được); tên file có ký tự điều khiển được escape (`printable`) trong dialog và file diff; `Timeout` của lệnh hash → `RemoteCheck::Unavailable` thay vì chặn upload; header report dùng hostname thật (`CompareRequest.hostname`); kết quả compare **không thay** dialog đang mở (tránh huỷ ngầm một upload đang chờ xác nhận) mà hiện toast kèm đường dẫn diff; lỗi trong path prompt tự xoá khi sửa; tham số `app`→`ctx`. Chưa sửa (ghi nhận): trang Settings hoàn giá trị không hợp lệ mà không báo lý do; file diff của các path khác nhau có thể trùng tên sau khi sanitize (ghi đè nhau); dòng hash của tên file có `\`/newline bị coi là "missing" (cảnh báo giả, hiếm); diff cũ còn lại khi lần compare sau không có khác biệt; mirror root có sẵn không bị kiểm quyền sở hữu/mode. 1152 test pass (một test `cloud_preferences_syncer` từng fail 1 lần do timing, chạy lại pass), clippy sạch, `./script/format` đã chạy.
+- 2026-09-25 — Phase 6.1–6.3 xong (6.4 chỉ ghi chú). `warp_sync/editor.rs` (`EditorCli`, `EditorRequest`, `invocations`, `launch`; CLI chạy trên background qua `WarpSyncModel::open_in_editor`, lỗi → toast `Editor`/`NoEditor`); toast download có link "Open in <editor>" (`MirrorLocation { host_dir, local_path, is_file }`); palette `workspace:warp_sync_open_mirror_in_editor`. `warp_sync/baseline.rs`: repo git ở `<mirror_root>/<host_key>`; download commit `--only` cả path (gồm file server đã xoá); upload chỉ commit file đã upload và có đổi (`git status` ∩ file trong archive, vì `status` không nhận danh sách file từ stdin); pathspec qua `--pathspec-from-file` NUL + `--literal-pathspecs`; hook/fsmonitor/ký commit bị tắt bằng `-c` trên dòng lệnh; bỏ env `GIT_*`; `configure()` chạy lại mỗi lần sync (tự sửa khi setup bị ngắt); khoá `BASELINE_LOCK`. Cần git ≥ 2.26. Compare giữ bản server ở `.warp-sync/compare/<host_key>/…` (file 0400); dialog "Open in <editor>" → tối đa `MAX_EDITOR_DIFFS` tab `code -r --diff` + report khi còn khác biệt chưa hiện; không còn khác biệt → xoá report và bản copy cũ (sửa nit "diff cũ còn lại" của Phase 5). Review (`code-reviewer` + `security-reviewer`), đã sửa: tên kiểu `.GIT` lọt qua trên filesystem không phân biệt hoa/thường (CRITICAL, xem D14), `.gitattributes` gọi filter driver (HIGH), git objects chưa 0600, setup repo bị ngắt không tự sửa, `stat()` trên UI thread. Chưa sửa (ghi nhận): các lệnh `code -r --diff` chạy nối tiếp có thể mở cửa sổ mới thay vì cửa sổ workspace khi VS Code chưa chạy (chưa kiểm chứng — mục 16 checklist); manifest cũ có mục `.git` (tải trước Phase 6) sẽ hiện trong "Missing from the local mirror" tới lần download lại. Test: warp_sync + workspace pass (474), clippy `-D warnings` sạch, `./script/format` đã chạy.

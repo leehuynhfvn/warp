@@ -41,6 +41,19 @@ pub enum FileChange {
 }
 
 impl FileChange {
+    /// Whether both the server and the local mirror have the file.
+    pub fn is_on_both_sides(self) -> bool {
+        match self {
+            Self::ChangedLocally
+            | Self::ChangedOnServer
+            | Self::ChangedOnBoth
+            | Self::ChangedUnknown => true,
+            Self::NewOnServer | Self::DeletedLocally | Self::NewLocally | Self::DeletedOnServer => {
+                false
+            }
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::ChangedLocally => "changed locally",

@@ -7,6 +7,7 @@ use warpui::{AppContext, Entity, ModelContext, SingletonEntity, WindowId};
 use super::WarpSyncError;
 use super::config::{SyncConfig, SyncLimits};
 use super::diff::FileDifference;
+use super::editor::{EditorCli, EditorRequest, MAX_EDITOR_DIFFS, launch};
 use super::paths::{host_key, printable};
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
@@ -63,9 +64,43 @@ pub struct CompareSummary {
     pub identical_files: usize,
     /// The written comparison.
     pub diff_path: PathBuf,
+    /// The mirror of the whole host.
+    pub host_dir: PathBuf,
+    /// Where the server's copy is kept, laid out like `host_dir`.
+    pub server_copy_dir: PathBuf,
 }
 
 impl CompareSummary {
+    /// Opens the files that both sides have side by side, server first. The written comparison is
+    /// opened too when some differences cannot be shown that way.
+    pub fn editor_request(&self) -> EditorRequest {
+        let (on_both_sides, on_one_side): (Vec<&FileDifference>, Vec<&FileDifference>) = self
+            .differences
+            .iter()
+            .partition(|difference| difference.change.is_on_both_sides());
+        let diffs = on_both_sides
+            .iter()
+            .take(MAX_EDITOR_DIFFS)
+            .map(|difference| {
+                let relative = difference.remote_path.trim_start_matches('/');
+                (
+                    self.server_copy_dir.join(relative),
+                    self.host_dir.join(relative),
+                )
+            })
+            .collect();
+        let shows_everything = on_one_side.is_empty() && on_both_sides.len() <= MAX_EDITOR_DIFFS;
+        EditorRequest::OpenDiffs {
+            workspace: self.host_dir.clone(),
+            diffs,
+            files: if shows_everything {
+                Vec::new()
+            } else {
+                vec![self.diff_path.clone()]
+            },
+        }
+    }
+
     /// One line that says where the comparison ended up, for when the summary cannot be shown in
     /// a dialog.
     pub fn announcement(&self) -> String {
@@ -76,6 +111,14 @@ impl CompareSummary {
             self.diff_path.display()
         )
     }
+}
+
+/// A path in the local mirror together with the mirror of its whole host.
+#[derive(Debug, Clone)]
+pub struct MirrorLocation {
+    pub host_dir: PathBuf,
+    pub local_path: PathBuf,
+    pub is_file: bool,
 }
 
 /// Progress of Warp Sync operations. Every event names the window that started the operation, so
@@ -103,7 +146,8 @@ pub enum WarpSyncEvent {
     Succeeded {
         window_id: WindowId,
         message: String,
-        open_path: Option<PathBuf>,
+        /// Where the result can be opened.
+        location: Option<MirrorLocation>,
     },
     Failed {
         window_id: WindowId,
@@ -305,9 +349,32 @@ impl WarpSyncModel {
                     Ok(outcome) => ctx.emit(WarpSyncEvent::Succeeded {
                         window_id,
                         message: upload_message(&remote_path, &outcome),
-                        open_path: None,
+                        location: None,
                     }),
                     Err(error) => ctx.emit(WarpSyncEvent::Failed { window_id, error }),
+                }
+            },
+        );
+    }
+
+    /// Opens `request` in the editor chosen for opening file links.
+    pub fn open_in_editor(
+        &mut self,
+        request: EditorRequest,
+        window_id: WindowId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(cli) = EditorCli::from_settings(ctx) else {
+            return ctx.emit(WarpSyncEvent::Failed {
+                window_id,
+                error: WarpSyncError::NoEditor,
+            });
+        };
+        ctx.spawn(
+            async move { launch(cli, &request) },
+            move |_, launched, ctx| {
+                if let Err(error) = launched {
+                    ctx.emit(WarpSyncEvent::Failed { window_id, error });
                 }
             },
         );
@@ -401,7 +468,11 @@ impl WarpSyncModel {
                     ctx.emit(WarpSyncEvent::Succeeded {
                         window_id,
                         message: download_message(&request.remote_path, &outcome),
-                        open_path: Some(outcome.local_path),
+                        location: Some(MirrorLocation {
+                            host_dir: outcome.host_dir,
+                            local_path: outcome.local_path,
+                            is_file: outcome.is_file,
+                        }),
                     });
                 }
                 Ok(DownloadResult::NeedsConfirmation { modified_files }) => {
@@ -494,7 +565,7 @@ fn compare_event(
                 "No differences: {remote_path} matches the local mirror ({})",
                 pluralize_count(outcome.identical_files, "file")
             ),
-            open_path: None,
+            location: None,
         };
     };
     WarpSyncEvent::CompareFinished {
@@ -506,6 +577,8 @@ fn compare_event(
             differences: outcome.differences,
             identical_files: outcome.identical_files,
             diff_path,
+            host_dir: outcome.host_dir,
+            server_copy_dir: outcome.server_copy_dir,
         }),
     }
 }
@@ -520,10 +593,11 @@ fn download_message(remote_path: &str, outcome: &DownloadOutcome) -> String {
     );
     if !outcome.skipped.is_empty() {
         message.push_str(&format!(
-            ". Skipped {} link(s) and special file(s)",
+            ". Skipped {} link(s), special file(s) or .git folder(s)",
             outcome.skipped.len()
         ));
     }
+    append_baseline_warning(&mut message, outcome.baseline_warning.as_deref());
     message
 }
 
@@ -538,7 +612,14 @@ fn upload_message(remote_path: &str, outcome: &UploadOutcome) -> String {
     if let Some(backup_path) = &outcome.backup_path {
         message.push_str(&format!(". Previous version saved to {backup_path}"));
     }
+    append_baseline_warning(&mut message, outcome.baseline_warning.as_deref());
     message
+}
+
+fn append_baseline_warning(message: &mut String, warning: Option<&str>) {
+    if let Some(warning) = warning {
+        message.push_str(&format!(". {warning}"));
+    }
 }
 
 pub(super) fn pluralize_count(count: usize, noun: &str) -> String {

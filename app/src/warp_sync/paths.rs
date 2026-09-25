@@ -12,8 +12,14 @@ const STATE_DIR_NAME: &str = ".warp-sync";
 const STAGING_DIR_NAME: &str = "staging";
 const RECOVERY_DIR_NAME: &str = "recovered";
 const DIFFS_DIR_NAME: &str = "diffs";
+const COMPARE_DIR_NAME: &str = "compare";
 const MAX_DIFF_STEM_CHARS: usize = 150;
 const HOST_KEY_HASH_BYTES: usize = 4;
+
+/// Git metadata is never mirrored: the root of a host's mirror holds the Git baseline, and a
+/// server's own repository configuration could make a local `git` run programs.
+pub const GIT_DIR_NAME: &str = ".git";
+const GIT_DIR_SHORT_NAME: &str = "git~1";
 
 /// Top-level directories that hold kernel or runtime state rather than files worth mirroring.
 const PSEUDO_FS_ROOTS: [&str; 4] = ["proc", "sys", "dev", "run"];
@@ -70,6 +76,36 @@ pub fn diff_path(mirror_root: &Path, host_key: &str, remote_path: &str) -> PathB
         .join(format!("{stem}.diff"))
 }
 
+/// Where the server's copy from the latest comparison of each path on the host with `host_key` is
+/// kept, laid out like the mirror of that host.
+pub fn compare_dir(mirror_root: &Path, host_key: &str) -> PathBuf {
+    mirror_root
+        .join(STATE_DIR_NAME)
+        .join(COMPARE_DIR_NAME)
+        .join(host_key)
+}
+
+/// Whether some filesystem resolves `name` to `.git`: case-insensitive volumes, NTFS (trailing dots
+/// and spaces, alternate data streams, the `GIT~1` short name) and HFS+ (ignored code points) all
+/// do for names that differ from it.
+pub fn is_git_metadata_name(name: &str) -> bool {
+    let without_stream = name.split(':').next().unwrap_or_default();
+    let visible: String = without_stream
+        .chars()
+        .filter(|c| !is_hfs_ignorable(*c))
+        .collect();
+    let folded = visible.trim_end_matches(['.', ' ']).to_lowercase();
+    folded == GIT_DIR_NAME || folded == GIT_DIR_SHORT_NAME
+}
+
+/// Code points that HFS+ leaves out when comparing names.
+fn is_hfs_ignorable(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}'
+    )
+}
+
 /// `text` with control characters escaped, so that a remote file name cannot add lines to
 /// something shown to the user.
 pub fn printable(text: &str) -> String {
@@ -120,6 +156,9 @@ pub fn normalize_remote_path(input: &str, pwd: Option<&str>) -> Result<String, W
         match component {
             "" | "." => {}
             ".." => return Err(invalid("`..` is not supported")),
+            component if is_git_metadata_name(component) => {
+                return Err(invalid("Git metadata (`.git`) is not synced"));
+            }
             component => components.push(component),
         }
     }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use super::super::archive::UploadArchive;
+use super::super::diff::FileChange;
 use super::super::remote_script::{ProbeResult, ProbeStatus, RemoteKind, TarFlavor};
 use super::*;
 
@@ -206,6 +207,7 @@ fn upload_outcome(backup_path: Option<&str>) -> UploadOutcome {
         content_bytes: 2048,
         backup_path: backup_path.map(str::to_owned),
         remote_user: "root".to_owned(),
+        baseline_warning: None,
     }
 }
 
@@ -220,6 +222,21 @@ fn the_upload_message_reports_the_remote_user_and_the_backup() {
         message,
         "Uploaded 1 file and 2 folders (2.0 KiB) to /etc/nginx as root. \
          Previous version saved to /root/.warp-sync/b.tgz"
+    );
+}
+
+#[test]
+fn the_upload_message_mentions_a_baseline_that_could_not_be_recorded() {
+    let outcome = UploadOutcome {
+        baseline_warning: Some("Could not record the Git baseline: boom".to_owned()),
+        ..upload_outcome(None)
+    };
+
+    let message = upload_message("/etc/nginx", &outcome);
+
+    assert!(
+        message.ends_with(". Could not record the Git baseline: boom"),
+        "{message}"
     );
 }
 
@@ -241,6 +258,8 @@ fn compare_outcome(diff_path: Option<PathBuf>, differences: usize) -> CompareOut
         identical_files: 3,
         diff_path,
         remote_user: "root".to_owned(),
+        host_dir: PathBuf::from("/m/h"),
+        server_copy_dir: PathBuf::from("/m/.warp-sync/compare/h"),
     }
 }
 
@@ -254,7 +273,7 @@ fn a_comparison_without_differences_is_reported_as_a_success() {
     );
 
     let WarpSyncEvent::Succeeded {
-        message, open_path, ..
+        message, location, ..
     } = event
     else {
         panic!("expected a success, got {event:?}");
@@ -263,7 +282,7 @@ fn a_comparison_without_differences_is_reported_as_a_success() {
         message,
         "No differences: /etc matches the local mirror (3 files)"
     );
-    assert_eq!(open_path, None);
+    assert!(location.is_none());
 }
 
 #[test]
@@ -302,4 +321,69 @@ fn the_announcement_names_the_path_and_the_diff_file() {
         summary.announcement(),
         "Compared /etc: 1 difference. The diff is saved at /m/etc.diff"
     );
+}
+
+fn summary_with(changes: &[FileChange]) -> CompareSummary {
+    CompareSummary {
+        remote_user: "root".to_owned(),
+        hostname: "prod-1".to_owned(),
+        remote_path: "/etc".to_owned(),
+        differences: changes
+            .iter()
+            .enumerate()
+            .map(|(i, change)| FileDifference {
+                remote_path: format!("/etc/f{i}"),
+                change: *change,
+            })
+            .collect(),
+        identical_files: 0,
+        diff_path: PathBuf::from("/m/.warp-sync/diffs/h/etc.diff"),
+        host_dir: PathBuf::from("/m/h"),
+        server_copy_dir: PathBuf::from("/m/.warp-sync/compare/h"),
+    }
+}
+
+#[test]
+fn the_editor_shows_files_on_both_sides_next_to_each_other() {
+    let summary = summary_with(&[FileChange::ChangedLocally, FileChange::ChangedOnServer]);
+
+    assert_eq!(
+        summary.editor_request(),
+        EditorRequest::OpenDiffs {
+            workspace: PathBuf::from("/m/h"),
+            diffs: vec![
+                (
+                    PathBuf::from("/m/.warp-sync/compare/h/etc/f0"),
+                    PathBuf::from("/m/h/etc/f0")
+                ),
+                (
+                    PathBuf::from("/m/.warp-sync/compare/h/etc/f1"),
+                    PathBuf::from("/m/h/etc/f1")
+                ),
+            ],
+            files: Vec::new(),
+        }
+    );
+}
+
+#[test]
+fn the_editor_also_gets_the_report_for_files_on_one_side() {
+    let summary = summary_with(&[FileChange::NewLocally, FileChange::ChangedOnBoth]);
+
+    let EditorRequest::OpenDiffs { diffs, files, .. } = summary.editor_request() else {
+        panic!("expected diffs");
+    };
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(files, [PathBuf::from("/m/.warp-sync/diffs/h/etc.diff")]);
+}
+
+#[test]
+fn the_editor_opens_a_bounded_number_of_diffs() {
+    let summary = summary_with(&[FileChange::ChangedUnknown; MAX_EDITOR_DIFFS + 1]);
+
+    let EditorRequest::OpenDiffs { diffs, files, .. } = summary.editor_request() else {
+        panic!("expected diffs");
+    };
+    assert_eq!(diffs.len(), MAX_EDITOR_DIFFS);
+    assert_eq!(files.len(), 1);
 }

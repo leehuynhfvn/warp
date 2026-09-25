@@ -326,3 +326,40 @@ fn printable_escapes_control_characters_only() {
     assert_eq!(printable("a\nb\tc\u{1b}[0m"), "a\\nb\\tc\\u{1b}[0m");
     assert_eq!(printable("héllo wörld/'x'"), "héllo wörld/'x'");
 }
+
+#[test]
+fn git_metadata_cannot_be_synced() {
+    for input in ["/.git", "/srv/repo/.git", "/srv/repo/.git/config"] {
+        assert!(
+            matches!(
+                normalize_remote_path(input, None),
+                Err(WarpSyncError::InvalidPath(_))
+            ),
+            "{input}"
+        );
+    }
+    assert_eq!(
+        normalize_remote_path("/etc/.gitignore", None).unwrap(),
+        "/etc/.gitignore"
+    );
+}
+
+#[test]
+fn names_that_some_filesystem_resolves_to_git_metadata_are_recognized() {
+    for name in [
+        ".git",
+        ".GIT",
+        ".Git",
+        ".git.",
+        ".git ",
+        ".git::$INDEX_ALLOCATION",
+        "GIT~1",
+        ".g\u{200c}it",
+        ".git\u{feff}",
+    ] {
+        assert!(is_git_metadata_name(name), "{name:?}");
+    }
+    for name in [".gitignore", ".gitattributes", "git", ".github", "a.git"] {
+        assert!(!is_git_metadata_name(name), "{name:?}");
+    }
+}
