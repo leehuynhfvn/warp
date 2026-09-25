@@ -7,8 +7,10 @@ use local_control::protocol::{
     SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
     TabCreateParams, TextParams, ThemeNameParams,
 };
+use local_control::client::DEFAULT_REQUEST_TIMEOUT;
 use local_control::selection::select_instance;
 use serde::Serialize;
+use std::time::Duration;
 use warp_core::channel::ChannelState;
 
 use crate::agent::OutputFormat;
@@ -772,19 +774,7 @@ fn run_action_with_params<T: Serialize>(
     params: T,
     output_format: OutputFormat,
 ) -> Result<(), ControlError> {
-    let selector = instance_selector(&args);
-    let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
-    let target = target_selector(&args)?;
-    let instance = select_instance(&records, &selector)?;
-    let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
-    request.target = target;
-    let response = local_control::client::send_request(&instance, &request)?;
-    let local_control::protocol::ControlResponse::Ok { data } = response.response else {
-        return Err(ControlError::new(
-            ErrorCode::Internal,
-            "local-control request failed without an error payload",
-        ));
-    };
+    let data = send_action(&args, action, params, DEFAULT_REQUEST_TIMEOUT)?;
     match output_format {
         OutputFormat::Json => write_json(&data),
         OutputFormat::Ndjson => write_json_line(&data),
@@ -792,6 +782,30 @@ fn run_action_with_params<T: Serialize>(
             println!("{}", render_human_readable(action, &data));
             Ok(())
         }
+    }
+}
+
+/// Sends one action to the selected Warp instance and returns its data, waiting up to `timeout`
+/// for the answer.
+pub(super) fn send_action<T: Serialize>(
+    args: &TargetArgs,
+    action: ActionKind,
+    params: T,
+    timeout: Duration,
+) -> Result<serde_json::Value, ControlError> {
+    let selector = instance_selector(args);
+    let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
+    let target = target_selector(args)?;
+    let instance = select_instance(&records, &selector)?;
+    let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
+    request.target = target;
+    let response = local_control::client::send_request_with_timeout(&instance, &request, timeout)?;
+    match response.response {
+        local_control::protocol::ControlResponse::Ok { data } => Ok(data),
+        local_control::protocol::ControlResponse::Error { .. } => Err(ControlError::new(
+            ErrorCode::Internal,
+            "local-control request failed without an error payload",
+        )),
     }
 }
 

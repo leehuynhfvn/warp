@@ -1,7 +1,11 @@
 use std::collections::HashSet;
 
 use clap_complete::aot::Shell;
-use local_control::protocol::{ActionKind, ControlError, ErrorCode};
+use local_control::protocol::{
+    ActionKind, ControlError, ErrorCode, SyncChange, SyncConfirmation, SyncDifference,
+    SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary, SyncSkippedEntry,
+    SyncUploadSummary,
+};
 use serde_json::json;
 
 use super::*;
@@ -581,6 +585,37 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             ActionKind::FileOpen,
             vec!["warpctrl", "file", "open", "/tmp/example.txt"],
         ),
+        (ActionKind::SyncStatus, vec!["warpctrl", "sync", "status"]),
+        (
+            ActionKind::SyncDownload,
+            vec!["warpctrl", "sync", "download", "/tmp/m/prod-1/etc"],
+        ),
+        (
+            ActionKind::SyncUploadPrepare,
+            vec!["warpctrl", "sync", "upload", "/tmp/m/prod-1/etc"],
+        ),
+        (
+            ActionKind::SyncConfirm,
+            vec![
+                "warpctrl",
+                "sync",
+                "confirm",
+                "67e55044-10b1-426f-9247-bb680e5fe0c8",
+            ],
+        ),
+        (
+            ActionKind::SyncCancel,
+            vec![
+                "warpctrl",
+                "sync",
+                "cancel",
+                "67e55044-10b1-426f-9247-bb680e5fe0c8",
+            ],
+        ),
+        (
+            ActionKind::SyncCompare,
+            vec!["warpctrl", "sync", "compare", "/tmp/m/prod-1/etc"],
+        ),
     ]
 }
 
@@ -734,6 +769,305 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
                 SurfaceOpenCommand::Open(_) => Some(ActionKind::SurfaceAgentManagementOpen),
             },
         },
+        ControlCommand::Sync(command) => match command {
+            SyncCommand::Status(_) => Some(ActionKind::SyncStatus),
+            SyncCommand::Download(_) => Some(ActionKind::SyncDownload),
+            SyncCommand::Upload(_) => Some(ActionKind::SyncUploadPrepare),
+            SyncCommand::Confirm(_) => Some(ActionKind::SyncConfirm),
+            SyncCommand::Cancel(_) => Some(ActionKind::SyncCancel),
+            SyncCommand::Compare(_) => Some(ActionKind::SyncCompare),
+        },
         ControlCommand::Completions { .. } => None,
     }
+}
+
+const PENDING_ID: &str = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+
+#[test]
+fn sync_commands_take_a_path_and_the_usual_session_selector() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl",
+        "sync",
+        "download",
+        "/tmp/m/prod-1/etc",
+        "--session",
+        "session_1",
+        "--instance",
+        "inst_123",
+    ])
+    .expect("sync download parses");
+    let ControlCommand::Sync(SyncCommand::Download(args)) = args.command else {
+        panic!("expected sync download");
+    };
+    assert_eq!(args.path, "/tmp/m/prod-1/etc");
+    assert_eq!(args.target.session.as_deref(), Some("session_1"));
+    assert_eq!(args.target.instance.as_deref(), Some("inst_123"));
+
+    for subcommand in ["upload", "compare"] {
+        assert!(
+            ControlArgs::try_parse_from(["warpctrl", "sync", subcommand]).is_err(),
+            "{subcommand} needs a path"
+        );
+    }
+}
+
+#[test]
+fn sync_status_works_with_and_without_a_path() {
+    let args = ControlArgs::try_parse_from(["warpctrl", "sync", "status"]).expect("status parses");
+    let ControlCommand::Sync(SyncCommand::Status(args)) = args.command else {
+        panic!("expected sync status");
+    };
+    assert!(args.path.is_none());
+
+    let args = ControlArgs::try_parse_from(["warpctrl", "sync", "status", "/tmp/m/prod-1"])
+        .expect("status with a path parses");
+    let ControlCommand::Sync(SyncCommand::Status(args)) = args.command else {
+        panic!("expected sync status");
+    };
+    assert_eq!(args.path.as_deref(), Some("/tmp/m/prod-1"));
+}
+
+#[test]
+fn sync_confirm_and_cancel_take_a_pending_id_and_only_instance_selectors() {
+    for subcommand in ["confirm", "cancel"] {
+        let args = ControlArgs::try_parse_from([
+            "warpctrl", "sync", subcommand, PENDING_ID, "--pid", "42",
+        ])
+        .expect("pending command parses");
+        let (ControlCommand::Sync(SyncCommand::Confirm(args))
+        | ControlCommand::Sync(SyncCommand::Cancel(args))) = args.command
+        else {
+            panic!("expected confirm or cancel");
+        };
+        assert_eq!(args.pending_id.to_string(), PENDING_ID);
+        assert_eq!(args.pid, Some(42));
+
+        assert!(
+            ControlArgs::try_parse_from(["warpctrl", "sync", subcommand, "7"]).is_err(),
+            "{subcommand} needs a UUID"
+        );
+        assert!(
+            ControlArgs::try_parse_from(["warpctrl", "sync", subcommand, PENDING_ID, "--session", "s"])
+                .is_err(),
+            "{subcommand} has no session selector"
+        );
+        assert!(
+            ControlArgs::try_parse_from([
+                "warpctrl", "sync", subcommand, PENDING_ID, "--instance", "i", "--pid", "1",
+            ])
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn only_a_confirmation_request_exits_with_the_needs_confirmation_code() {
+    let pending = serde_json::to_value(SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::OverwriteLocalChanges {
+            files: vec!["/etc/a".to_owned()],
+        },
+    })
+    .expect("result serializes");
+    let done = serde_json::to_value(SyncResult::Cancelled).expect("result serializes");
+
+    assert_eq!(sync::exit_code(&pending), EXIT_NEEDS_CONFIRMATION);
+    assert_eq!(EXIT_NEEDS_CONFIRMATION, 3);
+    assert_eq!(sync::exit_code(&done), EXIT_SUCCESS);
+    assert_eq!(sync::exit_code(&json!({ "unexpected": true })), EXIT_SUCCESS);
+}
+
+#[test]
+fn relative_paths_are_made_absolute_and_absolute_paths_are_kept() {
+    let cwd = std::env::current_dir().expect("working directory");
+
+    assert_eq!(
+        sync::absolute_path("etc/nginx").expect("relative path"),
+        cwd.join("etc/nginx").to_string_lossy()
+    );
+    assert_eq!(
+        sync::absolute_path("/tmp/m/prod-1/etc").expect("absolute path"),
+        "/tmp/m/prod-1/etc"
+    );
+}
+
+fn upload_summary(remote_conflicts: Option<SyncRemoteConflicts>) -> SyncUploadSummary {
+    SyncUploadSummary {
+        remote_user: "root".to_owned(),
+        hostname: "prod-1".to_owned(),
+        remote_path: "/etc/nginx".to_owned(),
+        files: 2,
+        dirs: 1,
+        bytes: 3072,
+        new_files: vec!["/etc/nginx/new.conf".to_owned()],
+        missing_locally: vec!["/etc/nginx/old.conf".to_owned()],
+        remote_conflicts,
+        ownership_may_be_incomplete: true,
+        server_id_tail: Some("cdef".to_owned()),
+    }
+}
+
+#[test]
+fn an_upload_confirmation_shows_everything_the_user_must_weigh_and_how_to_answer() {
+    let pending_id = uuid::Uuid::parse_str(PENDING_ID).expect("uuid");
+    let text = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id,
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(upload_summary(Some(SyncRemoteConflicts {
+                changed: vec!["/etc/nginx/nginx.conf".to_owned()],
+                missing: vec!["/etc/nginx/gone.conf".to_owned()],
+                already_exist: vec!["/etc/nginx/new.conf".to_owned()],
+            }))),
+        },
+    });
+
+    for expected in [
+        "Upload /etc/nginx to root@prod-1 (machine id ending cdef): 2 files and 1 folder (3.0 KiB)",
+        "/etc/nginx/new.conf",
+        "will not be deleted on the server",
+        "/etc/nginx/old.conf",
+        "changed on the server since the last sync",
+        "/etc/nginx/nginx.conf",
+        "gone from the server",
+        "already on the server",
+        "not GNU tar",
+        &format!("warpctrl sync confirm {PENDING_ID}"),
+        &format!("warpctrl sync cancel {PENDING_ID}"),
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+}
+
+#[test]
+fn an_upload_to_a_host_that_could_not_be_checked_says_so() {
+    let text = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(upload_summary(None)),
+        },
+    });
+
+    assert!(text.contains("could not be checked for changes"), "{text}");
+}
+
+#[test]
+fn long_lists_are_cut_after_ten_paths() {
+    let files: Vec<String> = (0..13).map(|i| format!("/etc/f{i}")).collect();
+
+    let text = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::OverwriteLocalChanges { files },
+    });
+
+    assert!(text.contains("13 files"), "{text}");
+    assert!(text.contains("/etc/f9") && !text.contains("/etc/f10"), "{text}");
+    assert!(text.contains("... and 3 more"), "{text}");
+}
+
+#[test]
+fn results_read_as_one_short_report_each() {
+    let status = sync::render_sync_result(&SyncResult::Status {
+        mirror_root: "/m".to_owned(),
+        path: Some(SyncPathStatus {
+            host_key: "prod-1".to_owned(),
+            remote_path: Some("/etc".to_owned()),
+            sessions: vec![SyncSessionSummary {
+                session_id: "s1".to_owned(),
+                window_id: "w1".to_owned(),
+                tab_index: 1,
+                hostname: "prod-1".to_owned(),
+                user: "root".to_owned(),
+                is_active: true,
+            }],
+        }),
+    });
+    assert_eq!(
+        status,
+        "Mirror folder: /m\nHost folder: prod-1\nRemote path: /etc\nSessions:\n  \
+         root@prod-1: session s1 (window w1, tab 2), active"
+    );
+
+    let no_session = sync::render_sync_result(&SyncResult::Status {
+        mirror_root: "/m".to_owned(),
+        path: Some(SyncPathStatus {
+            host_key: "prod-1".to_owned(),
+            remote_path: None,
+            sessions: Vec::new(),
+        }),
+    });
+    assert!(no_session.contains("No open Warp session is connected to this host."));
+
+    assert_eq!(
+        sync::render_sync_result(&SyncResult::Downloaded {
+            local_path: "/m/prod-1/etc".to_owned(),
+            files: 1,
+            dirs: 2,
+            bytes: 512,
+            remote_user: "root".to_owned(),
+            skipped: vec![SyncSkippedEntry {
+                path: "/etc/link".to_owned(),
+                reason: "symbolic link".to_owned(),
+            }],
+            baseline_warning: None,
+        }),
+        "Downloaded 1 file and 2 folders (512 B) as root to /m/prod-1/etc\n  skipped /etc/link \
+         (symbolic link)"
+    );
+    assert_eq!(
+        sync::render_sync_result(&SyncResult::Uploaded {
+            files: 1,
+            dirs: 0,
+            bytes: 2 * 1024 * 1024,
+            remote_user: "root".to_owned(),
+            backup_path: Some("/root/.warp-sync/backups/b.tgz".to_owned()),
+            baseline_warning: None,
+        }),
+        "Uploaded 1 file and 0 folders (2.0 MiB) as root\nPrevious version saved to \
+         /root/.warp-sync/backups/b.tgz"
+    );
+    assert_eq!(
+        sync::render_sync_result(&SyncResult::Unchanged { identical_files: 1 }),
+        "No differences: the mirror matches the server (1 file)"
+    );
+    assert_eq!(
+        sync::render_sync_result(&SyncResult::Cancelled),
+        "Cancelled. Nothing was changed."
+    );
+}
+
+#[test]
+fn a_comparison_lists_each_difference_with_what_changed() {
+    let text = sync::render_sync_result(&SyncResult::Compared {
+        differences: vec![
+            SyncDifference {
+                remote_path: "/etc/a".to_owned(),
+                change: SyncChange::ChangedLocally,
+                on_both_sides: true,
+            },
+            SyncDifference {
+                remote_path: "/etc/b".to_owned(),
+                change: SyncChange::NewOnServer,
+                on_both_sides: false,
+            },
+        ],
+        identical_files: 5,
+        diff_path: "/m/.warp-sync/diffs/h/etc.diff".to_owned(),
+        host_dir: "/m/h".to_owned(),
+        server_copy_dir: "/m/.warp-sync/compare/h".to_owned(),
+        remote_user: "root".to_owned(),
+    });
+
+    assert_eq!(
+        text,
+        "2 differences between the server (as root) and the mirror; 5 files identical\n  \
+         changed locally: /etc/a\n  new on the server: /etc/b\nDiff saved at \
+         /m/.warp-sync/diffs/h/etc.diff"
+    );
+}
+
+#[test]
+fn data_that_is_not_a_sync_result_is_printed_as_json() {
+    let text = sync::render_sync_data(&json!({ "status": "from_the_future" }));
+
+    assert!(text.contains("from_the_future"), "{text}");
 }

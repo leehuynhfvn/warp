@@ -3,6 +3,7 @@ mod commands;
 mod completions;
 mod output;
 mod selectors;
+mod sync;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
@@ -16,6 +17,7 @@ use commands::{
 };
 use completions::generate_completions_to_stdout;
 use output::write_control_error;
+use sync::{parse_pending_id, run_sync_command};
 
 use crate::agent::OutputFormat;
 
@@ -191,6 +193,10 @@ pub enum ControlCommand {
     /// Open or toggle local Warp surfaces.
     #[command(subcommand)]
     Surface(SurfaceCommand),
+
+    /// Download, compare and upload remote files through a Warp session with Warp Sync.
+    #[command(subcommand)]
+    Sync(SyncCommand),
 
     /// Generate shell completions for your shell to stdout.
     ///
@@ -552,6 +558,78 @@ pub enum KeybindingCommand {
     Get(KeybindingGetArgs),
 }
 
+/// Exit code of a command that succeeded.
+pub(crate) const EXIT_SUCCESS: u8 = 0;
+
+/// Exit code of a command that failed.
+const EXIT_FAILURE: u8 = 1;
+
+/// Exit code of a sync command that changed nothing because it needs a confirmation first.
+pub(crate) const EXIT_NEEDS_CONFIRMATION: u8 = 3;
+
+/// Commands that sync files between a remote host and its local mirror.
+///
+/// Paths are paths in the local mirror (`~/.warp/mirrors/<host>/...` by default). The commands run
+/// through the open Warp session of that host, with the privileges of that session's shell.
+#[derive(Debug, Clone, Subcommand)]
+pub enum SyncCommand {
+    /// Show the mirror folder and, for a path, the host and the open sessions it belongs to.
+    Status(SyncStatusArgs),
+
+    /// Download a path from its host into the mirror.
+    ///
+    /// Exits with code 3 when local edits would be overwritten; nothing changes until `confirm`.
+    Download(SyncPathArgs),
+
+    /// Prepare an upload of a path in the mirror to its host.
+    ///
+    /// Nothing is sent: the command prints what would be uploaded and exits with code 3.
+    /// Uploading needs `confirm` with the printed pending id.
+    Upload(SyncPathArgs),
+
+    /// Go ahead with an operation that is waiting for confirmation.
+    Confirm(SyncPendingArgs),
+
+    /// Drop an operation that is waiting for confirmation.
+    Cancel(SyncPendingArgs),
+
+    /// Compare a path in the mirror with the host, without changing either.
+    Compare(SyncPathArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SyncStatusArgs {
+    /// A path in the mirror whose host and open sessions should be shown.
+    pub path: Option<String>,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SyncPathArgs {
+    /// A file or folder in the mirror, absolute or relative to the working directory.
+    pub path: String,
+
+    #[command(flatten)]
+    pub target: TargetArgs,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SyncPendingArgs {
+    /// The pending id printed by the command that asked for a confirmation.
+    #[arg(value_parser = parse_pending_id)]
+    pub pending_id: uuid::Uuid,
+
+    /// Target a specific local Warp instance id from `warpctrl instance list`.
+    #[arg(long = "instance", conflicts_with = "pid")]
+    pub instance: Option<String>,
+
+    /// Target a specific local Warp process id.
+    #[arg(long = "pid", conflicts_with = "instance")]
+    pub pid: Option<u32>,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum FileCommand {
     /// Open a file in Warp.
@@ -899,7 +977,7 @@ pub fn run_and_exit(args: ControlArgs) -> ! {
 fn run_exit_code(args: ControlArgs) -> u8 {
     let output_format = args.output_format;
     match run_inner(args) {
-        Ok(()) => 0,
+        Ok(exit_code) => exit_code,
         Err(error) => {
             if let Err(write_error) = write_control_error(&error, output_format) {
                 eprintln!(
@@ -907,14 +985,15 @@ fn run_exit_code(args: ControlArgs) -> u8 {
                     write_error.message
                 );
             }
-            1
+            EXIT_FAILURE
         }
     }
 }
 
-fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlError> {
+fn run_inner(args: ControlArgs) -> Result<u8, local_control::protocol::ControlError> {
     let output_format = args.output_format;
-    match args.command {
+    let result = match args.command {
+        ControlCommand::Sync(command) => return run_sync_command(command, output_format),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),
         ControlCommand::Capability(command) => run_capability_command(command, output_format),
@@ -931,7 +1010,8 @@ fn run_inner(args: ControlArgs) -> Result<(), local_control::protocol::ControlEr
         ControlCommand::File(command) => run_file_command(command, output_format),
         ControlCommand::Surface(command) => run_surface_command(command, output_format),
         ControlCommand::Completions { shell } => generate_completions_to_stdout(shell),
-    }
+    };
+    result.map(|()| EXIT_SUCCESS)
 }
 
 #[cfg(test)]
