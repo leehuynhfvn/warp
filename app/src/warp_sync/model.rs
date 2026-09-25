@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,8 +17,8 @@ use super::remote_shell::{RemoteShell, SessionShell};
 use super::requester::{ConfirmationKind, ExternalReply, Finished, Requester, SyncReply};
 use super::transfer::{
     CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult,
-    PreparedUpload, UploadOutcome, UploadRequest, compare, download, execute_upload,
-    prepare_upload,
+    PreparedUpload, UploadOutcome, UploadPlacement, UploadRequest, compare, download,
+    execute_upload, prepare_upload,
 };
 use super::{EXTERNAL_PENDING_TTL, MAX_EXTERNAL_PENDING, WarpSyncError};
 use crate::terminal::model::session::Session;
@@ -51,6 +51,11 @@ pub struct UploadSummary {
     pub dirs: usize,
     pub content_bytes: u64,
     pub new_files: Vec<String>,
+    /// The permission bits each of `new_files` will get on the remote host.
+    pub new_modes: BTreeMap<String, u32>,
+    /// The synced directory that the path is created in, when the path is not on the remote host
+    /// yet. Nothing is replaced then.
+    pub creates_under: Option<String>,
     pub missing_locally: Vec<String>,
     pub remote_check: RemoteCheck,
     /// The remote `tar` is not GNU tar, so ownership may not be restored completely.
@@ -683,6 +688,11 @@ impl WarpSyncModel {
             dirs: prepared.archive.dirs,
             content_bytes: prepared.archive.content_bytes,
             new_files: prepared.archive.new_files.clone(),
+            new_modes: prepared.archive.new_modes.clone(),
+            creates_under: match &prepared.placement {
+                UploadPlacement::Replace => None,
+                UploadPlacement::Create { anchor } => Some(anchor.clone()),
+            },
             missing_locally: prepared.archive.missing_locally.clone(),
             remote_check: prepared.remote_check.clone(),
             ownership_may_be_incomplete: ExtractMode::for_probe(&prepared.probe)

@@ -588,6 +588,40 @@ fn new_entries_take_the_permission_bits_of_the_local_copy() {
 
 #[cfg(unix)]
 #[test]
+fn the_modes_of_new_entries_are_reported_for_the_confirmation() {
+    let mirror = Mirror::new();
+    fs::write(mirror.local("secret.conf"), "s").unwrap();
+    set_local_mode(&mirror.local("secret.conf"), 0o600);
+    fs::write(mirror.local("a.conf"), "edited").unwrap();
+
+    let upload = mirror.build().unwrap();
+
+    assert_eq!(
+        upload.new_modes,
+        BTreeMap::from([("/etc/conf/secret.conf".to_owned(), 0o600)])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_modes_of_the_levels_created_for_a_new_path_are_reported_too() {
+    let mirror = Mirror::with_new_file("one/two/new.conf", "new");
+    set_local_mode(&mirror.local("one/two/new.conf"), 0o640);
+
+    let upload = mirror.build_new("/etc/conf/one/two/new.conf").unwrap();
+
+    assert_eq!(
+        upload.new_modes,
+        BTreeMap::from([
+            ("/etc/conf/one".to_owned(), 0o755),
+            ("/etc/conf/one/two".to_owned(), 0o755),
+            ("/etc/conf/one/two/new.conf".to_owned(), 0o640),
+        ])
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn the_local_mode_of_a_known_entry_does_not_change_what_the_server_has() {
     let mirror = Mirror::new();
     set_local_mode(&mirror.local("a.conf"), 0o777);

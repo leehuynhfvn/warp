@@ -219,6 +219,12 @@ impl ConfirmationKind {
             hostname: printable(&summary.hostname),
             remote_path: printable(&summary.remote_path),
             new_files: printable_all(summary.new_files),
+            new_modes: summary
+                .new_modes
+                .into_iter()
+                .map(|(path, mode)| (printable(&path), mode))
+                .collect(),
+            creates_under: summary.creates_under.as_deref().map(printable),
             missing_locally: printable_all(summary.missing_locally),
             remote_check: printable_check(summary.remote_check),
             server_id_tail: summary.server_id_tail.as_deref().map(printable),

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::super::archive::SkipReason;
@@ -144,6 +145,8 @@ fn an_upload_confirmation_escapes_every_server_string() {
         dirs: 1,
         content_bytes: 1,
         new_files: vec!["/etc/n\new".to_owned()],
+        new_modes: BTreeMap::from([("/etc/n\new".to_owned(), 0o600)]),
+        creates_under: Some("/et\nc".to_owned()),
         missing_locally: vec!["/etc/m\tissing".to_owned()],
         remote_check: RemoteCheck::Checked(RemoteConflicts {
             changed: vec!["/etc/c\rhanged".to_owned()],
@@ -162,6 +165,11 @@ fn an_upload_confirmation_escapes_every_server_string() {
     assert_eq!(summary.hostname, "pr\\nod");
     assert_eq!(summary.remote_path, "/etc/a\\nb");
     assert_eq!(summary.new_files, vec!["/etc/n\\new".to_owned()]);
+    assert_eq!(
+        summary.new_modes,
+        BTreeMap::from([("/etc/n\\new".to_owned(), 0o600)])
+    );
+    assert_eq!(summary.creates_under.as_deref(), Some("/et\\nc"));
     assert_eq!(summary.missing_locally, vec!["/etc/m\\tissing".to_owned()]);
     assert_eq!(summary.server_id_tail.as_deref(), Some("ab\\ncd"));
     let RemoteCheck::Checked(conflicts) = summary.remote_check else {
@@ -186,6 +194,8 @@ fn an_unavailable_remote_check_stays_unavailable() {
         dirs: 0,
         content_bytes: 0,
         new_files: Vec::new(),
+        new_modes: BTreeMap::new(),
+        creates_under: None,
         missing_locally: Vec::new(),
         remote_check: RemoteCheck::Unavailable,
         ownership_may_be_incomplete: true,

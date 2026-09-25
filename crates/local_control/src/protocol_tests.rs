@@ -329,6 +329,8 @@ fn an_upload_confirmation_carries_the_summary_and_conflicts() {
                 dirs: 1,
                 bytes: 3000,
                 new_files: vec!["/etc/nginx/new.conf".to_owned()],
+                new_file_modes: BTreeMap::new(),
+                creates_under: None,
                 missing_locally: Vec::new(),
                 remote_conflicts: Some(SyncRemoteConflicts {
                     changed: vec!["/etc/nginx/nginx.conf".to_owned()],
@@ -342,11 +344,60 @@ fn an_upload_confirmation_carries_the_summary_and_conflicts() {
 
     assert_eq!(value["kind"], "upload");
     assert_eq!(value["summary"]["remote_user"], "root");
+    assert!(value["summary"].get("new_file_modes").is_none());
+    assert!(value["summary"].get("creates_under").is_none());
     assert_eq!(
         value["summary"]["remote_conflicts"]["changed"],
         serde_json::json!(["/etc/nginx/nginx.conf"])
     );
     assert!(value["summary"].get("server_id_tail").is_none());
+}
+
+#[test]
+fn an_upload_summary_names_what_is_created_with_the_modes_it_gets() {
+    let summary = SyncUploadSummary {
+        remote_user: "root".to_owned(),
+        hostname: "prod-1".to_owned(),
+        remote_path: "/root/new-dir".to_owned(),
+        files: 1,
+        dirs: 1,
+        bytes: 3,
+        new_files: vec!["/root/new-dir".to_owned(), "/root/new-dir/a".to_owned()],
+        new_file_modes: BTreeMap::from([
+            ("/root/new-dir".to_owned(), "0755".to_owned()),
+            ("/root/new-dir/a".to_owned(), "0600".to_owned()),
+        ]),
+        creates_under: Some("/root".to_owned()),
+        missing_locally: Vec::new(),
+        remote_conflicts: None,
+        ownership_may_be_incomplete: false,
+        server_id_tail: None,
+    };
+
+    let value = roundtrip(&SyncResult::NeedsConfirmation {
+        pending_id: Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(summary),
+        },
+    });
+
+    assert_eq!(value["summary"]["creates_under"], "/root");
+    assert_eq!(value["summary"]["new_file_modes"]["/root/new-dir/a"], "0600");
+}
+
+#[test]
+fn an_upload_summary_from_an_older_app_still_parses() {
+    let older = serde_json::json!({
+        "remote_user": "root", "hostname": "h", "remote_path": "/etc/x",
+        "files": 1, "dirs": 0, "bytes": 1,
+        "new_files": [], "missing_locally": [],
+        "ownership_may_be_incomplete": false
+    });
+
+    let summary: SyncUploadSummary = serde_json::from_value(older).unwrap();
+
+    assert!(summary.new_file_modes.is_empty());
+    assert_eq!(summary.creates_under, None);
 }
 
 #[test]

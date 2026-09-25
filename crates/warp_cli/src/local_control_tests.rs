@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use clap_complete::aot::Shell;
 use local_control::protocol::{
@@ -915,6 +915,8 @@ fn upload_summary(remote_conflicts: Option<SyncRemoteConflicts>) -> SyncUploadSu
         dirs: 1,
         bytes: 3072,
         new_files: vec!["/etc/nginx/new.conf".to_owned()],
+        new_file_modes: BTreeMap::new(),
+        creates_under: None,
         missing_locally: vec!["/etc/nginx/old.conf".to_owned()],
         remote_conflicts,
         ownership_may_be_incomplete: true,
@@ -951,6 +953,40 @@ fn an_upload_confirmation_shows_everything_the_user_must_weigh_and_how_to_answer
     ] {
         assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
     }
+}
+
+#[test]
+fn a_new_upload_says_what_it_creates_where_and_with_which_modes() {
+    let summary = SyncUploadSummary {
+        remote_path: "/root/test-dir-2".to_owned(),
+        new_files: vec![
+            "/root/test-dir-2".to_owned(),
+            "/root/test-dir-2/a.conf".to_owned(),
+        ],
+        new_file_modes: BTreeMap::from([
+            ("/root/test-dir-2".to_owned(), "0755".to_owned()),
+            ("/root/test-dir-2/a.conf".to_owned(), "0600".to_owned()),
+        ]),
+        creates_under: Some("/root".to_owned()),
+        missing_locally: Vec::new(),
+        ..upload_summary(Some(SyncRemoteConflicts::default()))
+    };
+
+    let text = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(summary),
+        },
+    });
+
+    for expected in [
+        "Creates on the server, inside /root (nothing there is replaced):",
+        "  /root/test-dir-2 (mode 0755)",
+        "  /root/test-dir-2/a.conf (mode 0600)",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+    assert!(!text.contains("New files:"), "{text}");
 }
 
 #[test]

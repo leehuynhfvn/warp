@@ -174,12 +174,20 @@ fn upload_body(summary: &UploadSummary) -> String {
             format_size(summary.content_bytes)
         ),
     ];
-    sections.extend(remote_check_sections(&summary.remote_check));
-    if !summary.new_files.is_empty() {
-        sections.push(format!(
-            "New on the server:\n{}",
-            bullet_list(&summary.new_files)
-        ));
+    match &summary.creates_under {
+        Some(anchor) => sections.push(format!(
+            "Creates on the server, inside {anchor}:\n{}",
+            bullet_list(&new_entry_lines(summary))
+        )),
+        None => {
+            sections.extend(remote_check_sections(&summary.remote_check));
+            if !summary.new_files.is_empty() {
+                sections.push(format!(
+                    "New on the server:\n{}",
+                    bullet_list(&new_entry_lines(summary))
+                ));
+            }
+        }
     }
     if !summary.missing_locally.is_empty() {
         sections.push(format!(
@@ -188,7 +196,13 @@ fn upload_body(summary: &UploadSummary) -> String {
         ));
     }
     sections.push(
-        "Whatever is replaced is first saved under ~/.warp-sync/backups on the server.".to_owned(),
+        match summary.creates_under {
+            Some(_) => "Nothing on the server is replaced, so no backup is made.",
+            None => {
+                "Whatever is replaced is first saved under ~/.warp-sync/backups on the server."
+            }
+        }
+        .to_owned(),
     );
     if summary.ownership_may_be_incomplete {
         sections.push(
@@ -198,6 +212,18 @@ fn upload_body(summary: &UploadSummary) -> String {
         );
     }
     sections.join("\n\n")
+}
+
+/// The new entries, each with the mode it gets on the server where that is known.
+fn new_entry_lines(summary: &UploadSummary) -> Vec<String> {
+    summary
+        .new_files
+        .iter()
+        .map(|path| match summary.new_modes.get(path) {
+            Some(mode) => format!("{path} (mode {mode:04o})"),
+            None => path.clone(),
+        })
+        .collect()
 }
 
 fn remote_check_sections(remote_check: &RemoteCheck) -> Vec<String> {

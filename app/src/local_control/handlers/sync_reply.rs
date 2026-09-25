@@ -99,6 +99,12 @@ fn upload_summary(summary: UploadSummary) -> SyncUploadSummary {
         dirs: summary.dirs as u64,
         bytes: summary.content_bytes,
         new_files: summary.new_files,
+        new_file_modes: summary
+            .new_modes
+            .into_iter()
+            .map(|(path, mode)| (path, format!("{mode:04o}")))
+            .collect(),
+        creates_under: summary.creates_under,
         missing_locally: summary.missing_locally,
         remote_conflicts: match summary.remote_check {
             RemoteCheck::Unavailable => None,

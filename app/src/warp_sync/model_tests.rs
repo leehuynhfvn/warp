@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -47,6 +48,7 @@ fn pending_upload(host_key: &str, remote_path: &str) -> PendingUpload {
                 dirs: 0,
                 content_bytes: 0,
                 new_files: Vec::new(),
+                new_modes: BTreeMap::new(),
                 missing_locally: Vec::new(),
             },
             probe: ProbeResult {

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::super::diff::{FileChange, FileDifference};
 use super::*;
 use crate::util::file::external_editor::Editor;
@@ -15,6 +17,8 @@ fn summary() -> UploadSummary {
         dirs: 1,
         content_bytes: 2048,
         new_files: vec![],
+        new_modes: BTreeMap::new(),
+        creates_under: None,
         missing_locally: vec![],
         remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
         ownership_may_be_incomplete: false,
@@ -65,6 +69,50 @@ fn upload_body_lists_new_and_missing_files_and_warns_about_tar() {
     assert!(body.contains("New on the server:\n• /etc/nginx/new.conf"));
     assert!(body.contains("NOT be deleted on the server):\n• /etc/nginx/old.conf"));
     assert!(body.contains("not GNU tar"));
+}
+
+#[test]
+fn upload_body_shows_the_mode_each_new_entry_will_get() {
+    let summary = UploadSummary {
+        new_files: vec![
+            "/etc/nginx/secret.conf".to_owned(),
+            "/etc/nginx/plain.conf".to_owned(),
+        ],
+        new_modes: BTreeMap::from([("/etc/nginx/secret.conf".to_owned(), 0o600)]),
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains("• /etc/nginx/secret.conf (mode 0600)\n• /etc/nginx/plain.conf\n"));
+}
+
+#[test]
+fn upload_body_says_what_will_be_created_and_where_when_the_path_is_new() {
+    let summary = UploadSummary {
+        remote_path: "/root/test-dir-2".to_owned(),
+        creates_under: Some("/root".to_owned()),
+        new_files: vec![
+            "/root/test-dir-2".to_owned(),
+            "/root/test-dir-2/a.conf".to_owned(),
+        ],
+        new_modes: BTreeMap::from([
+            ("/root/test-dir-2".to_owned(), 0o755),
+            ("/root/test-dir-2/a.conf".to_owned(), 0o644),
+        ]),
+        remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains(
+        "Creates on the server, inside /root:\n• /root/test-dir-2 (mode 0755)\n• /root/test-dir-2/a.conf (mode 0644)"
+    ));
+    assert!(body.contains("Nothing on the server is replaced"));
+    assert!(!body.contains("~/.warp-sync/backups"));
+    assert!(!body.contains("unchanged since the last sync"));
+    assert!(!body.contains("New on the server"));
 }
 
 #[test]

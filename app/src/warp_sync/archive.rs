@@ -107,6 +107,8 @@ pub struct UploadArchive {
     pub content_bytes: u64,
     /// Remote paths that do not exist in the manifest yet.
     pub new_files: Vec<String>,
+    /// The permission bits each of `new_files` will get on the remote host.
+    pub new_modes: BTreeMap<String, u32>,
     /// Remote paths that the manifest knows but the mirror no longer has. They are not removed
     /// from the remote host.
     pub missing_locally: Vec<String>,
@@ -630,12 +632,14 @@ fn pack(
     let mut builder = Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
     let mut present = BTreeSet::new();
     let mut new_files = Vec::new();
+    let mut new_modes = BTreeMap::new();
     let mut summary = UploadArchive {
         bytes: Vec::new(),
         files: 0,
         dirs: 0,
         content_bytes,
         new_files: Vec::new(),
+        new_modes: BTreeMap::new(),
         missing_locally: Vec::new(),
     };
     if let Some(created) = &plan.created {
@@ -643,7 +647,9 @@ fn pack(
         let meta = created_level_meta(created.owner, mtime);
         for level in &created.levels {
             append_dir(&mut builder, level, &meta)?;
-            new_files.push(format!("{}/{level}", created.anchor));
+            let remote_level = format!("{}/{level}", created.anchor);
+            new_modes.insert(remote_level.clone(), meta.mode);
+            new_files.push(remote_level);
             summary.dirs += 1;
         }
     }
@@ -652,8 +658,10 @@ fn pack(
         let meta = match plan.known.get(&remote_path) {
             Some(meta) => check_kind(meta, item, &remote_path)?.clone(),
             None => {
+                let meta = new_entry_meta(manifest, item, &remote_path)?;
+                new_modes.insert(remote_path.clone(), meta.mode);
                 new_files.push(remote_path.clone());
-                new_entry_meta(manifest, item, &remote_path)?
+                meta
             }
         };
         // The manifest is only as trustworthy as the host that reported it; never recreate a
@@ -684,6 +692,7 @@ fn pack(
         )));
     }
     summary.new_files = new_files;
+    summary.new_modes = new_modes;
     summary.missing_locally = plan
         .known
         .keys()

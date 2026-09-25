@@ -280,8 +280,16 @@ fn render_upload_summary(summary: &SyncUploadSummary) -> String {
         format_size(summary.bytes),
     );
     if !summary.new_files.is_empty() {
-        text.push_str("\nNew files:");
-        list_paths(&mut text, "  ", &summary.new_files);
+        match &summary.creates_under {
+            Some(anchor) => {
+                let _ = write!(
+                    text,
+                    "\nCreates on the server, inside {anchor} (nothing there is replaced):"
+                );
+            }
+            None => text.push_str("\nNew files:"),
+        }
+        list_paths(&mut text, "  ", &with_modes(summary));
     }
     if !summary.missing_locally.is_empty() {
         text.push_str("\nMissing from the mirror (they will not be deleted on the server):");
@@ -320,6 +328,18 @@ fn render_upload_summary(summary: &SyncUploadSummary) -> String {
         );
     }
     text
+}
+
+/// The new entries, each followed by its mode where the server is told one.
+fn with_modes(summary: &SyncUploadSummary) -> Vec<String> {
+    summary
+        .new_files
+        .iter()
+        .map(|path| match summary.new_file_modes.get(path) {
+            Some(mode) => format!("{path} (mode {mode})"),
+            None => path.clone(),
+        })
+        .collect()
 }
 
 fn list_paths(text: &mut String, indent: &str, paths: &[String]) {

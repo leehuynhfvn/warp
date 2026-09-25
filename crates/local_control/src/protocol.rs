@@ -1,4 +1,6 @@
 //! Wire protocol envelopes and error types for Warp local control.
+use std::collections::BTreeMap;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -392,6 +394,13 @@ pub struct SyncUploadSummary {
     pub dirs: u64,
     pub bytes: u64,
     pub new_files: Vec<String>,
+    /// Octal permission bits, such as `0644`, that each of `new_files` gets on the server.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub new_file_modes: BTreeMap<String, String>,
+    /// The synced directory that the path is created in when it is not on the server yet; then
+    /// nothing is replaced and no backup is made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creates_under: Option<String>,
     pub missing_locally: Vec<String>,
     /// Absent when the server has no tool to hash files, so nothing could be compared.
     #[serde(default, skip_serializing_if = "Option::is_none")]

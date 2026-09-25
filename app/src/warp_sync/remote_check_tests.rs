@@ -40,6 +40,7 @@ fn archive(new_files: &[&str], missing_locally: &[&str]) -> UploadArchive {
         dirs: 0,
         content_bytes: 0,
         new_files: new_files.iter().map(|path| (*path).to_owned()).collect(),
+        new_modes: BTreeMap::new(),
         missing_locally: missing_locally
             .iter()
             .map(|path| (*path).to_owned())

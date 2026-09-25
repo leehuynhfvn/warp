@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use uuid::Uuid;
@@ -15,6 +16,8 @@ fn upload_summary(remote_check: RemoteCheck) -> UploadSummary {
         dirs: 1,
         content_bytes: 3000,
         new_files: vec!["/etc/nginx/new.conf".to_owned()],
+        new_modes: BTreeMap::from([("/etc/nginx/new.conf".to_owned(), 0o600)]),
+        creates_under: None,
         missing_locally: vec!["/etc/nginx/old.conf".to_owned()],
         remote_check,
         ownership_may_be_incomplete: true,
@@ -110,6 +113,31 @@ fn an_upload_confirmation_exposes_the_conflicts_the_host_check_found() {
     assert_eq!(
         conflicts.already_exist,
         vec!["/etc/nginx/new.conf".to_owned()]
+    );
+}
+
+#[test]
+fn an_upload_confirmation_carries_the_modes_and_where_the_path_is_created() {
+    let summary = UploadSummary {
+        creates_under: Some("/etc".to_owned()),
+        ..upload_summary(RemoteCheck::Unavailable)
+    };
+
+    let SyncResult::NeedsConfirmation {
+        confirmation: SyncConfirmation::Upload { summary },
+        ..
+    } = sync_result(SyncReply::NeedsConfirmation {
+        pending_id: Uuid::new_v4(),
+        kind: ConfirmationKind::Upload(Box::new(summary)),
+    })
+    else {
+        panic!("expected an upload confirmation");
+    };
+
+    assert_eq!(summary.creates_under.as_deref(), Some("/etc"));
+    assert_eq!(
+        summary.new_file_modes,
+        BTreeMap::from([("/etc/nginx/new.conf".to_owned(), "0600".to_owned())])
     );
 }
 
