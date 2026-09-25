@@ -31,6 +31,10 @@ export interface UploadSummary {
   dirs: number;
   bytes: number;
   new_files: string[];
+  /** Octal permission bits, such as `0644`, that each of `new_files` gets on the server. */
+  new_file_modes?: Record<string, string>;
+  /** The synced directory the path is created in, when it is not on the server yet. */
+  creates_under?: string;
   missing_locally: string[];
   remote_conflicts?: RemoteConflicts;
   ownership_may_be_incomplete: boolean;
@@ -137,6 +141,10 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isString);
 }
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isObject(value) && Object.values(value).every(isString);
+}
+
 // Warp leaves an absent field out; `null` is not something it sends.
 function isOptional(value: unknown, check: (value: unknown) => boolean): boolean {
   return value === undefined || check(value);
@@ -173,6 +181,8 @@ function isUploadSummary(value: unknown): value is UploadSummary {
     isNumber(value.dirs) &&
     isNumber(value.bytes) &&
     isStringArray(value.new_files) &&
+    isOptional(value.new_file_modes, isStringRecord) &&
+    isOptional(value.creates_under, isString) &&
     isStringArray(value.missing_locally) &&
     isOptional(value.remote_conflicts, isConflicts) &&
     typeof value.ownership_may_be_incomplete === "boolean" &&

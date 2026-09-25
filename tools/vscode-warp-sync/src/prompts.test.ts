@@ -69,6 +69,35 @@ test("new and missing files and a partial ownership note are listed", () => {
   assert.match(prompt.detail, /not GNU tar/);
 });
 
+test("the mode each new file gets is shown", () => {
+  const prompt = uploadPrompt(
+    summary({
+      new_files: ["/etc/nginx/secret.conf", "/etc/nginx/plain.conf"],
+      new_file_modes: { "/etc/nginx/secret.conf": "0600" },
+    }),
+  );
+
+  assert.match(prompt.detail, /New files:\n {4}\/etc\/nginx\/secret\.conf \(mode 0600\)\n {4}\/etc\/nginx\/plain\.conf$/);
+});
+
+test("a path that is not on the server yet says what is created, where, and that nothing is replaced", () => {
+  const prompt = uploadPrompt(
+    summary({
+      remote_path: "/root/test-dir-2",
+      new_files: ["/root/test-dir-2", "/root/test-dir-2/a.conf"],
+      new_file_modes: { "/root/test-dir-2": "0755", "/root/test-dir-2/a.conf": "0644" },
+      creates_under: "/root",
+    }),
+  );
+
+  assert.match(prompt.detail, /Creates on the server, inside \/root:\n {4}\/root\/test-dir-2 \(mode 0755\)\n {4}\/root\/test-dir-2\/a\.conf \(mode 0644\)/);
+  assert.match(prompt.detail, /Nothing on the server is replaced, so no backup is made\./);
+  assert.doesNotMatch(prompt.detail, /A backup of what is replaced/);
+  assert.doesNotMatch(prompt.detail, /New files:/);
+  assert.equal(prompt.hasWarnings, false);
+  assert.equal(prompt.confirmLabel, "Upload");
+});
+
 test("long lists stop after ten paths", () => {
   const files = Array.from({ length: 13 }, (_, index) => `/etc/f${index}`);
 

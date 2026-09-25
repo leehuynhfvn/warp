@@ -40,6 +40,15 @@ function section(heading: string, paths: readonly string[]): string[] {
   return paths.length === 0 ? [] : ["", heading, ...listPaths(paths)];
 }
 
+/** The new entries, each followed by its mode where Warp reports one. */
+function newEntries(summary: UploadSummary): string[] {
+  const modes = summary.new_file_modes ?? {};
+  return summary.new_files.map((path) => {
+    const mode = Object.hasOwn(modes, path) ? modes[path] : undefined;
+    return mode === undefined ? path : `${path} (mode ${mode})`;
+  });
+}
+
 export function uploadPrompt(summary: UploadSummary): Prompt {
   const conflicts = summary.remote_conflicts;
   const warnings: string[] = [];
@@ -65,8 +74,15 @@ export function uploadPrompt(summary: UploadSummary): Prompt {
   const machine = summary.server_id_tail === undefined ? "" : ` (machine id ending ${summary.server_id_tail})`;
   const lines = [
     `${count(summary.files, "file")} and ${count(summary.dirs, "folder")} (${formatSize(summary.bytes)}) will be written on ${target}${machine}, as ${summary.remote_user}.`,
-    "A backup of what is replaced is kept on the server.",
-    ...section("New files:", summary.new_files),
+    summary.creates_under === undefined
+      ? "A backup of what is replaced is kept on the server."
+      : "Nothing on the server is replaced, so no backup is made.",
+    ...section(
+      summary.creates_under === undefined
+        ? "New files:"
+        : `Creates on the server, inside ${summary.creates_under}:`,
+      newEntries(summary),
+    ),
     ...section(
       "Missing from the mirror (they will not be deleted on the server):",
       summary.missing_locally,

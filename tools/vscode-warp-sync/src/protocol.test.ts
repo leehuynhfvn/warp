@@ -83,3 +83,18 @@ test("null is not accepted where a field is optional", () => {
 
   assert.equal(parseSyncResult(withNull), undefined);
 });
+
+test("the modes and the directory a new path is created in are accepted, and must be strings", () => {
+  const creating = {
+    ...summary,
+    new_files: ["/root/new", "/root/new/a"],
+    new_file_modes: { "/root/new": "0755", "/root/new/a": "0600" },
+    creates_under: "/root",
+  };
+  const upload = (value: object) => ({ status: "needs_confirmation", pending_id: "id", kind: "upload", summary: value });
+
+  assert.ok(parseSyncResult(upload(creating)) !== undefined);
+  assert.equal(parseSyncResult(upload({ ...creating, new_file_modes: { "/root/new": 493 } })), undefined);
+  assert.equal(parseSyncResult(upload({ ...creating, new_file_modes: ["0755"] })), undefined);
+  assert.equal(parseSyncResult(upload({ ...creating, creates_under: null })), undefined);
+});

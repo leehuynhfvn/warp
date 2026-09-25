@@ -30,8 +30,13 @@ only calls `warpctrl`; it never talks to the server itself.
 - **Source Control title bar:** *Upload Changed Files* and *Compare Changed Files* offer the files
   that differ from the last sync (the mirror is a Git repository whose HEAD is the server's state).
 - **Upload** always asks first. The dialog names `user@host`, the number of files, files that would
-  be created, files missing from the mirror (never deleted on the server), and warns when the
-  server changed since the last sync. Cancelling sends nothing.
+  be created (with the permission bits each one gets, taken from your local copy), files missing
+  from the mirror (never deleted on the server), and warns when the server changed since the last
+  sync. Cancelling sends nothing.
+- A file or folder that you created in the mirror and that is not on the server yet can be
+  uploaded directly, as long as a folder above it was downloaded and still exists on the server.
+  The dialog then lists the folders that will be created and says that nothing is replaced. If a
+  folder above it exists on the server but was never downloaded, download that folder first.
 
 ## Security notes
 
