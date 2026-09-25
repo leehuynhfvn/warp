@@ -382,7 +382,10 @@ fn an_upload_summary_names_what_is_created_with_the_modes_it_gets() {
     });
 
     assert_eq!(value["summary"]["creates_under"], "/root");
-    assert_eq!(value["summary"]["new_file_modes"]["/root/new-dir/a"], "0600");
+    assert_eq!(
+        value["summary"]["new_file_modes"]["/root/new-dir/a"],
+        "0600"
+    );
 }
 
 #[test]

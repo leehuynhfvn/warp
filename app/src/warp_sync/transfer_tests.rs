@@ -1505,7 +1505,10 @@ fn the_summary_lists_what_will_be_created_including_the_levels_in_between() {
             format!("{prefix}/one/two/only.conf"),
         ]
     );
-    assert_eq!(prepared.remote_check, RemoteCheck::Checked(Default::default()));
+    assert_eq!(
+        prepared.remote_check,
+        RemoteCheck::Checked(Default::default())
+    );
 }
 
 #[cfg(unix)]
@@ -1548,7 +1551,10 @@ fn the_levels_created_in_between_are_world_readable_directories() {
 
     env.upload_new("one/two/only.conf").unwrap();
 
-    let mode = fs::metadata(env.remote("one")).unwrap().permissions().mode();
+    let mode = fs::metadata(env.remote("one"))
+        .unwrap()
+        .permissions()
+        .mode();
     assert_eq!(mode & 0o7777, 0o755);
 }
 
@@ -1607,8 +1613,15 @@ fn a_level_in_between_that_appears_before_the_confirmation_is_left_alone() {
         Some(super::super::remote_script::EXIT_TARGET_EXISTS),
         "{result:?}"
     );
-    let mode = fs::metadata(env.remote("one")).unwrap().permissions().mode();
-    assert_eq!(mode & 0o777, 0o700, "the directory that was there is untouched");
+    let mode = fs::metadata(env.remote("one"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(
+        mode & 0o777,
+        0o700,
+        "the directory that was there is untouched"
+    );
     assert!(!env.remote("one/two").exists());
 }
 
@@ -1748,7 +1761,11 @@ fn a_new_path_uses_the_mirror_of_the_machine_that_owns_it() {
     let local_b = local_path_for(&env.mirror_root(), &dir_b, &env.remote_path);
     fs::write(local_b.join("fresh.conf"), "fresh from B").unwrap();
 
-    let prepared = block_on(prepare_upload(&machine_b, &env.request_for_new("fresh.conf"))).unwrap();
+    let prepared = block_on(prepare_upload(
+        &machine_b,
+        &env.request_for_new("fresh.conf"),
+    ))
+    .unwrap();
     block_on(execute_upload(&machine_b, &prepared)).unwrap();
 
     assert_eq!(prepared.host_key, dir_b);
@@ -1865,7 +1882,10 @@ fn a_new_path_is_refused_when_the_host_changes_between_the_probes() {
         probes: AtomicUsize::new(0),
     };
 
-    let result = block_on(prepare_upload(&switching, &env.request_for_new("fresh.conf")));
+    let result = block_on(prepare_upload(
+        &switching,
+        &env.request_for_new("fresh.conf"),
+    ));
 
     assert!(
         matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("no longer reaches")),

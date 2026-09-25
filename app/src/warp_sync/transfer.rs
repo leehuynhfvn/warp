@@ -27,11 +27,10 @@ use super::paths::{
 };
 use super::remote_check::{RemoteCheck, RemoteConflicts, find_remote_conflicts};
 use super::remote_script::{
-    CommitMode, ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit, checksum_script,
-    cleanup_command, download_script, light_probe_script, parse_checksum_output,
-    parse_probe_output, probe_script,
-    upload_begin_command, upload_chunk_commands, upload_commit_script, validate_tmp_dir,
-    wrap_for_any_shell,
+    CommitMode, ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit,
+    checksum_script, cleanup_command, download_script, light_probe_script, parse_checksum_output,
+    parse_probe_output, probe_script, upload_begin_command, upload_chunk_commands,
+    upload_commit_script, validate_tmp_dir, wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
 

@@ -684,7 +684,13 @@ impl Mirror {
 /// Unpacks a new-path upload the way the server, and the manifest update, will see it.
 fn entries_of_new_upload(upload: &UploadArchive, top_level: &str) -> ExtractReport {
     let staging = tempfile::tempdir().unwrap();
-    extract_download(&upload.bytes, top_level, "/etc/conf", &staging.path().join("s")).unwrap()
+    extract_download(
+        &upload.bytes,
+        top_level,
+        "/etc/conf",
+        &staging.path().join("s"),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -708,13 +714,22 @@ fn a_new_path_is_packed_under_its_levels_with_the_owner_of_the_anchor() {
     for path in ["/etc/conf/one", "/etc/conf/one/two"] {
         let level = &report.entries[path];
         assert_eq!(
-            (level.kind, level.mode, level.uid, level.gid, level.uname.as_str()),
+            (
+                level.kind,
+                level.mode,
+                level.uid,
+                level.gid,
+                level.uname.as_str()
+            ),
             (EntryKind::Dir, 0o755, 33, 33, "www-data"),
             "{path}"
         );
     }
     let file = &report.entries["/etc/conf/one/two/new.conf"];
-    assert_eq!((file.uid, file.gid, file.gname.as_str()), (33, 33, "www-data"));
+    assert_eq!(
+        (file.uid, file.gid, file.gname.as_str()),
+        (33, 33, "www-data")
+    );
     assert_eq!(file.size, Some(3));
 }
 
@@ -747,20 +762,30 @@ fn a_new_path_that_the_manifest_already_knows_is_not_new() {
 
     let result = mirror.build_new("/etc/conf/a.conf");
 
-    assert!(matches!(result, Err(WarpSyncError::Manifest(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(WarpSyncError::Manifest(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
 fn a_new_path_must_be_below_the_closest_synced_directory() {
     let mut mirror = Mirror::with_new_file("sub/new.conf", "x");
-    let sub = mirror.manifest.nearest_dir_ancestor("/etc/conf/a.conf").unwrap().clone();
+    let sub = mirror
+        .manifest
+        .nearest_dir_ancestor("/etc/conf/a.conf")
+        .unwrap()
+        .clone();
     mirror
         .manifest
         .upsert_entries(BTreeMap::from([("/etc/conf/sub".to_owned(), sub)]));
 
     let result = mirror.build_new("/etc/conf/sub/new.conf");
 
-    assert!(matches!(result, Err(WarpSyncError::Manifest(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(WarpSyncError::Manifest(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -775,7 +800,10 @@ fn a_new_path_with_levels_that_could_climb_out_is_refused() {
     ] {
         let result = mirror.build_new(root);
 
-        assert!(matches!(result, Err(WarpSyncError::InvalidPath(_))), "{root}: {result:?}");
+        assert!(
+            matches!(result, Err(WarpSyncError::InvalidPath(_))),
+            "{root}: {result:?}"
+        );
     }
 }
 
@@ -785,7 +813,10 @@ fn a_new_path_without_a_local_copy_is_not_mirrored() {
 
     let result = mirror.build_new("/etc/conf/nowhere/x.conf");
 
-    assert!(matches!(result, Err(WarpSyncError::NotMirrored(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(WarpSyncError::NotMirrored(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -800,7 +831,11 @@ fn the_levels_created_in_between_count_against_the_entry_limit() {
 
     let result = mirror.build_new("/etc/conf/a/b");
 
-    assert!(matches!(result, Err(WarpSyncError::TooLarge { .. })), "{:?}", result.err());
+    assert!(
+        matches!(result, Err(WarpSyncError::TooLarge { .. })),
+        "{:?}",
+        result.err()
+    );
 }
 
 #[cfg(unix)]

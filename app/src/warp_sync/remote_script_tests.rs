@@ -567,7 +567,9 @@ mod with_sh {
         header.set_mode(0o600);
         header.set_size(1);
         header.set_entry_type(tar::EntryType::Regular);
-        builder.append_data(&mut header, "conf/a", &b"a"[..]).unwrap();
+        builder
+            .append_data(&mut header, "conf/a", &b"a"[..])
+            .unwrap();
         let tgz = builder.into_inner().unwrap().finish().unwrap();
         for command in upload_chunk_commands(&dir, &tgz) {
             assert!(run_sh(&command, None).status.success());
@@ -585,9 +587,15 @@ mod with_sh {
         let output = run_sh(&commit, None);
 
         assert!(output.status.success(), "{}", stdout(&output));
-        let mode = fs::metadata(parent.path().join("conf")).unwrap().permissions().mode();
+        let mode = fs::metadata(parent.path().join("conf"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o7777, 0o750);
-        assert_eq!(fs::read_to_string(parent.path().join("conf/a")).unwrap(), "a");
+        assert_eq!(
+            fs::read_to_string(parent.path().join("conf/a")).unwrap(),
+            "a"
+        );
     }
 
     #[test]
@@ -654,7 +662,10 @@ mod with_sh {
         let output = run_sh(&light_probe_script(dir.path().to_str().unwrap()), None);
         let probe = parse_probe_output(&stdout(&output)).unwrap();
 
-        assert_eq!((probe.status, probe.kind), (ProbeStatus::Ok, RemoteKind::Dir));
+        assert_eq!(
+            (probe.status, probe.kind),
+            (ProbeStatus::Ok, RemoteKind::Dir)
+        );
         assert_eq!(probe.size_kib, None);
         assert!(!light_probe_script("/x").contains("du "));
     }

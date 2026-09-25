@@ -579,7 +579,9 @@ pub fn build_new_upload(
         created: Some(CreatedLevels {
             anchor,
             owner,
-            levels: (1..=in_between).map(|depth| levels[..depth].join("/")).collect(),
+            levels: (1..=in_between)
+                .map(|depth| levels[..depth].join("/"))
+                .collect(),
         }),
         known: BTreeMap::new(),
         max_upload_bytes,
@@ -631,7 +633,10 @@ fn pack(
 
     // The levels above `root` are entries too, and the local record of the upload re-reads the
     // archive under the same limit.
-    let created_levels = plan.created.as_ref().map_or(0, |created| created.levels.len());
+    let created_levels = plan
+        .created
+        .as_ref()
+        .map_or(0, |created| created.levels.len());
     if items.len() + created_levels > MAX_ENTRIES {
         return Err(too_large(format!(
             "the upload has more than {MAX_ENTRIES} entries"

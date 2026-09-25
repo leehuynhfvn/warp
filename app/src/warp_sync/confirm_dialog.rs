@@ -166,7 +166,11 @@ fn compare_body(summary: &CompareSummary, opens_in_editor: bool) -> String {
 
 fn upload_body(summary: &UploadSummary) -> String {
     let server = match &summary.server_id_tail {
-        Some(tail) => format!("{} (machine id …{})", printable(&summary.hostname), printable(tail)),
+        Some(tail) => format!(
+            "{} (machine id …{})",
+            printable(&summary.hostname),
+            printable(tail)
+        ),
         None => printable(&summary.hostname),
     };
     let mut sections = vec![
@@ -203,9 +207,7 @@ fn upload_body(summary: &UploadSummary) -> String {
     sections.push(
         match summary.creates_under {
             Some(_) => "Nothing on the server is replaced, so no backup is made.",
-            None => {
-                "Whatever is replaced is first saved under ~/.warp-sync/backups on the server."
-            }
+            None => "Whatever is replaced is first saved under ~/.warp-sync/backups on the server.",
         }
         .to_owned(),
     );
