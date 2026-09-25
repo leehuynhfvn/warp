@@ -18,6 +18,7 @@ pub mod remote_check;
 mod remote_script;
 mod remote_shell;
 pub mod requester;
+pub mod risk;
 mod transfer;
 
 use std::time::Duration;

@@ -15,6 +15,7 @@ use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
 use super::requester::{ConfirmationKind, ExternalReply, Finished, Requester, SyncReply};
+use super::risk::{UploadRisks, assess};
 use super::transfer::{
     CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult,
     PreparedUpload, UploadOutcome, UploadPlacement, UploadRequest, compare, download,
@@ -56,6 +57,8 @@ pub struct UploadSummary {
     /// The synced directory that the path is created in, when the path is not on the remote host
     /// yet. Nothing is replaced then.
     pub creates_under: Option<String>,
+    /// New entries that deserve a warning before the user goes ahead.
+    pub risks: UploadRisks,
     pub missing_locally: Vec<String>,
     pub remote_check: RemoteCheck,
     /// The remote `tar` is not GNU tar, so ownership may not be restored completely.
@@ -689,6 +692,7 @@ impl WarpSyncModel {
             content_bytes: prepared.archive.content_bytes,
             new_files: prepared.archive.new_files.clone(),
             new_modes: prepared.archive.new_modes.clone(),
+            risks: assess(&prepared.archive.new_files, &prepared.archive.new_modes),
             creates_under: match &prepared.placement {
                 UploadPlacement::Replace => None,
                 UploadPlacement::Create { anchor } => Some(anchor.clone()),

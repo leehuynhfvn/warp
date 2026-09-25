@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::super::diff::{FileChange, FileDifference};
+use super::super::risk::UploadRisks;
 use super::*;
 use crate::util::file::external_editor::Editor;
 
@@ -19,6 +20,7 @@ fn summary() -> UploadSummary {
         new_files: vec![],
         new_modes: BTreeMap::new(),
         creates_under: None,
+        risks: UploadRisks::default(),
         missing_locally: vec![],
         remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
         ownership_may_be_incomplete: false,
@@ -137,6 +139,34 @@ fn upload_text_escapes_what_the_server_and_the_manifest_chose() {
         assert!(!text.contains('\u{202e}'), "{text:?}");
     }
     assert!(body.contains("inside /ro\\u{202e}ot:"));
+}
+
+#[test]
+fn upload_body_warns_about_entries_that_anyone_can_write_and_places_that_run_code() {
+    let summary = UploadSummary {
+        risks: UploadRisks {
+            world_writable: vec!["/srv/open.sh".to_owned()],
+            runs_code: vec!["/etc/cron.d/job".to_owned()],
+        },
+        new_modes: BTreeMap::from([("/srv/open.sh".to_owned(), 0o666)]),
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains(
+        "WARNING: anyone on the server could change these new entries (mode allows write \
+         for others):\n• /srv/open.sh (mode 0666)"
+    ));
+    assert!(body.contains(
+        "WARNING: these new entries are where the server runs or trusts what it finds (cron, \
+         sudoers, shell startup files, ssh keys, services, program directories):\n• /etc/cron.d/job"
+    ));
+}
+
+#[test]
+fn upload_body_has_no_risk_warning_when_there_is_nothing_to_warn_about() {
+    assert!(!upload_body(&summary()).contains("WARNING"));
 }
 
 #[test]

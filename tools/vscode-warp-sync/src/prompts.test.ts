@@ -98,6 +98,29 @@ test("a path that is not on the server yet says what is created, where, and that
   assert.equal(prompt.confirmLabel, "Upload");
 });
 
+test("entries anyone can write, and places where the server runs code, are warnings and change the button", () => {
+  const prompt = uploadPrompt(
+    summary({
+      new_files: ["/srv/open.sh", "/etc/cron.d/job"],
+      new_file_modes: { "/srv/open.sh": "0666" },
+      world_writable: ["/srv/open.sh"],
+      runs_code: ["/etc/cron.d/job"],
+    }),
+  );
+
+  assert.equal(prompt.hasWarnings, true);
+  assert.equal(prompt.confirmLabel, "Upload Anyway");
+  assert.match(prompt.detail, /WARNING: anyone on the server could change these new entries[^\n]*\n {4}\/srv\/open\.sh \(mode 0666\)/);
+  assert.match(prompt.detail, /WARNING: these new entries are where the server runs or trusts what it finds[^\n]*\n {4}\/etc\/cron\.d\/job/);
+});
+
+test("without risks there is no such warning", () => {
+  const prompt = uploadPrompt(summary({ new_files: ["/srv/a"] }));
+
+  assert.doesNotMatch(prompt.detail, /WARNING/);
+  assert.equal(prompt.confirmLabel, "Upload");
+});
+
 test("long lists stop after ten paths", () => {
   const files = Array.from({ length: 13 }, (_, index) => `/etc/f${index}`);
 

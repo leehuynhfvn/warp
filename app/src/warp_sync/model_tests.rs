@@ -436,6 +436,54 @@ fn await_upload(app: &mut warpui::App, model: &ModelHandle<WarpSyncModel>, reque
     });
 }
 
+#[test]
+fn the_confirmation_carries_the_risks_of_the_new_entries() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let PendingUpload {
+            shell,
+            mut prepared,
+            ..
+        } = pending_upload("prod-1", "/etc/nginx");
+        prepared.archive.new_files = vec![
+            "/etc/cron.d/job".to_owned(),
+            "/etc/nginx/open.conf".to_owned(),
+            "/etc/nginx/plain.conf".to_owned(),
+        ];
+        prepared.archive.new_modes = BTreeMap::from([
+            ("/etc/cron.d/job".to_owned(), 0o644),
+            ("/etc/nginx/open.conf".to_owned(), 0o666),
+            ("/etc/nginx/plain.conf".to_owned(), 0o644),
+        ]);
+
+        model.update(&mut app, |model, ctx| {
+            model
+                .try_begin_sync("prod-1", "/etc/nginx")
+                .expect("path is free");
+            let key = ("prod-1".to_owned(), "/etc/nginx".to_owned());
+            model.await_upload_confirmation(
+                shell,
+                "prod-1".to_owned(),
+                prepared,
+                key,
+                Requester::Window(WindowId::new()),
+                ctx,
+            );
+        });
+
+        let events = events.borrow();
+        let [WarpSyncEvent::UploadNeedsConfirmation { summary, .. }] = events.as_slice() else {
+            panic!("expected one upload confirmation, got {events:?}");
+        };
+        assert_eq!(summary.risks.runs_code, vec!["/etc/cron.d/job".to_owned()]);
+        assert_eq!(
+            summary.risks.world_writable,
+            vec!["/etc/nginx/open.conf".to_owned()]
+        );
+    });
+}
+
 fn sole_external_id(app: &warpui::App, model: &ModelHandle<WarpSyncModel>) -> Uuid {
     model.read(app, |model, _| {
         let mut ids = model.external_pending.keys().copied();

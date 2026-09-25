@@ -331,6 +331,8 @@ fn an_upload_confirmation_carries_the_summary_and_conflicts() {
                 new_files: vec!["/etc/nginx/new.conf".to_owned()],
                 new_file_modes: BTreeMap::new(),
                 creates_under: None,
+                world_writable: Vec::new(),
+                runs_code: Vec::new(),
                 missing_locally: Vec::new(),
                 remote_conflicts: Some(SyncRemoteConflicts {
                     changed: vec!["/etc/nginx/nginx.conf".to_owned()],
@@ -346,6 +348,8 @@ fn an_upload_confirmation_carries_the_summary_and_conflicts() {
     assert_eq!(value["summary"]["remote_user"], "root");
     assert!(value["summary"].get("new_file_modes").is_none());
     assert!(value["summary"].get("creates_under").is_none());
+    assert!(value["summary"].get("world_writable").is_none());
+    assert!(value["summary"].get("runs_code").is_none());
     assert_eq!(
         value["summary"]["remote_conflicts"]["changed"],
         serde_json::json!(["/etc/nginx/nginx.conf"])
@@ -368,6 +372,8 @@ fn an_upload_summary_names_what_is_created_with_the_modes_it_gets() {
             ("/root/new-dir/a".to_owned(), "0600".to_owned()),
         ]),
         creates_under: Some("/root".to_owned()),
+        world_writable: vec!["/root/new-dir/a".to_owned()],
+        runs_code: vec!["/root/.ssh/authorized_keys".to_owned()],
         missing_locally: Vec::new(),
         remote_conflicts: None,
         ownership_may_be_incomplete: false,
@@ -382,6 +388,11 @@ fn an_upload_summary_names_what_is_created_with_the_modes_it_gets() {
     });
 
     assert_eq!(value["summary"]["creates_under"], "/root");
+    assert_eq!(value["summary"]["world_writable"][0], "/root/new-dir/a");
+    assert_eq!(
+        value["summary"]["runs_code"][0],
+        "/root/.ssh/authorized_keys"
+    );
     assert_eq!(
         value["summary"]["new_file_modes"]["/root/new-dir/a"],
         "0600"
@@ -401,6 +412,7 @@ fn an_upload_summary_from_an_older_app_still_parses() {
 
     assert!(summary.new_file_modes.is_empty());
     assert_eq!(summary.creates_under, None);
+    assert!(summary.world_writable.is_empty() && summary.runs_code.is_empty());
 }
 
 #[test]

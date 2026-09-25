@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use pathfinder_geometry::vector::vec2f;
@@ -198,6 +199,7 @@ fn upload_body(summary: &UploadSummary) -> String {
             }
         }
     }
+    sections.extend(risk_sections(summary));
     if !summary.missing_locally.is_empty() {
         sections.push(format!(
             "Missing from the local mirror (they will NOT be deleted on the server):\n{}",
@@ -221,12 +223,37 @@ fn upload_body(summary: &UploadSummary) -> String {
     sections.join("\n\n")
 }
 
+fn risk_sections(summary: &UploadSummary) -> Vec<String> {
+    let mut sections = Vec::new();
+    if !summary.risks.world_writable.is_empty() {
+        sections.push(format!(
+            "WARNING: anyone on the server could change these new entries (mode allows write \
+             for others):\n{}",
+            bullet_list(&with_modes(
+                &summary.risks.world_writable,
+                &summary.new_modes
+            ))
+        ));
+    }
+    if !summary.risks.runs_code.is_empty() {
+        sections.push(format!(
+            "WARNING: these new entries are where the server runs or trusts what it finds (cron, \
+             sudoers, shell startup files, ssh keys, services, program directories):\n{}",
+            bullet_list(&summary.risks.runs_code)
+        ));
+    }
+    sections
+}
+
 /// The new entries, each with the mode it gets on the server where that is known.
 fn new_entry_lines(summary: &UploadSummary) -> Vec<String> {
-    summary
-        .new_files
+    with_modes(&summary.new_files, &summary.new_modes)
+}
+
+fn with_modes(paths: &[String], modes: &BTreeMap<String, u32>) -> Vec<String> {
+    paths
         .iter()
-        .map(|path| match summary.new_modes.get(path) {
+        .map(|path| match modes.get(path) {
             Some(mode) => format!("{path} (mode {mode:04o})"),
             None => path.clone(),
         })

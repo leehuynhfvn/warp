@@ -35,6 +35,10 @@ export interface UploadSummary {
   new_file_modes?: Record<string, string>;
   /** The synced directory the path is created in, when it is not on the server yet. */
   creates_under?: string;
+  /** New entries that anyone on the server could change. */
+  world_writable?: string[];
+  /** New entries where the server runs or trusts what it finds (cron, sudoers, ssh keys, …). */
+  runs_code?: string[];
   missing_locally: string[];
   remote_conflicts?: RemoteConflicts;
   ownership_may_be_incomplete: boolean;
@@ -183,6 +187,8 @@ function isUploadSummary(value: unknown): value is UploadSummary {
     isStringArray(value.new_files) &&
     isOptional(value.new_file_modes, isStringRecord) &&
     isOptional(value.creates_under, isString) &&
+    isOptional(value.world_writable, isStringArray) &&
+    isOptional(value.runs_code, isStringArray) &&
     isStringArray(value.missing_locally) &&
     isOptional(value.remote_conflicts, isConflicts) &&
     typeof value.ownership_may_be_incomplete === "boolean" &&

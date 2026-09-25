@@ -291,6 +291,23 @@ fn render_upload_summary(summary: &SyncUploadSummary) -> String {
         }
         list_paths(&mut text, "  ", &with_modes(summary));
     }
+    for (heading, paths) in [
+        (
+            "WARNING: anyone on the server could change these new entries (their mode allows \
+             write for others):",
+            &summary.world_writable,
+        ),
+        (
+            "WARNING: these new entries are where the server runs or trusts what it finds (cron, \
+             sudoers, shell startup files, ssh keys, services, program directories):",
+            &summary.runs_code,
+        ),
+    ] {
+        if !paths.is_empty() {
+            let _ = write!(text, "\n{heading}");
+            list_paths(&mut text, "  ", paths);
+        }
+    }
     if !summary.missing_locally.is_empty() {
         text.push_str("\nMissing from the mirror (they will not be deleted on the server):");
         list_paths(&mut text, "  ", &summary.missing_locally);

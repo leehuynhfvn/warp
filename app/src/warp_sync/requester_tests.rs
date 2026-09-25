@@ -147,6 +147,10 @@ fn an_upload_confirmation_escapes_every_server_string() {
         new_files: vec!["/etc/n\new".to_owned()],
         new_modes: BTreeMap::from([("/etc/n\new".to_owned(), 0o600)]),
         creates_under: Some("/et\nc".to_owned()),
+        risks: UploadRisks {
+            world_writable: vec!["/etc/w\nw".to_owned()],
+            runs_code: vec!["/etc/cron.d/j\u{202e}ob".to_owned()],
+        },
         missing_locally: vec!["/etc/m\tissing".to_owned()],
         remote_check: RemoteCheck::Checked(RemoteConflicts {
             changed: vec!["/etc/c\rhanged".to_owned()],
@@ -170,6 +174,11 @@ fn an_upload_confirmation_escapes_every_server_string() {
         BTreeMap::from([("/etc/n\\new".to_owned(), 0o600)])
     );
     assert_eq!(summary.creates_under.as_deref(), Some("/et\\nc"));
+    assert_eq!(summary.risks.world_writable, vec!["/etc/w\\nw".to_owned()]);
+    assert_eq!(
+        summary.risks.runs_code,
+        vec!["/etc/cron.d/j\\u{202e}ob".to_owned()]
+    );
     assert_eq!(summary.missing_locally, vec!["/etc/m\\tissing".to_owned()]);
     assert_eq!(summary.server_id_tail.as_deref(), Some("ab\\ncd"));
     let RemoteCheck::Checked(conflicts) = summary.remote_check else {
@@ -196,6 +205,7 @@ fn an_unavailable_remote_check_stays_unavailable() {
         new_files: Vec::new(),
         new_modes: BTreeMap::new(),
         creates_under: None,
+        risks: UploadRisks::default(),
         missing_locally: Vec::new(),
         remote_check: RemoteCheck::Unavailable,
         ownership_may_be_incomplete: true,

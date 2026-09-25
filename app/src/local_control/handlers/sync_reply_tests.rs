@@ -6,6 +6,7 @@ use uuid::Uuid;
 use super::*;
 use crate::warp_sync::remote_check::RemoteConflicts;
 use crate::warp_sync::requester::SkippedEntry;
+use crate::warp_sync::risk::UploadRisks;
 
 fn upload_summary(remote_check: RemoteCheck) -> UploadSummary {
     UploadSummary {
@@ -18,6 +19,7 @@ fn upload_summary(remote_check: RemoteCheck) -> UploadSummary {
         new_files: vec!["/etc/nginx/new.conf".to_owned()],
         new_modes: BTreeMap::from([("/etc/nginx/new.conf".to_owned(), 0o600)]),
         creates_under: None,
+        risks: UploadRisks::default(),
         missing_locally: vec!["/etc/nginx/old.conf".to_owned()],
         remote_check,
         ownership_may_be_incomplete: true,
@@ -139,6 +141,31 @@ fn an_upload_confirmation_carries_the_modes_and_where_the_path_is_created() {
         summary.new_file_modes,
         BTreeMap::from([("/etc/nginx/new.conf".to_owned(), "0600".to_owned())])
     );
+}
+
+#[test]
+fn an_upload_confirmation_carries_the_risks() {
+    let summary = UploadSummary {
+        risks: UploadRisks {
+            world_writable: vec!["/srv/open".to_owned()],
+            runs_code: vec!["/etc/cron.d/job".to_owned()],
+        },
+        ..upload_summary(RemoteCheck::Unavailable)
+    };
+
+    let SyncResult::NeedsConfirmation {
+        confirmation: SyncConfirmation::Upload { summary },
+        ..
+    } = sync_result(SyncReply::NeedsConfirmation {
+        pending_id: Uuid::new_v4(),
+        kind: ConfirmationKind::Upload(Box::new(summary)),
+    })
+    else {
+        panic!("expected an upload confirmation");
+    };
+
+    assert_eq!(summary.world_writable, vec!["/srv/open".to_owned()]);
+    assert_eq!(summary.runs_code, vec!["/etc/cron.d/job".to_owned()]);
 }
 
 #[test]

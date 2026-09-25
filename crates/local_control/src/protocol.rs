@@ -401,6 +401,13 @@ pub struct SyncUploadSummary {
     /// nothing is replaced and no backup is made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creates_under: Option<String>,
+    /// New entries that anyone on the server could change (their mode allows write for others).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub world_writable: Vec<String>,
+    /// New entries in places where the server runs or trusts what it finds, such as cron,
+    /// sudoers, shell startup files and ssh keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs_code: Vec<String>,
     pub missing_locally: Vec<String>,
     /// Absent when the server has no tool to hash files, so nothing could be compared.
     #[serde(default, skip_serializing_if = "Option::is_none")]

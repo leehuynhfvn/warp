@@ -11,6 +11,7 @@ use super::diff::FileDifference;
 use super::model::UploadSummary;
 use super::paths::printable;
 use super::remote_check::{RemoteCheck, RemoteConflicts};
+use super::risk::UploadRisks;
 use super::transfer::{CompareOutcome, DownloadOutcome, UploadOutcome};
 
 /// The party that started an operation.
@@ -225,6 +226,10 @@ impl ConfirmationKind {
                 .map(|(path, mode)| (printable(&path), mode))
                 .collect(),
             creates_under: summary.creates_under.as_deref().map(printable),
+            risks: UploadRisks {
+                world_writable: printable_all(summary.risks.world_writable),
+                runs_code: printable_all(summary.risks.runs_code),
+            },
             missing_locally: printable_all(summary.missing_locally),
             remote_check: printable_check(summary.remote_check),
             server_id_tail: summary.server_id_tail.as_deref().map(printable),

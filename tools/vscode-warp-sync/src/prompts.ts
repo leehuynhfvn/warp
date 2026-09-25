@@ -42,8 +42,11 @@ function section(heading: string, paths: readonly string[]): string[] {
 
 /** The new entries, each followed by its mode where Warp reports one. */
 function newEntries(summary: UploadSummary): string[] {
-  const modes = summary.new_file_modes ?? {};
-  return summary.new_files.map((path) => {
+  return withModes(summary.new_files, summary.new_file_modes);
+}
+
+function withModes(paths: readonly string[], modes: Record<string, string> = {}): string[] {
+  return paths.map((path) => {
     const mode = Object.hasOwn(modes, path) ? modes[path] : undefined;
     return mode === undefined ? path : `${path} (mode ${mode})`;
   });
@@ -70,6 +73,16 @@ export function uploadPrompt(summary: UploadSummary): Prompt {
       ),
     );
   }
+  warnings.push(
+    ...section(
+      "WARNING: anyone on the server could change these new entries (their mode allows write for others):",
+      withModes(summary.world_writable ?? [], summary.new_file_modes),
+    ),
+    ...section(
+      "WARNING: these new entries are where the server runs or trusts what it finds (cron, sudoers, shell startup files, ssh keys, services, program directories):",
+      summary.runs_code ?? [],
+    ),
+  );
   const target = `${summary.remote_user}@${summary.hostname}`;
   const machine = summary.server_id_tail === undefined ? "" : ` (machine id ending ${summary.server_id_tail})`;
   const lines = [

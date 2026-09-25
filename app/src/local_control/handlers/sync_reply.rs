@@ -105,6 +105,8 @@ fn upload_summary(summary: UploadSummary) -> SyncUploadSummary {
             .map(|(path, mode)| (path, format!("{mode:04o}")))
             .collect(),
         creates_under: summary.creates_under,
+        world_writable: summary.risks.world_writable,
+        runs_code: summary.risks.runs_code,
         missing_locally: summary.missing_locally,
         remote_conflicts: match summary.remote_check {
             RemoteCheck::Unavailable => None,

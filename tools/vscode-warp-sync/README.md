@@ -33,6 +33,12 @@ only calls `warpctrl`; it never talks to the server itself.
   be created (with the permission bits each one gets, taken from your local copy), files missing
   from the mirror (never deleted on the server), and warns when the server changed since the last
   sync. Cancelling sends nothing.
+- The dialog also warns, and the button becomes *Upload Anyway*, when a **new** entry can be
+  changed by anyone on the server (its mode allows write for others, for example after
+  `chmod 666`), or is created where the server runs or trusts what it finds: cron and systemd
+  directories, `sudoers`, `/etc/profile*`, `pam.d`, `sshd` configuration, program directories such
+  as `/usr/local/bin`, shell startup files (`.bashrc`, `.profile`, …), anything under `.ssh`, and
+  autostart directories. It is a warning, not a block: check the paths, then decide.
 - A file or folder that you created in the mirror and that is not on the server yet can be
   uploaded directly, as long as a folder above it was downloaded and still exists on the server.
   The dialog then lists the folders that will be created and says that nothing is replaced. If a

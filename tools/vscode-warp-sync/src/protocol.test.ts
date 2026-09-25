@@ -98,3 +98,13 @@ test("the modes and the directory a new path is created in are accepted, and mus
   assert.equal(parseSyncResult(upload({ ...creating, new_file_modes: ["0755"] })), undefined);
   assert.equal(parseSyncResult(upload({ ...creating, creates_under: null })), undefined);
 });
+
+test("the risk lists are optional and must be lists of strings", () => {
+  const upload = (value: object) => ({ status: "needs_confirmation", pending_id: "id", kind: "upload", summary: value });
+
+  assert.ok(parseSyncResult(upload({ ...summary, world_writable: ["/a"], runs_code: ["/b"] })) !== undefined);
+  assert.ok(parseSyncResult(upload(summary)) !== undefined);
+  assert.equal(parseSyncResult(upload({ ...summary, world_writable: "/a" })), undefined);
+  assert.equal(parseSyncResult(upload({ ...summary, runs_code: [1] })), undefined);
+  assert.equal(parseSyncResult(upload({ ...summary, runs_code: null })), undefined);
+});

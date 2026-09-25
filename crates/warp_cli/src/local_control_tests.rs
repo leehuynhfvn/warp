@@ -917,6 +917,8 @@ fn upload_summary(remote_conflicts: Option<SyncRemoteConflicts>) -> SyncUploadSu
         new_files: vec!["/etc/nginx/new.conf".to_owned()],
         new_file_modes: BTreeMap::new(),
         creates_under: None,
+        world_writable: Vec::new(),
+        runs_code: Vec::new(),
         missing_locally: vec!["/etc/nginx/old.conf".to_owned()],
         remote_conflicts,
         ownership_may_be_incomplete: true,
@@ -987,6 +989,38 @@ fn a_new_upload_says_what_it_creates_where_and_with_which_modes() {
         assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
     }
     assert!(!text.contains("New files:"), "{text}");
+}
+
+#[test]
+fn an_upload_warns_about_writable_entries_and_places_that_run_code() {
+    let summary = SyncUploadSummary {
+        world_writable: vec!["/srv/open.sh".to_owned()],
+        runs_code: vec!["/etc/cron.d/job".to_owned()],
+        ..upload_summary(Some(SyncRemoteConflicts::default()))
+    };
+
+    let text = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(summary),
+        },
+    });
+
+    for expected in [
+        "WARNING: anyone on the server could change these new entries",
+        "  /srv/open.sh",
+        "WARNING: these new entries are where the server runs or trusts what it finds",
+        "  /etc/cron.d/job",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+    let clean = sync::render_sync_result(&SyncResult::NeedsConfirmation {
+        pending_id: uuid::Uuid::new_v4(),
+        confirmation: SyncConfirmation::Upload {
+            summary: Box::new(upload_summary(Some(SyncRemoteConflicts::default()))),
+        },
+    });
+    assert!(!clean.contains("where the server runs"), "{clean}");
 }
 
 #[test]
