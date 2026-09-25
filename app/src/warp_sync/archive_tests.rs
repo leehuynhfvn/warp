@@ -132,6 +132,16 @@ impl Mirror {
     }
 }
 
+#[cfg(unix)]
+fn set_local_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn set_local_mode(_path: &Path, _mode: u32) {}
+
 fn entries_of_upload(upload: &UploadArchive) -> ExtractReport {
     let staging = tempfile::tempdir().unwrap();
     extract(&upload.bytes, &staging.path().join("s")).unwrap()
@@ -524,6 +534,8 @@ fn upload_carries_edits_new_files_and_reports_missing_ones() {
     fs::write(mirror.local("c.conf"), "new c").unwrap();
     fs::create_dir(mirror.local("sub")).unwrap();
     fs::write(mirror.local("sub/d.conf"), "new d").unwrap();
+    set_local_mode(&mirror.local("c.conf"), 0o644);
+    set_local_mode(&mirror.local("sub"), 0o755);
 
     let upload = mirror.build().unwrap();
 
@@ -554,6 +566,64 @@ fn upload_carries_edits_new_files_and_reports_missing_ones() {
     let nested = &report.entries["/etc/conf/sub/d.conf"];
     assert_eq!((nested.uid, nested.gname.as_str()), (33, "www-data"));
     assert!(!report.entries.contains_key("/etc/conf/b.conf"));
+}
+
+#[cfg(unix)]
+#[test]
+fn new_entries_take_the_permission_bits_of_the_local_copy() {
+    let mirror = Mirror::new();
+    fs::write(mirror.local("secret.conf"), "s").unwrap();
+    fs::write(mirror.local("tool.sh"), "t").unwrap();
+    fs::create_dir(mirror.local("private")).unwrap();
+    set_local_mode(&mirror.local("secret.conf"), 0o600);
+    set_local_mode(&mirror.local("tool.sh"), 0o755);
+    set_local_mode(&mirror.local("private"), 0o700);
+
+    let report = entries_of_upload(&mirror.build().unwrap());
+
+    assert_eq!(report.entries["/etc/conf/secret.conf"].mode, 0o600);
+    assert_eq!(report.entries["/etc/conf/tool.sh"].mode, 0o755);
+    assert_eq!(report.entries["/etc/conf/private"].mode, 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_local_mode_of_a_known_entry_does_not_change_what_the_server_has() {
+    let mirror = Mirror::new();
+    set_local_mode(&mirror.local("a.conf"), 0o777);
+
+    let report = entries_of_upload(&mirror.build().unwrap());
+
+    assert_eq!(report.entries["/etc/conf/a.conf"].mode, 0o640);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_file_with_setuid_or_setgid_bits_is_refused() {
+    for mode in [0o4755, 0o2755, 0o6755] {
+        let mirror = Mirror::new();
+        fs::write(mirror.local("new.sh"), "x").unwrap();
+        set_local_mode(&mirror.local("new.sh"), mode);
+
+        let result = mirror.build();
+
+        assert!(
+            matches!(result, Err(WarpSyncError::SpecialMode(ref path)) if path == "/etc/conf/new.sh"),
+            "{mode:o}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_directory_never_gets_special_bits_from_the_local_copy() {
+    let mirror = Mirror::new();
+    fs::create_dir(mirror.local("sub")).unwrap();
+    set_local_mode(&mirror.local("sub"), 0o3775);
+
+    let report = entries_of_upload(&mirror.build().unwrap());
+
+    assert_eq!(report.entries["/etc/conf/sub"].mode, 0o775);
 }
 
 #[test]

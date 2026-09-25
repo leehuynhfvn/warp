@@ -21,8 +21,14 @@ use super::{MAX_ENTRIES, MAX_EXTRACTED_BYTES, WarpSyncError};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
+/// Modes of new entries whose local copy has no permission bits to go by.
 const NEW_FILE_MODE: u32 = 0o644;
 const NEW_DIR_MODE: u32 = 0o755;
+
+/// What a new file keeps of its local mode: the `rwx` bits, and setuid/setgid so that they can be
+/// refused rather than silently dropped.
+const NEW_FILE_MODE_MASK: u32 = 0o6777;
+const NEW_DIR_MODE_MASK: u32 = 0o777;
 
 /// Permission bits the local user always keeps, so that mirrored files stay editable and
 /// directories stay traversable. The remote mode is preserved in the manifest instead.
@@ -404,6 +410,8 @@ struct LocalItem {
     is_dir: bool,
     len: u64,
     mtime: u64,
+    /// Permission bits of the local copy; `None` where the platform has none.
+    mode: Option<u32>,
 }
 
 impl LocalItem {
@@ -456,9 +464,22 @@ fn collect_local(local_root: &Path, root: &str) -> Result<Vec<LocalItem>, WarpSy
             is_dir,
             len: metadata.len(),
             mtime,
+            mode: local_mode(&metadata),
         });
     }
     Ok(items)
+}
+
+#[cfg(unix)]
+fn local_mode(metadata: &fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Some(metadata.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn local_mode(_metadata: &fs::Metadata) -> Option<u32> {
+    None
 }
 
 type PendingChild = (PathBuf, String, fs::Metadata);
@@ -495,7 +516,8 @@ fn read_children(dir: &Path, relative: &str) -> Result<Vec<PendingChild>, WarpSy
 }
 
 /// Packs the mirror of the remote path `root`. Modes and ownership of known entries come from
-/// the manifest; new entries inherit the owner of the closest known directory.
+/// the manifest; new entries inherit the owner of the closest known directory and keep the
+/// permission bits of their local copy.
 pub fn build_upload(
     root: &str,
     manifest: &Manifest,
@@ -611,11 +633,7 @@ fn new_entry_meta(
         } else {
             EntryKind::File
         },
-        mode: if item.is_dir {
-            NEW_DIR_MODE
-        } else {
-            NEW_FILE_MODE
-        },
+        mode: new_entry_mode(item),
         uid: owner.uid,
         gid: owner.gid,
         uname: owner.uname.clone(),
@@ -624,6 +642,15 @@ fn new_entry_meta(
         size: None,
         sha256: None,
     })
+}
+
+fn new_entry_mode(item: &LocalItem) -> u32 {
+    let (mask, fallback) = if item.is_dir {
+        (NEW_DIR_MODE_MASK, NEW_DIR_MODE)
+    } else {
+        (NEW_FILE_MODE_MASK, NEW_FILE_MODE)
+    };
+    item.mode.map_or(fallback, |mode| mode & mask)
 }
 
 fn append_item<W: Write>(
