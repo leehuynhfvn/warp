@@ -178,6 +178,58 @@ pub struct SyncPendingParams {
     pub pending_id: Uuid,
 }
 
+/// Parameters for `remote.exec`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteExecParams {
+    pub command: String,
+    /// Absolute directory to run in; the session's current directory when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u32>,
+    /// Name of the calling client. Recorded in the audit log only; it never grants access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Parameters for `remote.file.read`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteFileReadParams {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// What must hold on the server for `remote.file.write` to go ahead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WriteExpectation {
+    MustNotExist,
+    /// The file currently has this SHA-256 (64 lowercase hex characters).
+    MustMatch { sha256: String },
+}
+
+/// Parameters for `remote.file.write`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteFileWriteParams {
+    pub path: String,
+    pub content_base64: String,
+    pub expectation: WriteExpectation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Parameters for `remote.output.recent`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteOutputRecentParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabActivateParams {
@@ -648,6 +700,14 @@ pub enum ErrorCode {
     NotAllowlisted,
     /// A Warp Sync operation failed; the message says why.
     SyncFailed,
+    /// The target session has not been attached by the user, or the attachment expired.
+    SessionNotAttached,
+    /// The session's shell is running a command, so nothing can be run in it right now.
+    SessionBusy,
+    /// A remote operation did not finish in time.
+    Timeout,
+    /// A remote operation ran and failed; the message says why.
+    RemoteOperationFailed,
     Internal,
 }
 

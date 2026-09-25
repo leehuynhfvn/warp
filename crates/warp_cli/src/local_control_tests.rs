@@ -237,6 +237,15 @@ fn generated_bash_completions_include_readonly_commands() {
     assert!(!completions.contains("block"));
 }
 
+/// Remote actions are declared before `warpctrl remote` exists.
+const REMOTE_ACTIONS_WITHOUT_CLI: &[ActionKind] = &[
+    ActionKind::RemoteSessionList,
+    ActionKind::RemoteExec,
+    ActionKind::RemoteFileRead,
+    ActionKind::RemoteFileWrite,
+    ActionKind::RemoteOutputRecent,
+];
+
 #[test]
 fn every_retained_catalog_action_has_a_parseable_cli_example() {
     let mut covered = HashSet::new();
@@ -246,7 +255,11 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
         assert_eq!(parsed_action_kind(&args.command), Some(kind));
         covered.insert(kind);
     }
-    let expected = ActionKind::ALL.iter().copied().collect::<HashSet<_>>();
+    let expected = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !REMOTE_ACTIONS_WITHOUT_CLI.contains(kind))
+        .collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)
         .map(|kind| kind.as_str())

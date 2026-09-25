@@ -46,6 +46,10 @@ pub enum ActionParameterSpec {
     Namespace,
     PageQuery,
     Query,
+    RemoteExec,
+    RemoteFileRead,
+    RemoteFileWrite,
+    RemoteOutputRecent,
     Rename,
     Resize,
     SyncPath,
@@ -71,6 +75,11 @@ pub enum ActionResultSpec {
     InstanceMetadata,
     KeybindingList,
     KeybindingMetadata,
+    RemoteExecResult,
+    RemoteFileContent,
+    RemoteFileWriteResult,
+    RemoteOutputRecent,
+    RemoteSessionList,
     SettingList,
     SettingValue,
     SurfaceList,
@@ -301,6 +310,14 @@ define_action_catalog! {
         SyncConfirm => { name: "sync.confirm", status: Implemented, target: File, params: SyncPending, result: SyncResult },
         SyncCancel => { name: "sync.cancel", status: Implemented, target: File, params: SyncPending, result: SyncResult },
         SyncCompare => { name: "sync.compare", status: Implemented, target: File, params: SyncPath, result: SyncResult },
+    }
+
+    remote {
+        RemoteSessionList => { name: "remote.session.list", status: Stub, target: Instance, params: None, result: RemoteSessionList },
+        RemoteExec => { name: "remote.exec", status: Stub, target: Session, params: RemoteExec, result: RemoteExecResult },
+        RemoteFileRead => { name: "remote.file.read", status: Stub, target: Session, params: RemoteFileRead, result: RemoteFileContent },
+        RemoteFileWrite => { name: "remote.file.write", status: Stub, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
+        RemoteOutputRecent => { name: "remote.output.recent", status: Stub, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },
     }
 
     file {

@@ -707,8 +707,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 ### Tiến độ
 
-- [ ] Phase 0 — Worktree + commit plan
-- [ ] 1.1 Protocol · [ ] 1.2 Visibility Warp Sync · [ ] 1.3 mod/error · [ ] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
+- [x] Phase 0 — Worktree + commit plan
+- [x] 1.1 Protocol · [ ] 1.2 Visibility Warp Sync · [ ] 1.3 mod/error · [ ] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
 - [ ] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
@@ -732,6 +732,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D10 | 2026-09-24 | v1: máy local unix, server Linux, shell POSIX (bash/zsh/fish qua wrapper) | Broker dùng Unix socket; PowerShell/Windows để v2 |
 | D11 | 2026-09-25 | Chữ trên palette/toast/lỗi trung lập với agent ("Allow agents …"); tên action `workspace:agent_bridge_*` giữ nguyên | Roadmap agent-ops: nhiều MCP client (Codex, Gemini CLI) dùng chung Bridge |
 | D12 | 2026-09-25 | Params `remote.*` có `agent: Option<String>`; audit ghi `agent` + `request_id` | Truy vết theo agent và gắn với lượt duyệt ở O2/O6; thêm sau sẽ phải đổi protocol |
+| D13 | 2026-09-25 | Rebase lên `feature/warp-sync` (31 commit mới); bỏ Task 2.4 (`BridgeResult::Pending`, `SyncReceiver`, `send_request_with_timeout` đã có); Task 1.2 chỉ cần mở `remote_script` + `PAYLOAD_FILE_NAME` (`paths` không cần vì `normalize_remote_path` đã `pub use`) | Đúng ghi chú Phase 2 của plan và thực trạng code |
+| D14 | 2026-09-25 | Lệnh cargo phải kèm `-p warp` (vd. `cargo test -p warp -p warp_cli --lib local_control`) | `-p warp_cli`/`-p local_control` đứng riêng không bật `dlopen` của `yeslogic-fontconfig-sys` → build script fail vì máy thiếu `fontconfig-devel` |
 
 ### Nhật ký
 
@@ -741,3 +743,5 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
   sẵn (`../warp-agent-bridge`, nhánh `feature/agent-bridge`), nhưng nhánh đang dựa trên
   `8fd3fb406` — **việc đầu tiên của phiên kế tiếp**: `git rebase feature/warp-sync`, rồi kiểm lại
   Task 1.2 và bỏ qua Task 2.4 (xem ghi chú ở Phase 2).
+- 2026-09-25 — Phase 0: rebase `feature/agent-bridge` lên `feature/warp-sync` xong (D13); `cargo check -p warp -p local_control -p warp_cli` pass.
+- 2026-09-25 — Task 1.1: 5 action `remote.*` (Stub), params + `WriteExpectation`, 4 `ErrorCode`, spec mới trong catalog; resolver + arm `UnsupportedAction` trong bridge. Test catalog (`STUB_ACTIONS`) và `warp_cli` (`REMOTE_ACTIONS_WITHOUT_CLI`) tạm loại nhóm remote — gỡ ở Task 2.5 / 2.7 / 4.1.

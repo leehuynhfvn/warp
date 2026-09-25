@@ -166,7 +166,18 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 fn catalog_has_exactly_the_retained_and_sync_actions() {
     const RETAINED_ACTIONS: usize = 84;
     const SYNC_ACTIONS: usize = 6;
-    assert_eq!(ActionKind::ALL.len(), RETAINED_ACTIONS + SYNC_ACTIONS);
+    const REMOTE_ACTIONS: usize = 5;
+    assert_eq!(
+        ActionKind::ALL.len(),
+        RETAINED_ACTIONS + SYNC_ACTIONS + REMOTE_ACTIONS
+    );
+}
+
+#[test]
+fn action_names_are_unique() {
+    let names: std::collections::HashSet<&str> =
+        ActionKind::ALL.iter().map(|kind| kind.as_str()).collect();
+    assert_eq!(names.len(), ActionKind::ALL.len());
 }
 
 #[test]
@@ -206,14 +217,27 @@ fn direct_surface_actions_have_stable_names() {
     );
 }
 
+/// Actions declared in the catalog whose app-side handler has not landed yet.
+const STUB_ACTIONS: &[ActionKind] = &[
+    ActionKind::RemoteSessionList,
+    ActionKind::RemoteExec,
+    ActionKind::RemoteFileRead,
+    ActionKind::RemoteFileWrite,
+    ActionKind::RemoteOutputRecent,
+];
+
 #[test]
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
+        let expected = if STUB_ACTIONS.contains(kind) {
+            ActionImplementationStatus::Stub
+        } else {
+            ActionImplementationStatus::Implemented
+        };
         assert_eq!(
-            metadata.implementation_status,
-            ActionImplementationStatus::Implemented,
-            "{} should be implemented",
+            metadata.implementation_status, expected,
+            "{} has an unexpected implementation status",
             metadata.name,
         );
     }
@@ -225,7 +249,12 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    assert_eq!(actions, ActionKind::ALL);
+    let expected = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !STUB_ACTIONS.contains(kind))
+        .collect::<Vec<_>>();
+    assert_eq!(actions, expected);
 }
 
 #[test]
@@ -471,5 +500,165 @@ fn every_sync_result_shape_roundtrips() {
 
     for result in &results {
         roundtrip(result);
+    }
+}
+
+#[test]
+fn remote_actions_have_stable_names_and_session_targets() {
+    let actions = [
+        (ActionKind::RemoteSessionList, "remote.session.list", TargetScope::Instance),
+        (ActionKind::RemoteExec, "remote.exec", TargetScope::Session),
+        (ActionKind::RemoteFileRead, "remote.file.read", TargetScope::Session),
+        (ActionKind::RemoteFileWrite, "remote.file.write", TargetScope::Session),
+        (ActionKind::RemoteOutputRecent, "remote.output.recent", TargetScope::Session),
+    ];
+    for (kind, name, scope) in actions {
+        assert_eq!(kind.as_str(), name);
+        assert_eq!(kind.metadata().target_scope, scope);
+        assert_eq!(
+            serde_json::to_value(kind).expect("kind serializes"),
+            serde_json::json!(name)
+        );
+    }
+}
+
+#[test]
+fn write_expectation_serializes_with_a_type_tag() {
+    let must_not_exist = serde_json::to_value(WriteExpectation::MustNotExist)
+        .expect("expectation serializes");
+    assert_eq!(must_not_exist, serde_json::json!({ "type": "must_not_exist" }));
+
+    let sha256 = "a".repeat(64);
+    let must_match = serde_json::to_value(WriteExpectation::MustMatch {
+        sha256: sha256.clone(),
+    })
+    .expect("expectation serializes");
+    assert_eq!(
+        must_match,
+        serde_json::json!({ "type": "must_match", "sha256": sha256 })
+    );
+
+    let parsed: WriteExpectation = serde_json::from_value(must_match).expect("round trips");
+    assert_eq!(parsed, WriteExpectation::MustMatch { sha256 });
+}
+
+#[test]
+fn write_expectation_rejects_unknown_types_and_fields() {
+    for value in [
+        serde_json::json!({ "type": "overwrite" }),
+        serde_json::json!({ "type": "must_match" }),
+        serde_json::json!({ "type": "must_match", "sha256": "abc", "force": true }),
+        serde_json::json!({}),
+    ] {
+        assert!(
+            serde_json::from_value::<WriteExpectation>(value.clone()).is_err(),
+            "{value} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn remote_params_roundtrip_and_omit_absent_options() {
+    let exec = Action::with_params(
+        ActionKind::RemoteExec,
+        RemoteExecParams {
+            command: "nginx -t".to_owned(),
+            cwd: None,
+            timeout_secs: None,
+            agent: None,
+        },
+    )
+    .expect("remote.exec params serialize");
+    assert_eq!(exec.params, serde_json::json!({ "command": "nginx -t" }));
+    let full = RemoteExecParams {
+        command: "ls".to_owned(),
+        cwd: Some("/etc".to_owned()),
+        timeout_secs: Some(30),
+        agent: Some("claude-code".to_owned()),
+    };
+    let action = Action::with_params(ActionKind::RemoteExec, full.clone()).expect("serializes");
+    assert_eq!(action.params_as::<RemoteExecParams>().expect("decodes"), full);
+
+    let read = RemoteFileReadParams {
+        path: "/etc/hosts".to_owned(),
+        agent: Some("codex".to_owned()),
+    };
+    let action = Action::with_params(ActionKind::RemoteFileRead, read.clone()).expect("serializes");
+    assert_eq!(action.params_as::<RemoteFileReadParams>().expect("decodes"), read);
+
+    let write = RemoteFileWriteParams {
+        path: "/etc/hosts".to_owned(),
+        content_base64: "aGk=".to_owned(),
+        expectation: WriteExpectation::MustNotExist,
+        agent: None,
+    };
+    let action =
+        Action::with_params(ActionKind::RemoteFileWrite, write.clone()).expect("serializes");
+    assert!(action.params.get("agent").is_none());
+    assert_eq!(action.params_as::<RemoteFileWriteParams>().expect("decodes"), write);
+
+    let recent = Action::with_params(
+        ActionKind::RemoteOutputRecent,
+        RemoteOutputRecentParams { count: Some(3) },
+    )
+    .expect("serializes");
+    assert_eq!(recent.params, serde_json::json!({ "count": 3 }));
+    assert_eq!(
+        Action::new(ActionKind::RemoteOutputRecent)
+            .params_as::<RemoteOutputRecentParams>()
+            .expect("count is optional"),
+        RemoteOutputRecentParams::default()
+    );
+}
+
+#[test]
+fn remote_params_deny_unknown_fields_and_missing_required_ones() {
+    for (kind, params) in [
+        (
+            ActionKind::RemoteExec,
+            serde_json::json!({ "command": "ls", "shell": "zsh" }),
+        ),
+        (ActionKind::RemoteExec, serde_json::json!({ "cwd": "/" })),
+        (
+            ActionKind::RemoteFileRead,
+            serde_json::json!({ "path": "/etc/hosts", "offset": 3 }),
+        ),
+        (
+            ActionKind::RemoteFileWrite,
+            serde_json::json!({ "path": "/x", "content_base64": "", "force": true,
+                                "expectation": { "type": "must_not_exist" } }),
+        ),
+        (
+            ActionKind::RemoteFileWrite,
+            serde_json::json!({ "path": "/x", "content_base64": "" }),
+        ),
+        (
+            ActionKind::RemoteOutputRecent,
+            serde_json::json!({ "count": 1, "session": "x" }),
+        ),
+    ] {
+        let action = Action { kind, params };
+        let error = match kind {
+            ActionKind::RemoteExec => action.params_as::<RemoteExecParams>().err(),
+            ActionKind::RemoteFileRead => action.params_as::<RemoteFileReadParams>().err(),
+            ActionKind::RemoteFileWrite => action.params_as::<RemoteFileWriteParams>().err(),
+            ActionKind::RemoteOutputRecent => action.params_as::<RemoteOutputRecentParams>().err(),
+            _ => None,
+        };
+        let error = error.unwrap_or_else(|| panic!("{} params should be rejected", kind.as_str()));
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+    }
+}
+
+#[test]
+fn remote_error_codes_serialize_as_machine_codes() {
+    for (code, name) in [
+        (ErrorCode::SessionNotAttached, "session_not_attached"),
+        (ErrorCode::SessionBusy, "session_busy"),
+        (ErrorCode::Timeout, "timeout"),
+        (ErrorCode::RemoteOperationFailed, "remote_operation_failed"),
+    ] {
+        assert_eq!(serde_json::to_value(code).expect("serializes"), serde_json::json!(name));
+        assert_eq!(code.to_string(), name);
     }
 }

@@ -207,6 +207,17 @@ impl LocalControlBridge {
             ActionKind::WindowClose => close::window_close(&self.instance_id, &request, ctx),
             ActionKind::TabClose => close::tab_close(&self.instance_id, &request, ctx),
             ActionKind::PaneClose => close::pane_close(&self.instance_id, &request, ctx),
+            ActionKind::RemoteSessionList
+            | ActionKind::RemoteExec
+            | ActionKind::RemoteFileRead
+            | ActionKind::RemoteFileWrite
+            | ActionKind::RemoteOutputRecent => Err(ControlError::new(
+                ErrorCode::UnsupportedAction,
+                format!(
+                    "{} is not implemented by this local-control bridge",
+                    request.action.kind.as_str()
+                ),
+            )),
             ActionKind::SyncStatus => {
                 return pending(
                     request.request_id,

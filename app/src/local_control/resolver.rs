@@ -2,7 +2,8 @@
 use ::local_control::protocol::{
     ActionNameParams, ActionParameterSpec, BindingNameParams, BooleanValueParams, ColorValueParams,
     DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams, NamespaceParams,
-    PageQueryParams, PaneTarget, QueryParams, RenameParams, ResizeParams, SessionTarget,
+    PageQueryParams, PaneTarget, QueryParams, RemoteExecParams, RemoteFileReadParams,
+    RemoteFileWriteParams, RemoteOutputRecentParams, RenameParams, ResizeParams, SessionTarget,
     SyncPathParams, SyncPendingParams, SyncStatusParams, TabActivateParams, TabCloseParams,
     TabCreateParams, TabTarget, TargetSelector, TextParams, ThemeNameParams, WindowTarget,
 };
@@ -44,6 +45,10 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         ActionParameterSpec::Namespace => parse_params::<NamespaceParams>(action),
         ActionParameterSpec::PageQuery => parse_params::<PageQueryParams>(action),
         ActionParameterSpec::Query => parse_params::<QueryParams>(action),
+        ActionParameterSpec::RemoteExec => parse_params::<RemoteExecParams>(action),
+        ActionParameterSpec::RemoteFileRead => parse_params::<RemoteFileReadParams>(action),
+        ActionParameterSpec::RemoteFileWrite => parse_params::<RemoteFileWriteParams>(action),
+        ActionParameterSpec::RemoteOutputRecent => parse_params::<RemoteOutputRecentParams>(action),
         ActionParameterSpec::Rename => parse_params::<RenameParams>(action),
         ActionParameterSpec::Resize => parse_params::<ResizeParams>(action),
         ActionParameterSpec::SyncPath => parse_params::<SyncPathParams>(action),
