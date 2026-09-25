@@ -653,6 +653,7 @@ khẩu**. (Không dùng `ssh localhost`: subshell `sudo -i` có cùng hostname s
 bằng `LocalCommandExecutor` dưới user của bạn.) Build Warp local với flag `WarpSync` bật.
 
 Download:
+
 1. `ssh user@vm` → `cd /etc` → chọn text `hostname` → chuột phải → Download → file có trong
    `~/.warp/mirrors/<host>/etc/hostname`, manifest có uid 0.
 2. `cat /etc/shadow` bị từ chối khi chưa sudo → Download `/etc/shadow` → toast PermissionDenied
@@ -666,6 +667,7 @@ Download:
 8. Session local → palette/menu báo NotRemoteSession hoặc không hiển thị.
 
 Upload:
+
 9. Sửa `~/.warp/mirrors/<host>/etc/nginx/nginx.conf` → Upload (trong `sudo -i`) → dialog hiện
    `root@<host>` → xác nhận → file trên server đổi nội dung, **owner/mode giữ nguyên**
    (`stat -c '%U:%G %a'`), có backup trong `/root/.warp-sync/backups/`.
@@ -674,6 +676,7 @@ Upload:
 12. Cancel ở dialog → không có lệnh nào chạy trên server.
 
 Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Code Review → "Choose an editor to open file links"* = VS Code (Linux: Warp nhận `code.desktop` hoặc `com.microsoft.VSCode.desktop`):
+
 13. Download `/etc/nginx` → toast có link "Open in VS Code" → VS Code mở workspace `~/.warp/mirrors/<host>`
     (cả host, không chỉ thư mục vừa tải); Download một file → mở workspace + đúng file đó.
 14. Source Control của VS Code: ngay sau download thì sạch; sửa `nginx.conf` → hiện "M", bấm vào thấy diff
@@ -691,6 +694,7 @@ Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Co
 
 Phase 7 (VS Code điều khiển Warp) — chạy `./script/run --features warp_sync,warp_control_cli`, bật
 Settings → Scripting, cài `.vsix` từ `tools/vscode-warp-sync/`, đặt `warpSync.command`:
+
 20. Mở `~/.warp/mirrors/<host>` trong VS Code khi Warp có tab `sudo -i` tới host → status bar `root@<host>`.
     Đóng tab → status bar báo không có session.
 21. Chuột phải file trong mirror → Upload → modal VS Code hiện `root@<host>`, số file, backup → Upload →
