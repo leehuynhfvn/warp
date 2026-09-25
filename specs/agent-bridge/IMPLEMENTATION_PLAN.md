@@ -709,7 +709,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 - [x] Phase 0 — Worktree + commit plan
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
-- [x] 2.1 Flag · [x] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
+- [x] 2.1 Flag · [x] 2.2 ops · [x] 2.3 model · [x] 2.4 bridge async (bỏ qua, D13) · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
@@ -755,3 +755,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 1.5: `agent_bridge/attachments.rs` (9 test). Task 1.6: `agent_bridge/audit.rs` (`append`, xoay vòng, quyền 0700/0600; dùng `warp_sync::paths::create_private_dir_all` nên mở `pub(crate) mod paths`) (7 test). Cuối Phase 1: `cargo test -p warp --lib agent_bridge` 68 test pass; clippy `-p warp -p local_control -p warp_cli --all-targets --tests -D warnings` sạch. Xem D16.
 - 2026-09-25 — Task 2.1: `FeatureFlag::AgentBridge` + `DOGFOOD_FLAGS`; theo khuôn của `WarpSync` còn thêm cargo feature `agent_bridge` (`app/Cargo.toml`) và ánh xạ `#[cfg(feature)]` trong `app/src/features.rs` (skill add-feature-flag).
 - 2026-09-25 — Task 2.2: `agent_bridge/{ops,path}.rs` + kết quả có kiểu trong protocol; 24 test `ops` (sh thật: validate trước khi chạy, exec/read/write, upload nhiều chunk, cleanup khi lỗi, audit không chứa output/nội dung). Xem D17, D18. Lưu ý cho Checkpoint A: `exec` trả `user` theo `session.user()` của Warp, cần xác nhận bằng `whoami`/`id` trong checklist 5.A; lệnh 8 KiB toàn dấu `'` gấp ~4 lần khi quote → dòng gõ ~45 KiB, cần thử.
+- 2026-09-25 — Task 2.3: `agent_bridge/model.rs` (`AgentBridgeModel`, `notify()` khi attach/detach để indicator Phase 4.2 quan sát) + đăng ký singleton trong `lib.rs`. Task 2.4: bỏ qua theo D13 (`BridgeResult::Pending` đã có từ Warp Sync 7.1).
