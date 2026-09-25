@@ -177,6 +177,7 @@ fn commit_script_embeds_paths_quoted_and_flags() {
         tmp_dir: &dir,
         parent: "/etc/it's",
         name: "$(id)",
+        mode: CommitMode::Replace,
         expected_len: 4242,
         backup_name: "prod-1_etc-1727000000",
         extract_mode: ExtractMode::GnuPreserveOwner,
@@ -420,6 +421,7 @@ mod with_sh {
             tmp_dir: &dir,
             parent: target_parent.path().to_str().unwrap(),
             name: "conf",
+            mode: CommitMode::Replace,
             expected_len: tgz.len(),
             backup_name: "host_conf-1",
             extract_mode: ExtractMode::Generic,
@@ -458,6 +460,7 @@ mod with_sh {
             tmp_dir: &dir,
             parent: target_parent.path().to_str().unwrap(),
             name: "conf",
+            mode: CommitMode::Replace,
             expected_len: tgz.len(),
             backup_name: "b",
             extract_mode: ExtractMode::Generic,
@@ -489,6 +492,7 @@ mod with_sh {
             tmp_dir: &dir,
             parent: target_parent.path().to_str().unwrap(),
             name: "conf",
+            mode: CommitMode::Replace,
             expected_len: tgz.len() + 1,
             backup_name: "b",
             extract_mode: ExtractMode::Generic,
@@ -497,6 +501,116 @@ mod with_sh {
 
         assert_eq!(output.status.code(), Some(EXIT_SIZE_MISMATCH));
         assert!(!target_parent.path().join("conf").exists());
+    }
+
+    /// Uploads a one-file payload `conf` and returns what is needed to commit it in `parent`.
+    fn stage_payload(parent: &Path, mode: CommitMode) -> (tempfile::TempDir, String) {
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
+        let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
+        let tgz = make_tgz("conf", "created");
+        for command in upload_chunk_commands(&dir, &tgz) {
+            assert!(run_sh(&command, None).status.success());
+        }
+        let commit = upload_commit_script(&UploadCommit {
+            tmp_dir: &dir,
+            parent: parent.to_str().unwrap(),
+            name: "conf",
+            mode,
+            expected_len: tgz.len(),
+            backup_name: "unused",
+            extract_mode: ExtractMode::Generic,
+        });
+        (scratch, commit)
+    }
+
+    #[test]
+    fn create_only_commit_creates_the_target_without_a_backup() {
+        let parent = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let (scratch, commit) = stage_payload(parent.path(), CommitMode::CreateOnly);
+
+        let output = run_sh(&commit, Some(home.path()));
+
+        assert!(output.status.success(), "{}", stdout(&output));
+        assert_eq!(
+            fs::read_to_string(parent.path().join("conf")).unwrap(),
+            "created"
+        );
+        assert!(!stdout(&output).contains("backup="));
+        assert!(!home.path().join(".warp-sync").exists());
+        assert!(!scratch.path().exists());
+    }
+
+    #[test]
+    fn create_only_commit_refuses_a_target_that_exists() {
+        let parent = tempfile::tempdir().unwrap();
+        fs::write(parent.path().join("conf"), "theirs").unwrap();
+        let (_scratch, commit) = stage_payload(parent.path(), CommitMode::CreateOnly);
+
+        let output = run_sh(&commit, None);
+
+        assert_eq!(output.status.code(), Some(EXIT_TARGET_EXISTS));
+        assert_eq!(
+            fs::read_to_string(parent.path().join("conf")).unwrap(),
+            "theirs"
+        );
+    }
+
+    #[test]
+    fn create_only_commit_refuses_a_dangling_symlink_at_the_target() {
+        let parent = tempfile::tempdir().unwrap();
+        let outside = parent.path().join("outside");
+        std::os::unix::fs::symlink(&outside, parent.path().join("conf")).unwrap();
+        let (_scratch, commit) = stage_payload(parent.path(), CommitMode::CreateOnly);
+
+        let output = run_sh(&commit, None);
+
+        assert_eq!(output.status.code(), Some(EXIT_TARGET_EXISTS));
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn create_only_commit_refuses_a_parent_that_became_a_symlink() {
+        let real = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = real.path().join("link");
+        std::os::unix::fs::symlink(elsewhere.path(), &link).unwrap();
+        let (_scratch, commit) = stage_payload(&link, CommitMode::CreateOnly);
+
+        let output = run_sh(&commit, None);
+
+        assert_eq!(output.status.code(), Some(EXIT_ANCHOR_UNSAFE));
+        assert!(fs::read_dir(elsewhere.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn create_only_commit_refuses_a_parent_that_is_gone_or_a_file() {
+        let real = tempfile::tempdir().unwrap();
+        let file = real.path().join("file");
+        fs::write(&file, "x").unwrap();
+        for parent in [real.path().join("gone"), file] {
+            let (_scratch, commit) = stage_payload(&parent, CommitMode::CreateOnly);
+
+            let output = run_sh(&commit, None);
+
+            assert_eq!(output.status.code(), Some(EXIT_ANCHOR_UNSAFE), "{parent:?}");
+        }
+    }
+
+    #[test]
+    fn light_probe_describes_a_directory_but_leaves_the_size_out() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("f"), vec![0u8; 8192]).unwrap();
+
+        let output = run_sh(&light_probe_script(dir.path().to_str().unwrap()), None);
+        let probe = parse_probe_output(&stdout(&output)).unwrap();
+
+        assert_eq!((probe.status, probe.kind), (ProbeStatus::Ok, RemoteKind::Dir));
+        assert_eq!(probe.size_kib, None);
+        assert!(!light_probe_script("/x").contains("du "));
     }
 
     #[test]

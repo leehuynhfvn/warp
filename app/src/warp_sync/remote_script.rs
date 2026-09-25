@@ -31,6 +31,8 @@ const EXIT_CORRUPT_PAYLOAD: i32 = 82;
 const EXIT_BACKUP_DIR: i32 = 83;
 const EXIT_BACKUP_FAILED: i32 = 84;
 const EXIT_EXTRACT_FAILED: i32 = 85;
+pub(super) const EXIT_TARGET_EXISTS: i32 = 86;
+pub(super) const EXIT_ANCHOR_UNSAFE: i32 = 87;
 
 static TMP_DIR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^/[A-Za-z0-9._/-]+/warp-sync\.[A-Za-z0-9]+$").expect("static regex is valid")
@@ -111,10 +113,23 @@ impl RemoteTmpDir {
     }
 }
 
+/// What the commit script may do to whatever is already at the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitMode {
+    /// Back up the target if it exists, then overwrite it.
+    Replace,
+    /// Refuse if anything is at the target, and if `parent` is not a plain directory. Nothing is
+    /// replaced, so nothing is backed up.
+    CreateOnly,
+}
+
 pub struct UploadCommit<'a> {
     pub tmp_dir: &'a RemoteTmpDir,
+    /// The directory the archive is extracted into.
     pub parent: &'a str,
+    /// The single top-level entry of the archive.
     pub name: &'a str,
+    pub mode: CommitMode,
     pub expected_len: usize,
     /// File-name stem of the backup; must only contain `[A-Za-z0-9._-]`.
     pub backup_name: &'a str,
@@ -134,14 +149,34 @@ pub fn wrap_for_any_shell(script: &str) -> String {
 
 /// Script that reports `key=value` lines about `path`. Always exits 0.
 pub fn probe_script(path: &str) -> String {
+    probe_script_with(path, SizeCheck::Measure)
+}
+
+/// Like [`probe_script`], but skips `du`, which walks the whole tree. For directories whose size
+/// does not matter.
+pub fn light_probe_script(path: &str) -> String {
+    probe_script_with(path, SizeCheck::Skip)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SizeCheck {
+    Measure,
+    Skip,
+}
+
+fn probe_script_with(path: &str, size_check: SizeCheck) -> String {
     let path = posix_quote(path);
+    let size_line = match size_check {
+        SizeCheck::Measure => r#"echo "size_kib=$(du -sk "$P" 2>/dev/null | cut -f1)""#,
+        SizeCheck::Skip => "echo size_kib=",
+    };
     format!(
         r#"P={path}
 if [ ! -e "$P" ]; then echo status=not_found; exit 0; fi
 if [ ! -r "$P" ]; then echo status=permission_denied; else echo status=ok; fi
 echo "user=$(id -un)"; echo "uid=$(id -u)"
 if [ -d "$P" ]; then echo kind=dir; else echo kind=file; fi
-echo "size_kib=$(du -sk "$P" 2>/dev/null | cut -f1)"
+{size_line}
 if tar --version 2>/dev/null | grep -q GNU; then echo tar=gnu; else echo tar=other; fi
 if command -v base64 >/dev/null 2>&1; then echo base64=yes; else echo base64=no; fi
 echo "machine_id=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null)"
@@ -213,29 +248,48 @@ pub fn upload_chunk_commands(tmp_dir: &RemoteTmpDir, tgz: &[u8]) -> Vec<String> 
         .collect()
 }
 
-/// Script that verifies the uploaded payload, backs up the current target, then extracts.
-/// Prints `backup=<path>` when a backup was made.
+/// Script that verifies the uploaded payload, then extracts it. In [`CommitMode::Replace`] the
+/// current target is backed up first and `backup=<path>` is printed.
 pub fn upload_commit_script(commit: &UploadCommit<'_>) -> String {
     let tmp_dir = posix_quote(commit.tmp_dir.as_str());
     let parent = posix_quote(commit.parent);
     let name = posix_quote(&format!("./{}", commit.name));
-    let backup_file = posix_quote(&format!("{}.tgz", commit.backup_name));
     let expected_len = commit.expected_len;
     let flags = commit.extract_mode.tar_flags();
+    let before_extract = match commit.mode {
+        CommitMode::Replace => backup_step(commit.backup_name),
+        CommitMode::CreateOnly => create_only_step(),
+    };
     format!(
         r#"T={tmp_dir}; P={parent}; N={name}
 [ "$(wc -c < "$T/{PAYLOAD_FILE_NAME}" | tr -d ' ')" = "{expected_len}" ] || {{ echo "size mismatch"; exit {EXIT_SIZE_MISMATCH}; }}
 gzip -t "$T/{PAYLOAD_FILE_NAME}" || {{ echo "corrupt payload"; exit {EXIT_CORRUPT_PAYLOAD}; }}
-if [ -e "$P/$N" ]; then
+{before_extract}
+tar -xzf "$T/{PAYLOAD_FILE_NAME}" -C "$P" {flags} || {{ echo "extract failed"; exit {EXIT_EXTRACT_FAILED}; }}
+rm -rf "$T"
+"#
+    )
+}
+
+fn backup_step(backup_name: &str) -> String {
+    let backup_file = posix_quote(&format!("{backup_name}.tgz"));
+    format!(
+        r#"if [ -e "$P/$N" ]; then
   B="{BACKUP_DIR}"
   if [ -L "$HOME/.warp-sync" ] || [ -L "$B" ]; then echo "unsafe backup directory"; exit {EXIT_BACKUP_DIR}; fi
   mkdir -p "$B" && chmod 700 "$B" || {{ echo "cannot create backup directory"; exit {EXIT_BACKUP_DIR}; }}
   tar -czf "$B"/{backup_file} -C "$P" "$N" || {{ echo "backup failed"; exit {EXIT_BACKUP_FAILED}; }}
   echo "backup=$B/"{backup_file}
-fi
-tar -xzf "$T/{PAYLOAD_FILE_NAME}" -C "$P" {flags} || {{ echo "extract failed"; exit {EXIT_EXTRACT_FAILED}; }}
-rm -rf "$T"
-"#
+fi"#
+    )
+}
+
+/// `tar -x` would set the owner and mode of a directory that is already there, and would write
+/// through a symlink that replaced `$P`, so both are refused before anything is extracted.
+fn create_only_step() -> String {
+    format!(
+        r#"if [ -L "$P" ] || [ ! -d "$P" ]; then echo "the target directory is no longer a plain directory"; exit {EXIT_ANCHOR_UNSAFE}; fi
+if [ -e "$P/$N" ] || [ -L "$P/$N" ]; then echo "already exists on the server"; exit {EXIT_TARGET_EXISTS}; fi"#
     )
 }
 

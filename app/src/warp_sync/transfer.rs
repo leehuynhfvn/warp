@@ -26,7 +26,7 @@ use super::paths::{
 };
 use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
-    ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit, checksum_script,
+    CommitMode, ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit, checksum_script,
     cleanup_command, download_script, parse_checksum_output, parse_probe_output, probe_script,
     upload_begin_command, upload_chunk_commands, upload_commit_script, validate_tmp_dir,
     wrap_for_any_shell,
@@ -764,6 +764,7 @@ async fn send_and_commit(
         tmp_dir,
         parent: &parent,
         name: &name,
+        mode: CommitMode::Replace,
         expected_len: prepared.archive.bytes.len(),
         backup_name: &backup_name,
         extract_mode: ExtractMode::for_probe(&prepared.probe),
