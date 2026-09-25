@@ -10,7 +10,8 @@ use ::local_control::{ControlError, ErrorCode};
 
 use crate::warp_sync::remote_check::RemoteCheck;
 use crate::warp_sync::{
-    ConfirmationKind, FileChange, FileDifference, SyncReply, UploadSummary, WarpSyncError, printable,
+    ConfirmationKind, FileChange, FileDifference, SyncReply, UploadSummary, WarpSyncError,
+    printable,
 };
 
 pub(super) fn sync_result(reply: SyncReply) -> SyncResult {

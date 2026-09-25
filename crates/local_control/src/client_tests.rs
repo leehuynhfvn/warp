@@ -81,11 +81,19 @@ fn probe_rejects_mismatched_instance_identity() {
 #[test]
 fn post_request_gives_up_when_the_app_does_not_answer_in_time() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener binds");
-    let url = format!("http://{}/v1/control", listener.local_addr().expect("local addr"));
+    let url = format!(
+        "http://{}/v1/control",
+        listener.local_addr().expect("local addr")
+    );
     let request = RequestEnvelope::new(Action::new(ActionKind::AppPing));
 
-    let err = post_request(&url, "Bearer token", &request, std::time::Duration::from_millis(200))
-        .expect_err("silent server times out");
+    let err = post_request(
+        &url,
+        "Bearer token",
+        &request,
+        std::time::Duration::from_millis(200),
+    )
+    .expect_err("silent server times out");
 
     assert_eq!(err.code, ErrorCode::TransportUnavailable);
     drop(listener);
@@ -95,7 +103,10 @@ fn post_request_gives_up_when_the_app_does_not_answer_in_time() {
 #[test]
 fn post_request_waits_longer_than_a_short_timeout_when_allowed() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener binds");
-    let url = format!("http://{}/v1/control", listener.local_addr().expect("local addr"));
+    let url = format!(
+        "http://{}/v1/control",
+        listener.local_addr().expect("local addr")
+    );
     let request = RequestEnvelope::new(Action::new(ActionKind::AppPing));
     let response = ResponseEnvelope::ok(request.request_id, serde_json::json!({ "ok": true }));
     let body = serde_json::to_string(&response).expect("response serializes");
@@ -113,8 +124,13 @@ fn post_request_waits_longer_than_a_short_timeout_when_allowed() {
         .expect("response is writable");
     });
 
-    let envelope = post_request(&url, "Bearer token", &request, std::time::Duration::from_secs(10))
-        .expect("slow server still answers within the timeout");
+    let envelope = post_request(
+        &url,
+        "Bearer token",
+        &request,
+        std::time::Duration::from_secs(10),
+    )
+    .expect("slow server still answers within the timeout");
     server.join().expect("server completes");
 
     assert_eq!(envelope.request_id, request.request_id);

@@ -391,5 +391,8 @@ fn printable_escapes_invisible_and_direction_changing_characters() {
     assert_eq!(printable("a\u{200B}b"), "a\\u{200b}b");
     assert_eq!(printable("a\u{2028}b"), "a\\u{2028}b");
     assert_eq!(printable("a\u{FEFF}b"), "a\\u{feff}b");
-    assert_eq!(printable("caf\u{e9} \u{4e2d}\u{6587}"), "caf\u{e9} \u{4e2d}\u{6587}");
+    assert_eq!(
+        printable("caf\u{e9} \u{4e2d}\u{6587}"),
+        "caf\u{e9} \u{4e2d}\u{6587}"
+    );
 }

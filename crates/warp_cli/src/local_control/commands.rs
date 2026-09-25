@@ -1,16 +1,17 @@
 //! Implementations for user-facing `warpctrl` command groups.
+use std::time::Duration;
+
+use local_control::client::DEFAULT_REQUEST_TIMEOUT;
 use local_control::discovery::InstanceRecord;
 use local_control::protocol::{
     Action, ActionKind, ActionNameParams, BindingNameParams, BooleanValueParams, ColorValueParams,
-    ControlError, DirectionParams, EmptyParams, FileOpenParams, KeyParams,
-    KeyValueParams, PageQueryParams, QueryParams, RenameParams, RequestEnvelope, ResizeParams,
-    SettingListParams, TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams,
-    TabCreateParams, TextParams, ThemeNameParams,
+    ControlError, DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams,
+    PageQueryParams, QueryParams, RenameParams, RequestEnvelope, ResizeParams, SettingListParams,
+    TabActivateParams, TabActivationMode, TabCloseMode, TabCloseParams, TabCreateParams,
+    TextParams, ThemeNameParams,
 };
-use local_control::client::DEFAULT_REQUEST_TIMEOUT;
 use local_control::selection::select_instance;
 use serde::Serialize;
-use std::time::Duration;
 use warp_core::channel::ChannelState;
 
 use crate::agent::OutputFormat;

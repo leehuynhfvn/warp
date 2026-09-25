@@ -4,7 +4,9 @@ use ::local_control::auth::CredentialRequest;
 use ::local_control::protocol::{
     Action, ActionKind, SessionSelector, SessionTarget, SyncPathStatus, SyncResult, TargetSelector,
 };
-use ::local_control::{ControlError, ControlResponse, ErrorCode, InstanceId, RequestEnvelope, ResponseEnvelope};
+use ::local_control::{
+    ControlError, ControlResponse, ErrorCode, InstanceId, RequestEnvelope, ResponseEnvelope,
+};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::{AUTHORIZATION, HOST};
@@ -63,7 +65,11 @@ impl Harness {
     }
 
     fn path(&self, relative: &str) -> String {
-        self.mirror.path().join(relative).to_string_lossy().into_owned()
+        self.mirror
+            .path()
+            .join(relative)
+            .to_string_lossy()
+            .into_owned()
     }
 
     async fn call(
@@ -131,8 +137,14 @@ fn sync_actions_are_unsupported_when_warp_sync_is_off() {
 
         for (kind, params) in [
             (ActionKind::SyncStatus, serde_json::json!({})),
-            (ActionKind::SyncDownload, serde_json::json!({ "path": "/x" })),
-            (ActionKind::SyncUploadPrepare, serde_json::json!({ "path": "/x" })),
+            (
+                ActionKind::SyncDownload,
+                serde_json::json!({ "path": "/x" }),
+            ),
+            (
+                ActionKind::SyncUploadPrepare,
+                serde_json::json!({ "path": "/x" }),
+            ),
             (ActionKind::SyncCompare, serde_json::json!({ "path": "/x" })),
             (
                 ActionKind::SyncConfirm,
@@ -227,7 +239,11 @@ fn paths_outside_the_mirror_are_rejected_before_any_session_is_looked_at() {
                 harness.path("prod-1/.git/config"),
             ] {
                 assert_eq!(
-                    error_code(harness.call(kind, serde_json::json!({ "path": path })).await),
+                    error_code(
+                        harness
+                            .call(kind, serde_json::json!({ "path": path }))
+                            .await
+                    ),
                     ErrorCode::InvalidParams,
                     "{} {path}",
                     kind.as_str()
@@ -280,7 +296,12 @@ fn a_valid_path_without_an_open_session_asks_for_one() {
                 )
                 .await
                 .expect_err("no session is open");
-            assert_eq!(error.code, ErrorCode::MissingTarget, "{}: {error}", kind.as_str());
+            assert_eq!(
+                error.code,
+                ErrorCode::MissingTarget,
+                "{}: {error}",
+                kind.as_str()
+            );
             assert!(error.message.contains("prod-1"), "{error}");
         }
     });

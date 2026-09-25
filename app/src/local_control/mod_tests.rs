@@ -18,18 +18,17 @@ use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warpui::SingletonEntity as _;
 
+use super::bridge::BridgeResult;
 #[cfg(unix)]
 use super::ensure_peer_uid;
-use super::bridge::BridgeResult;
 use super::resolver::validate_action_target;
 use super::{
     ControlServerState, LocalControlBridge, LocalControlServer, MAX_ACTIVE_CREDENTIALS,
     capabilities, ensure_feature_enabled, ensure_protocol_version, ensure_settings_allow_action,
     handle_control_request, insert_credential, issue_credential, lookup_credential,
     require_active_window_id, resolve_bridge_result, resolve_index_from_ids,
-    resolve_title_from_matches,
-    validate_action_params, validate_loopback_headers, validate_request_authority,
-    validate_tab_create_target,
+    resolve_title_from_matches, validate_action_params, validate_loopback_headers,
+    validate_request_authority, validate_tab_create_target,
 };
 use crate::settings::{LocalControlMode, LocalControlModeSetting, LocalControlSettings};
 
@@ -485,7 +484,10 @@ async fn pending_bridge_result_forwards_handler_errors() {
     let (sender, receiver) = oneshot::channel();
     assert!(
         sender
-            .send(Err(ControlError::new(ErrorCode::InvalidRequest, "bad path")))
+            .send(Err(ControlError::new(
+                ErrorCode::InvalidRequest,
+                "bad path"
+            )))
             .is_ok()
     );
 

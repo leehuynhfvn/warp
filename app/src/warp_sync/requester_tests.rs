@@ -124,10 +124,7 @@ fn a_comparison_without_differences_is_unchanged() {
     .into_reply()
     .expect("a comparison reply");
 
-    assert!(matches!(
-        reply,
-        SyncReply::Unchanged { identical_files: 5 }
-    ));
+    assert!(matches!(reply, SyncReply::Unchanged { identical_files: 5 }));
 }
 
 #[test]
@@ -172,7 +169,10 @@ fn an_upload_confirmation_escapes_every_server_string() {
     };
     assert_eq!(conflicts.changed, vec!["/etc/c\\rhanged".to_owned()]);
     assert_eq!(conflicts.missing, vec!["/etc/g\\none".to_owned()]);
-    assert_eq!(conflicts.already_exist, vec!["/etc/e\\u{1b}xists".to_owned()]);
+    assert_eq!(
+        conflicts.already_exist,
+        vec!["/etc/e\\u{1b}xists".to_owned()]
+    );
     assert_eq!((summary.files, summary.content_bytes), (1, 1));
 }
 

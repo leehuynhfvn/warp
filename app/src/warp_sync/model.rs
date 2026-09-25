@@ -8,21 +8,19 @@ use warpui::r#async::Timer;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, WindowId};
 
 use super::config::{SyncConfig, SyncLimits};
-use super::requester::{
-    ConfirmationKind, ExternalReply, Finished, Requester, SyncReply,
-};
-use super::{EXTERNAL_PENDING_TTL, MAX_EXTERNAL_PENDING, WarpSyncError};
 use super::diff::FileDifference;
 use super::editor::{EditorCli, EditorRequest, MAX_EDITOR_DIFFS, launch};
 use super::paths::{host_key, printable};
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
+use super::requester::{ConfirmationKind, ExternalReply, Finished, Requester, SyncReply};
 use super::transfer::{
     CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult,
     PreparedUpload, UploadOutcome, UploadRequest, compare, download, execute_upload,
     prepare_upload,
 };
+use super::{EXTERNAL_PENDING_TTL, MAX_EXTERNAL_PENDING, WarpSyncError};
 use crate::terminal::model::session::Session;
 
 /// Marks toasts that report an operation started by a local-control client rather than by the
@@ -530,12 +528,9 @@ impl WarpSyncModel {
         let id = Uuid::new_v4();
         self.external_pending.insert(id, pending);
         let ttl = self.external_pending_ttl;
-        ctx.spawn(
-            async move { Timer::after(ttl).await },
-            move |me, _, _| {
-                me.discard_external(id);
-            },
-        );
+        ctx.spawn(async move { Timer::after(ttl).await }, move |me, _, _| {
+            me.discard_external(id);
+        });
         Ok(id)
     }
 

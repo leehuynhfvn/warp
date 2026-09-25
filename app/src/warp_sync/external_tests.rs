@@ -159,7 +159,11 @@ fn a_path_with_a_nul_byte_is_refused() {
 fn the_state_folder_is_not_a_host() {
     let mirror = Mirror::new();
 
-    for relative in [".warp-sync", ".warp-sync/compare", ".warp-sync/compare/prod-1"] {
+    for relative in [
+        ".warp-sync",
+        ".warp-sync/compare",
+        ".warp-sync/compare/prod-1",
+    ] {
         assert!(
             matches!(mirror.resolve(relative), Err(WarpSyncError::InvalidPath(_))),
             "{relative}"
@@ -194,7 +198,12 @@ fn names_with_control_characters_are_refused() {
 fn names_that_would_be_trimmed_or_hide_characters_are_refused() {
     let mirror = Mirror::new();
 
-    for relative in ["prod-1/etc/trailing ", "prod-1/etc/ leading", "prod-1/etc/tab\t", "prod-1/etc/a\u{7f}b"] {
+    for relative in [
+        "prod-1/etc/trailing ",
+        "prod-1/etc/ leading",
+        "prod-1/etc/tab\t",
+        "prod-1/etc/a\u{7f}b",
+    ] {
         assert!(
             matches!(mirror.resolve(relative), Err(WarpSyncError::InvalidPath(_))),
             "{relative:?}"
@@ -212,7 +221,11 @@ fn a_link_that_leads_nowhere_is_refused() {
     use std::os::unix::fs::symlink;
 
     let mirror = Mirror::new();
-    symlink("/nonexistent/outside", mirror.root().join("prod-1/etc/dangling")).unwrap();
+    symlink(
+        "/nonexistent/outside",
+        mirror.root().join("prod-1/etc/dangling"),
+    )
+    .unwrap();
 
     for relative in ["prod-1/etc/dangling", "prod-1/etc/dangling/new"] {
         assert!(
@@ -324,8 +337,8 @@ fn candidate(
 fn no_matching_session_asks_the_user_to_open_one() {
     let window = WindowId::new();
 
-    let error = choose_session(vec![candidate("a", "other", window, true)], "prod-1", None)
-        .unwrap_err();
+    let error =
+        choose_session(vec![candidate("a", "other", window, true)], "prod-1", None).unwrap_err();
 
     assert_eq!(error, WarpSyncError::NoSession("prod-1".to_owned()));
     assert!(error.to_string().contains("prod-1"));
@@ -357,8 +370,12 @@ fn a_mirror_folder_with_a_machine_suffix_matches_the_host_name() {
     let window = WindowId::new();
     let suffixed = format!("prod-1-{}", "ab12cd34");
 
-    let chosen =
-        choose_session(vec![candidate("a", "prod-1", window, true)], &suffixed, None).unwrap();
+    let chosen = choose_session(
+        vec![candidate("a", "prod-1", window, true)],
+        &suffixed,
+        None,
+    )
+    .unwrap();
 
     assert_eq!(chosen.session_id, "a");
 }
@@ -367,7 +384,12 @@ fn a_mirror_folder_with_a_machine_suffix_matches_the_host_name() {
 fn another_hosts_folder_that_merely_starts_with_the_name_does_not_match() {
     let window = WindowId::new();
 
-    for dir in ["prod-10", "prod-1-backup", "prod-1-ab12cd3", "prod-1-zzzzzzzz"] {
+    for dir in [
+        "prod-10",
+        "prod-1-backup",
+        "prod-1-ab12cd3",
+        "prod-1-zzzzzzzz",
+    ] {
         assert_eq!(
             choose_session(vec![candidate("a", "prod-1", window, true)], dir, None).unwrap_err(),
             WarpSyncError::NoSession(dir.to_owned()),

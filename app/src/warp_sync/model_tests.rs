@@ -419,11 +419,7 @@ fn reply_of(
 
 /// Registers the path as in progress and hands an upload that is ready for confirmation to the
 /// model, the way `start_upload` does once the remote host has been checked.
-fn await_upload(
-    app: &mut warpui::App,
-    model: &ModelHandle<WarpSyncModel>,
-    requester: Requester,
-) {
+fn await_upload(app: &mut warpui::App, model: &ModelHandle<WarpSyncModel>, requester: Requester) {
     let PendingUpload {
         shell, prepared, ..
     } = pending_upload("prod-1", "/etc/nginx");
@@ -484,7 +480,10 @@ fn an_external_upload_is_answered_with_a_reply_and_no_dialog() {
             panic!("expected an upload summary");
         };
         assert_eq!(summary.remote_user, "root");
-        assert!(events.borrow().is_empty(), "no dialog for an external client");
+        assert!(
+            events.borrow().is_empty(),
+            "no dialog for an external client"
+        );
         model.read(&app, |model, _| assert!(model.pending_uploads.is_empty()));
     });
 }
@@ -531,7 +530,11 @@ fn a_window_pending_operation_cannot_be_confirmed_by_a_client() {
         let model = app.add_model(|_| WarpSyncModel::new());
         await_upload(&mut app, &model, Requester::Window(WindowId::new()));
         let window_pending_id = model.read(&app, |model, _| {
-            *model.pending_uploads.keys().next().expect("one pending upload")
+            *model
+                .pending_uploads
+                .keys()
+                .next()
+                .expect("one pending upload")
         });
         let (reply, mut receiver) = ExternalReply::channel();
 
@@ -587,7 +590,8 @@ fn confirming_an_unknown_external_id_reports_that_nothing_is_pending() {
 #[test]
 fn an_external_operation_that_nobody_answers_expires_and_frees_its_path() {
     warpui::App::test((), |mut app| async move {
-        let model = app.add_model(|_| WarpSyncModel::with_external_pending_ttl(Duration::from_millis(20)));
+        let model =
+            app.add_model(|_| WarpSyncModel::with_external_pending_ttl(Duration::from_millis(20)));
         let (requester, _receiver) = Requester::external(WindowId::new(), None);
         await_upload(&mut app, &model, requester);
 
@@ -635,10 +639,17 @@ fn an_external_operation_is_announced_in_the_window_of_its_session() {
         let window_id = WindowId::new();
         let (requester, _receiver) = Requester::external(window_id, None);
 
-        model.update(&mut app, |_, ctx| announce(&requester, "Uploading /etc…".to_owned(), ctx));
+        model.update(&mut app, |_, ctx| {
+            announce(&requester, "Uploading /etc…".to_owned(), ctx)
+        });
 
         let events = events.borrow();
-        let [WarpSyncEvent::Started { window_id: event_window, description }] = events.as_slice()
+        let [
+            WarpSyncEvent::Started {
+                window_id: event_window,
+                description,
+            },
+        ] = events.as_slice()
         else {
             panic!("expected a single Started event, got {events:?}");
         };
@@ -656,7 +667,11 @@ fn failures_reach_a_window_as_events_and_a_client_as_an_error_reply() {
         let (external, mut receiver) = Requester::external(window_id, None);
 
         model.update(&mut app, |_, ctx| {
-            report(Requester::Window(window_id), Finished::Failed(WarpSyncError::Timeout), ctx);
+            report(
+                Requester::Window(window_id),
+                Finished::Failed(WarpSyncError::Timeout),
+                ctx,
+            );
             report(external, Finished::Failed(WarpSyncError::Timeout), ctx);
         });
 
@@ -703,7 +718,14 @@ fn an_expired_external_upload_to_a_suffixed_mirror_releases_the_path_that_was_lo
         model.update(&mut app, |model, ctx| {
             model.try_begin_sync("prod-1", "/etc/nginx").unwrap();
             let key = ("prod-1".to_owned(), "/etc/nginx".to_owned());
-            model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, key, requester, ctx);
+            model.await_upload_confirmation(
+                shell,
+                "prod-1".to_owned(),
+                prepared,
+                key,
+                requester,
+                ctx,
+            );
         });
         let id = sole_external_id(&app, &model);
 
@@ -736,7 +758,11 @@ fn a_confirmed_upload_to_a_suffixed_mirror_releases_the_path_when_it_finishes() 
             );
         });
         let id = model.read(&app, |model, _| {
-            *model.pending_uploads.keys().next().expect("one pending upload")
+            *model
+                .pending_uploads
+                .keys()
+                .next()
+                .expect("one pending upload")
         });
 
         // The shell used here always times out, so the upload ends in a failure.
@@ -769,7 +795,14 @@ fn too_many_operations_waiting_for_clients_are_refused_and_release_their_path() 
             model.update(&mut app, |model, ctx| {
                 model.try_begin_sync("prod-1", &path).unwrap();
                 let key = ("prod-1".to_owned(), path.clone());
-                model.await_upload_confirmation(shell, "prod-1".to_owned(), prepared, key, requester, ctx);
+                model.await_upload_confirmation(
+                    shell,
+                    "prod-1".to_owned(),
+                    prepared,
+                    key,
+                    requester,
+                    ctx,
+                );
             });
             receivers.push(receiver);
         }
@@ -781,11 +814,17 @@ fn too_many_operations_waiting_for_clients_are_refused_and_release_their_path() 
                 Ok(SyncReply::NeedsConfirmation { .. })
             ));
         }
-        assert_eq!(reply_of(&mut refused[0]).unwrap_err(), WarpSyncError::TooManyPending);
+        assert_eq!(
+            reply_of(&mut refused[0]).unwrap_err(),
+            WarpSyncError::TooManyPending
+        );
         model.update(&mut app, |model, _| {
             assert_eq!(model.external_pending.len(), MAX_EXTERNAL_PENDING);
             let last = format!("/etc/f{MAX_EXTERNAL_PENDING}");
-            assert!(model.try_begin_sync("prod-1", &last).is_ok(), "the refused path is free");
+            assert!(
+                model.try_begin_sync("prod-1", &last).is_ok(),
+                "the refused path is free"
+            );
         });
     });
 }

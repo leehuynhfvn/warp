@@ -89,10 +89,10 @@ use bridge::BridgeResult;
 pub use bridge::LocalControlBridge;
 #[cfg(any(unix, test))]
 use chrono::Duration;
+use futures::channel::oneshot;
 use permissions::ensure_feature_enabled;
 #[cfg(any(unix, test))]
 use permissions::{ensure_action_allowed, ensure_protocol_version};
-use futures::channel::oneshot;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use uuid::Uuid;

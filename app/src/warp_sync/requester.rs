@@ -1,6 +1,5 @@
 //! Who asked for a Warp Sync operation, and how its outcome travels back to them.
 
-
 use std::path::PathBuf;
 
 use futures::channel::oneshot;
@@ -73,10 +72,7 @@ pub struct ExternalReply {
 }
 
 impl ExternalReply {
-    pub fn channel() -> (
-        Self,
-        oneshot::Receiver<Result<SyncReply, WarpSyncError>>,
-    ) {
+    pub fn channel() -> (Self, oneshot::Receiver<Result<SyncReply, WarpSyncError>>) {
         let (sender, receiver) = oneshot::channel();
         (Self { sender }, receiver)
     }

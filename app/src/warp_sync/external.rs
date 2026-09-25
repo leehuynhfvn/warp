@@ -71,7 +71,10 @@ pub fn resolve_mirror_path(
     let remote_path = if rest.is_empty() {
         None
     } else {
-        Some(normalize_remote_path(&format!("/{}", rest.join("/")), None)?)
+        Some(normalize_remote_path(
+            &format!("/{}", rest.join("/")),
+            None,
+        )?)
     };
     Ok(MirrorPath {
         host_dir_name,

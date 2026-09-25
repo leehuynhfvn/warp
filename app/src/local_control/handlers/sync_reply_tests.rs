@@ -98,13 +98,19 @@ fn an_upload_confirmation_exposes_the_conflicts_the_host_check_found() {
     };
     assert_eq!(summary.remote_user, "root");
     assert_eq!((summary.files, summary.dirs, summary.bytes), (2, 1, 3000));
-    assert_eq!(summary.missing_locally, vec!["/etc/nginx/old.conf".to_owned()]);
+    assert_eq!(
+        summary.missing_locally,
+        vec!["/etc/nginx/old.conf".to_owned()]
+    );
     assert!(summary.ownership_may_be_incomplete);
     assert_eq!(summary.server_id_tail.as_deref(), Some("cdef"));
     let conflicts = summary.remote_conflicts.expect("the host was checked");
     assert_eq!(conflicts.changed, vec!["/etc/nginx/nginx.conf".to_owned()]);
     assert_eq!(conflicts.missing, vec!["/etc/nginx/gone.conf".to_owned()]);
-    assert_eq!(conflicts.already_exist, vec!["/etc/nginx/new.conf".to_owned()]);
+    assert_eq!(
+        conflicts.already_exist,
+        vec!["/etc/nginx/new.conf".to_owned()]
+    );
 }
 
 #[test]
@@ -207,14 +213,23 @@ fn an_upload_and_an_unchanged_comparison_keep_their_numbers() {
 #[test]
 fn failures_map_to_codes_a_client_can_act_on() {
     let cases = [
-        (WarpSyncError::InvalidPath("x".to_owned()), ErrorCode::InvalidParams),
-        (WarpSyncError::NoSession("prod-1".to_owned()), ErrorCode::MissingTarget),
+        (
+            WarpSyncError::InvalidPath("x".to_owned()),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            WarpSyncError::NoSession("prod-1".to_owned()),
+            ErrorCode::MissingTarget,
+        ),
         (
             WarpSyncError::AmbiguousSession("two".to_owned()),
             ErrorCode::AmbiguousTarget,
         ),
         (WarpSyncError::PendingNotFound, ErrorCode::StaleTarget),
-        (WarpSyncError::AlreadyInProgress, ErrorCode::TargetStateConflict),
+        (
+            WarpSyncError::AlreadyInProgress,
+            ErrorCode::TargetStateConflict,
+        ),
         (WarpSyncError::Timeout, ErrorCode::SyncFailed),
         (WarpSyncError::TooManyPending, ErrorCode::SyncFailed),
         (

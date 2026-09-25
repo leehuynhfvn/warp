@@ -73,7 +73,14 @@ pub(super) fn run_sync_command(
 fn path_request(
     args: SyncPathArgs,
     action: ActionKind,
-) -> Result<(TargetArgs, ActionKind, serde_json::Result<serde_json::Value>), ControlError> {
+) -> Result<
+    (
+        TargetArgs,
+        ActionKind,
+        serde_json::Result<serde_json::Value>,
+    ),
+    ControlError,
+> {
     let params = serde_json::to_value(SyncPathParams {
         path: absolute_path(&args.path)?,
     });
@@ -83,7 +90,11 @@ fn path_request(
 fn pending_request(
     args: SyncPendingArgs,
     action: ActionKind,
-) -> (TargetArgs, ActionKind, serde_json::Result<serde_json::Value>) {
+) -> (
+    TargetArgs,
+    ActionKind,
+    serde_json::Result<serde_json::Value>,
+) {
     let target = TargetArgs {
         instance: args.instance,
         pid: args.pid,
@@ -304,7 +315,9 @@ fn render_upload_summary(summary: &SyncUploadSummary) -> String {
         }
     }
     if summary.ownership_may_be_incomplete {
-        text.push_str("\nNote: the server's tar is not GNU tar, so ownership may not be restored completely.");
+        text.push_str(
+            "\nNote: the server's tar is not GNU tar, so ownership may not be restored completely.",
+        );
     }
     text
 }
@@ -353,5 +366,6 @@ fn format_size(bytes: u64) -> String {
 
 /// Parses a pending id typed on the command line.
 pub(super) fn parse_pending_id(value: &str) -> Result<Uuid, String> {
-    Uuid::parse_str(value).map_err(|_| "expected the id printed by `warpctrl sync upload`".to_owned())
+    Uuid::parse_str(value)
+        .map_err(|_| "expected the id printed by `warpctrl sync upload`".to_owned())
 }

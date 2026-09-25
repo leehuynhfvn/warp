@@ -20,7 +20,9 @@ use super::sync_reply::{control_error, sync_result};
 use crate::features::FeatureFlag;
 use crate::local_control::LocalControlBridge;
 use crate::terminal::model::session::Session;
-use crate::warp_sync::external::{MirrorPath, SessionCandidate, choose_session, resolve_mirror_path};
+use crate::warp_sync::external::{
+    MirrorPath, SessionCandidate, choose_session, resolve_mirror_path,
+};
 use crate::warp_sync::{
     ExternalReply, Requester, SyncConfig, SyncReply, WarpSyncError, WarpSyncModel,
     host_dir_matches, printable,
@@ -119,8 +121,8 @@ pub(crate) fn cancel(
     ensure_enabled(action.kind)?;
     let params = action.params_as::<SyncPendingParams>()?;
     let (sender, receiver) = oneshot::channel();
-    let cancelled = WarpSyncModel::handle(ctx)
-        .update(ctx, |model, _| model.cancel_external(params.pending_id));
+    let cancelled =
+        WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_external(params.pending_id));
     finish(
         sender,
         cancelled
@@ -166,8 +168,8 @@ fn start_operation(
         .and_then(|remote_path| {
             let sessions = remote_sessions(target, kind, ctx)?;
             let focused_window = ctx.windows().active_window();
-            let chosen = choose_session(sessions, &host_dir_name, focused_window)
-                .map_err(control_error)?;
+            let chosen =
+                choose_session(sessions, &host_dir_name, focused_window).map_err(control_error)?;
             Ok((remote_path, chosen))
         });
     let (remote_path, chosen) = match chosen {
@@ -253,7 +255,9 @@ fn remote_sessions(
             pane_group
                 .terminal_view_from_pane_id(entry.pane_id, ctx)
                 .and_then(|terminal| {
-                    terminal.read(ctx, |view, ctx| view.active_session().as_ref(ctx).session(ctx))
+                    terminal.read(ctx, |view, ctx| {
+                        view.active_session().as_ref(ctx).session(ctx)
+                    })
                 })
         });
         let Some(session) = session.filter(|session| !session.is_local()) else {

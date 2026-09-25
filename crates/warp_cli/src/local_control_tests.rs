@@ -847,13 +847,27 @@ fn sync_confirm_and_cancel_take_a_pending_id_and_only_instance_selectors() {
             "{subcommand} needs a UUID"
         );
         assert!(
-            ControlArgs::try_parse_from(["warpctrl", "sync", subcommand, PENDING_ID, "--session", "s"])
-                .is_err(),
+            ControlArgs::try_parse_from([
+                "warpctrl",
+                "sync",
+                subcommand,
+                PENDING_ID,
+                "--session",
+                "s"
+            ])
+            .is_err(),
             "{subcommand} has no session selector"
         );
         assert!(
             ControlArgs::try_parse_from([
-                "warpctrl", "sync", subcommand, PENDING_ID, "--instance", "i", "--pid", "1",
+                "warpctrl",
+                "sync",
+                subcommand,
+                PENDING_ID,
+                "--instance",
+                "i",
+                "--pid",
+                "1",
             ])
             .is_err()
         );
@@ -961,7 +975,10 @@ fn long_lists_are_cut_after_ten_paths() {
     });
 
     assert!(text.contains("13 files"), "{text}");
-    assert!(text.contains("/etc/f9") && !text.contains("/etc/f10"), "{text}");
+    assert!(
+        text.contains("/etc/f9") && !text.contains("/etc/f10"),
+        "{text}"
+    );
     assert!(text.contains("... and 3 more"), "{text}");
 }
 
