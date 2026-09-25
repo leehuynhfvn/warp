@@ -498,4 +498,73 @@ mod with_sh {
         assert_eq!(output.status.code(), Some(EXIT_SIZE_MISMATCH));
         assert!(!target_parent.path().join("conf").exists());
     }
+
+    #[test]
+    fn checksum_script_hashes_every_regular_file_on_a_real_shell() {
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("a b.conf"), "one").unwrap();
+        fs::write(dir.path().join("sub/c.conf"), "two").unwrap();
+        let root = dir.path().to_str().unwrap();
+
+        let output = run_sh(&checksum_script(root), None);
+        let parsed = parse_checksum_output(&String::from_utf8_lossy(&output.stdout));
+
+        let Some(parsed) = parsed else {
+            return; // The machine running the tests has neither sha256sum nor shasum.
+        };
+        assert!(output.status.success());
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(
+            parsed[&format!("{root}/a b.conf")],
+            hex::encode(Sha256::digest(b"one"))
+        );
+        assert_eq!(
+            parsed[&format!("{root}/sub/c.conf")],
+            hex::encode(Sha256::digest(b"two"))
+        );
+    }
+}
+
+#[test]
+fn checksum_script_only_uses_the_path_quoted() {
+    for path in NASTY_PATHS {
+        let script = checksum_script(path);
+        let quoted = posix_quote(path);
+        assert!(script.starts_with(&format!("P={quoted}\n")), "{path}");
+        assert!(!script.replace(&quoted, "").contains(path), "{path}");
+    }
+}
+
+#[test]
+fn parse_checksum_output_reads_hash_and_path() {
+    let output = format!(
+        "{a}  /etc/nginx/nginx.conf\n{b} */etc/with space.conf\n",
+        a = "A".repeat(64),
+        b = "b".repeat(64)
+    );
+
+    let parsed = parse_checksum_output(&output).unwrap();
+
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed["/etc/nginx/nginx.conf"], "a".repeat(64));
+    assert_eq!(parsed["/etc/with space.conf"], "b".repeat(64));
+}
+
+#[test]
+fn parse_checksum_output_reports_a_missing_hash_tool() {
+    assert_eq!(parse_checksum_output("no_hash_tool\n"), None);
+}
+
+#[test]
+fn parse_checksum_output_skips_lines_that_are_not_hashes() {
+    let output = format!(
+        "sha256sum: /root/x: Permission denied\n\\{h}  /odd\\nname\n{h}  \n{short}  /a\n",
+        h = "c".repeat(64),
+        short = "d".repeat(63)
+    );
+
+    assert_eq!(parse_checksum_output(&output), Some(BTreeMap::new()));
 }

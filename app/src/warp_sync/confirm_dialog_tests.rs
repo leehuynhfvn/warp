@@ -14,6 +14,7 @@ fn summary() -> UploadSummary {
         content_bytes: 2048,
         new_files: vec![],
         missing_locally: vec![],
+        remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
         ownership_may_be_incomplete: false,
         server_id_tail: Some("ab12".to_owned()),
     }
@@ -78,4 +79,41 @@ fn overwrite_request_lists_the_modified_files() {
 
     assert_eq!(request.kind, ConfirmKind::OverwriteLocalChanges);
     assert!(request.body.contains("• /etc/f0\n• /etc/f1"));
+}
+
+#[test]
+fn upload_body_says_when_the_server_is_unchanged() {
+    assert!(upload_body(&summary()).contains("unchanged since the last sync"));
+}
+
+#[test]
+fn upload_body_warns_about_changes_made_on_the_server() {
+    let summary = UploadSummary {
+        remote_check: RemoteCheck::Checked(RemoteConflicts {
+            changed: vec!["/etc/nginx/a.conf".to_owned()],
+            missing: vec!["/etc/nginx/b.conf".to_owned()],
+            already_exist: vec!["/etc/nginx/c.conf".to_owned()],
+        }),
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains("OVERWRITES these changes):\n• /etc/nginx/a.conf"));
+    assert!(body.contains("unreadable (uploading recreates them):\n• /etc/nginx/b.conf"));
+    assert!(body.contains("already on the server (uploading replaces them):\n• /etc/nginx/c.conf"));
+    assert!(!body.contains("unchanged since the last sync"));
+}
+
+#[test]
+fn upload_body_admits_when_the_server_could_not_be_checked() {
+    let summary = UploadSummary {
+        remote_check: RemoteCheck::Unavailable,
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains("Could not check whether the server's files changed"));
+    assert!(!body.contains("unchanged since the last sync"));
 }

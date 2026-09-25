@@ -50,6 +50,7 @@ fn pending_upload(host_key: &str, remote_path: &str) -> PendingUpload {
                 has_base64: true,
                 machine_id: Some("0123456789abcdef".to_owned()),
             },
+            remote_check: RemoteCheck::Unavailable,
             remote_path: remote_path.to_owned(),
             host_key: host_key.to_owned(),
             mirror_root: PathBuf::from("/mirror"),

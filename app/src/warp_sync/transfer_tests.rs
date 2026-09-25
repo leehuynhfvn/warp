@@ -6,6 +6,7 @@ use futures::executor::block_on;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
+use super::super::remote_check::RemoteConflicts;
 use super::super::remote_script::remote_failure_message;
 use super::*;
 
@@ -77,6 +78,26 @@ impl RemoteShell for AsMachine<'_> {
         let machine_line = format!("machine_id={}", self.machine_id);
         lines.push(&machine_line);
         Ok(lines.join("\n").into_bytes())
+    }
+}
+
+/// The same "remote host" as [`LocalSh`], but one that has no tool to hash files.
+struct WithoutHashTool<'a>(&'a LocalSh);
+
+#[async_trait]
+impl RemoteShell for WithoutHashTool<'_> {
+    async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
+        use base64::Engine as _;
+        let script = command
+            .split_whitespace()
+            .nth(2)
+            .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        if script.contains("-exec $H") {
+            return Ok(b"no_hash_tool\n".to_vec());
+        }
+        self.0.run(command).await
     }
 }
 
@@ -163,6 +184,10 @@ impl Env {
         block_on(execute_upload(&self.shell, &prepared))
     }
 
+    fn prepare(&self) -> PreparedUpload {
+        block_on(prepare_upload(&self.shell, &self.upload_request())).unwrap()
+    }
+
     fn manifest(&self) -> Manifest {
         load_manifest(&self.mirror_root(), HOST_KEY).unwrap()
     }
@@ -172,6 +197,23 @@ impl Env {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect()
+    }
+}
+
+/// Whether the machine running the tests can hash files the way a remote host would.
+fn has_hash_tool() -> bool {
+    ["sha256sum", "shasum"].iter().any(|tool| {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {tool}")])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    })
+}
+
+fn conflicts_of(prepared: &PreparedUpload) -> RemoteConflicts {
+    match &prepared.remote_check {
+        RemoteCheck::Checked(conflicts) => conflicts.clone(),
+        RemoteCheck::Unavailable => panic!("the remote check was unavailable"),
     }
 }
 
@@ -408,6 +450,90 @@ fn upload_replaces_remote_files_backs_them_up_and_cleans_up() {
             .entry(&format!("{}/b.conf", env.remote_path))
             .is_some()
     );
+}
+
+#[test]
+fn upload_of_an_untouched_remote_reports_no_conflicts() {
+    if !has_hash_tool() {
+        return;
+    }
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited a").unwrap();
+
+    let prepared = env.prepare();
+
+    assert!(conflicts_of(&prepared).is_empty());
+}
+
+#[test]
+fn upload_reports_what_changed_on_the_remote_host_since_the_download() {
+    if !has_hash_tool() {
+        return;
+    }
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited a").unwrap();
+    fs::write(env.local("d.conf"), "new d").unwrap();
+    fs::write(env.remote("a.conf"), "someone else's edit").unwrap();
+    fs::remove_file(env.remote("sub/c.conf")).unwrap();
+    fs::write(env.remote("d.conf"), "someone else's d").unwrap();
+
+    let conflicts = conflicts_of(&env.prepare());
+
+    let remote = |relative: &str| env.remote(relative).to_str().unwrap().to_owned();
+    assert_eq!(conflicts.changed, vec![remote("a.conf")]);
+    assert_eq!(conflicts.missing, vec![remote("sub/c.conf")]);
+    assert_eq!(conflicts.already_exist, vec![remote("d.conf")]);
+}
+
+#[test]
+fn upload_without_a_hash_tool_on_the_remote_host_is_unchecked() {
+    let env = Env::new();
+    env.download_done();
+
+    let prepared = block_on(prepare_upload(
+        &WithoutHashTool(&env.shell),
+        &env.upload_request(),
+    ))
+    .unwrap();
+
+    assert_eq!(prepared.remote_check, RemoteCheck::Unavailable);
+}
+
+#[test]
+fn a_failing_hash_command_does_not_block_the_upload() {
+    struct FailsToHash<'a>(&'a LocalSh);
+
+    #[async_trait]
+    impl RemoteShell for FailsToHash<'_> {
+        async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
+            use base64::Engine as _;
+            let script = command
+                .split_whitespace()
+                .nth(2)
+                .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            if script.contains("-exec $H") {
+                return Err(WarpSyncError::RemoteCommandFailed {
+                    exit_code: Some(127),
+                    message: "not found".to_owned(),
+                });
+            }
+            self.0.run(command).await
+        }
+    }
+    let env = Env::new();
+    env.download_done();
+
+    let prepared = block_on(prepare_upload(
+        &FailsToHash(&env.shell),
+        &env.upload_request(),
+    ))
+    .unwrap();
+
+    assert_eq!(prepared.remote_check, RemoteCheck::Unavailable);
 }
 
 #[test]

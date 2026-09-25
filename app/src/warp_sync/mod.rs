@@ -8,6 +8,7 @@ mod error;
 mod manifest;
 mod model;
 mod paths;
+mod remote_check;
 mod remote_script;
 mod remote_shell;
 mod transfer;

@@ -6,6 +6,7 @@ use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
 
 use super::WarpSyncError;
 use super::paths::{host_key, mirror_root};
+use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
 use super::transfer::{
@@ -40,6 +41,7 @@ pub struct UploadSummary {
     pub content_bytes: u64,
     pub new_files: Vec<String>,
     pub missing_locally: Vec<String>,
+    pub remote_check: RemoteCheck,
     /// The remote `tar` is not GNU tar, so ownership may not be restored completely.
     pub ownership_may_be_incomplete: bool,
     /// The last characters of the remote machine id, to tell apart hosts with the same name.
@@ -62,7 +64,7 @@ pub enum WarpSyncEvent {
     UploadNeedsConfirmation {
         window_id: WindowId,
         id: PendingId,
-        summary: UploadSummary,
+        summary: Box<UploadSummary>,
     },
     Succeeded {
         window_id: WindowId,
@@ -357,6 +359,7 @@ impl WarpSyncModel {
             content_bytes: prepared.archive.content_bytes,
             new_files: prepared.archive.new_files.clone(),
             missing_locally: prepared.archive.missing_locally.clone(),
+            remote_check: prepared.remote_check.clone(),
             ownership_may_be_incomplete: ExtractMode::for_probe(&prepared.probe)
                 == ExtractMode::Generic,
             server_id_tail: prepared
@@ -377,7 +380,7 @@ impl WarpSyncModel {
         ctx.emit(WarpSyncEvent::UploadNeedsConfirmation {
             window_id,
             id,
-            summary,
+            summary: Box::new(summary),
         });
     }
 }

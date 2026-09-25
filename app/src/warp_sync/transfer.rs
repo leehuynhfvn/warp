@@ -18,10 +18,12 @@ use super::paths::{
     create_private_dir_all, local_path_for, machine_host_key, manifest_path, recovery_dir,
     split_parent_name, staging_dir,
 };
+use super::remote_check::{RemoteCheck, find_remote_conflicts};
 use super::remote_script::{
-    ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, cleanup_command,
-    download_script, parse_probe_output, probe_script, upload_begin_command, upload_chunk_commands,
-    upload_commit_script, validate_tmp_dir, wrap_for_any_shell,
+    ExtractMode, ProbeResult, ProbeStatus, RemoteTmpDir, UploadCommit, checksum_script,
+    cleanup_command, download_script, parse_checksum_output, parse_probe_output, probe_script,
+    upload_begin_command, upload_chunk_commands, upload_commit_script, validate_tmp_dir,
+    wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
 use super::{MAX_DOWNLOAD_KIB, WarpSyncError};
@@ -81,6 +83,8 @@ pub struct UploadRequest {
 pub struct PreparedUpload {
     pub archive: UploadArchive,
     pub probe: ProbeResult,
+    /// Whether the host changed since the last sync.
+    pub remote_check: RemoteCheck,
     pub remote_path: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
@@ -171,9 +175,11 @@ pub async fn prepare_upload(
         &request.mirror_root,
         &host_key,
     )?;
+    let remote_check = check_remote(shell, &request.remote_path, &manifest, &archive).await?;
     Ok(PreparedUpload {
         archive,
         probe,
+        remote_check,
         remote_path: request.remote_path.clone(),
         host_key,
         mirror_root: request.mirror_root.clone(),
@@ -218,6 +224,32 @@ async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult
         .run(&wrap_for_any_shell(&probe_script(remote_path)))
         .await?;
     parse_probe_output(&String::from_utf8_lossy(&output))
+}
+
+/// A host that cannot hash files, or whose hashing command fails, is reported as
+/// [`RemoteCheck::Unavailable`] rather than blocking the upload.
+async fn check_remote(
+    shell: &dyn RemoteShell,
+    remote_path: &str,
+    manifest: &Manifest,
+    archive: &UploadArchive,
+) -> Result<RemoteCheck, WarpSyncError> {
+    let output = match shell
+        .run(&wrap_for_any_shell(&checksum_script(remote_path)))
+        .await
+    {
+        Ok(output) => output,
+        Err(WarpSyncError::RemoteCommandFailed { .. }) => return Ok(RemoteCheck::Unavailable),
+        Err(err) => return Err(err),
+    };
+    Ok(match parse_checksum_output(&String::from_utf8_lossy(&output)) {
+        Some(remote) => RemoteCheck::Checked(find_remote_conflicts(
+            &manifest.entries_under(remote_path),
+            archive,
+            &remote,
+        )),
+        None => RemoteCheck::Unavailable,
+    })
 }
 
 fn ensure_readable(probe: &ProbeResult, remote_path: &str) -> Result<(), WarpSyncError> {

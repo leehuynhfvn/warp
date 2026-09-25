@@ -2,6 +2,7 @@
 //! output. Scripts are POSIX `sh`; [`wrap_for_any_shell`] makes them runnable from whatever
 //! interactive shell the session uses.
 
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use base64::Engine as _;
@@ -11,6 +12,10 @@ use regex::Regex;
 use super::{UPLOAD_CHUNK_B64_LEN, WarpSyncError};
 
 const FAILURE_MESSAGE_TAIL_BYTES: usize = 1024;
+const SHA256_HEX_LEN: usize = 64;
+
+/// Printed by [`checksum_script`] in place of hashes.
+const NO_HASH_TOOL: &str = "no_hash_tool";
 const MIN_MACHINE_ID_LEN: usize = 8;
 const MAX_MACHINE_ID_LEN: usize = 64;
 
@@ -140,6 +145,21 @@ echo "size_kib=$(du -sk "$P" 2>/dev/null | cut -f1)"
 if tar --version 2>/dev/null | grep -q GNU; then echo tar=gnu; else echo tar=other; fi
 if command -v base64 >/dev/null 2>&1; then echo base64=yes; else echo base64=no; fi
 echo "machine_id=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null)"
+"#
+    )
+}
+
+/// Script that prints `<sha256>  <path>` for every regular file under `path`, or `no_hash_tool`
+/// when the host cannot hash files. Always exits 0; files that cannot be read are just absent.
+pub fn checksum_script(path: &str) -> String {
+    let path = posix_quote(path);
+    format!(
+        r#"P={path}
+if command -v sha256sum >/dev/null 2>&1; then H=sha256sum
+elif command -v shasum >/dev/null 2>&1; then H="shasum -a 256"
+else echo {NO_HASH_TOOL}; exit 0; fi
+find "$P" -type f -exec $H {{}} + 2>/dev/null
+exit 0
 "#
     )
 }
@@ -293,6 +313,28 @@ pub fn parse_probe_output(output: &str) -> Result<ProbeResult, WarpSyncError> {
         has_base64: has_base64.ok_or_else(|| unexpected_output("missing `base64`"))?,
         machine_id,
     })
+}
+
+/// Parses the output of [`checksum_script`] into a map from path to lowercase SHA-256. `None`
+/// means the host has no hashing tool. Lines that do not have the `<hash>  <path>` shape (such as
+/// the escaped names GNU coreutils print for paths containing a newline) are ignored.
+pub fn parse_checksum_output(output: &str) -> Option<BTreeMap<String, String>> {
+    if output.lines().any(|line| line.trim() == NO_HASH_TOOL) {
+        return None;
+    }
+    Some(output.lines().filter_map(parse_checksum_line).collect())
+}
+
+fn parse_checksum_line(line: &str) -> Option<(String, String)> {
+    let (hash, rest) = line.split_at_checked(SHA256_HEX_LEN)?;
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let path = rest
+        .strip_prefix("  ")
+        .or_else(|| rest.strip_prefix(" *"))?
+        .trim_end_matches('\r');
+    (!path.is_empty()).then(|| (path.to_owned(), hash.to_ascii_lowercase()))
 }
 
 /// Machine ids are hex strings (32 characters on systemd hosts); anything else is ignored rather

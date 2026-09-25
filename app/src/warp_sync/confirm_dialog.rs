@@ -11,6 +11,7 @@ use warpui::{
 };
 
 use super::model::{PendingId, UploadSummary, format_size, pluralize_count};
+use super::remote_check::{RemoteCheck, RemoteConflicts};
 use crate::appearance::Appearance;
 use crate::ui_components::dialog::{Dialog, dialog_styles};
 use crate::view_components::action_button::{ActionButton, DangerPrimaryTheme, NakedTheme};
@@ -87,6 +88,7 @@ fn upload_body(summary: &UploadSummary) -> String {
             format_size(summary.content_bytes)
         ),
     ];
+    sections.extend(remote_check_sections(&summary.remote_check));
     if !summary.new_files.is_empty() {
         sections.push(format!(
             "New on the server:\n{}",
@@ -110,6 +112,42 @@ fn upload_body(summary: &UploadSummary) -> String {
         );
     }
     sections.join("\n\n")
+}
+
+fn remote_check_sections(remote_check: &RemoteCheck) -> Vec<String> {
+    match remote_check {
+        RemoteCheck::Unavailable => vec![
+            "Could not check whether the server's files changed since the last sync (the server \
+             needs sha256sum or shasum)."
+                .to_owned(),
+        ],
+        RemoteCheck::Checked(conflicts) if conflicts.is_empty() => {
+            vec!["The server's files are unchanged since the last sync.".to_owned()]
+        }
+        RemoteCheck::Checked(conflicts) => conflict_sections(conflicts),
+    }
+}
+
+fn conflict_sections(conflicts: &RemoteConflicts) -> Vec<String> {
+    [
+        (
+            "Warning: changed on the server since the last sync (uploading OVERWRITES these \
+             changes):",
+            &conflicts.changed,
+        ),
+        (
+            "Warning: no longer on the server, or unreadable (uploading recreates them):",
+            &conflicts.missing,
+        ),
+        (
+            "Warning: new here, but already on the server (uploading replaces them):",
+            &conflicts.already_exist,
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, paths)| !paths.is_empty())
+    .map(|(heading, paths)| format!("{heading}\n{}", bullet_list(paths)))
+    .collect()
 }
 
 fn bullet_list(paths: &[String]) -> String {
