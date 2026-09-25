@@ -14,25 +14,28 @@ use warp_core::{safe_info, safe_warn};
 
 use super::WarpSyncError;
 use super::archive::{
-    SkipReason, UploadArchive, build_upload, extract_download, local_files, locally_modified_files,
+    SkipReason, UploadArchive, build_new_upload, build_upload, extract_download, local_files,
+    locally_modified_files,
 };
 use super::baseline::{self, BaselineOutcome, commit_message};
 use super::config::SyncLimits;
 use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
 use super::manifest::{EntryKind, EntryMeta, Manifest, SyncRecord};
 use super::paths::{
-    compare_dir, create_private_dir_all, diff_path, local_path_for, machine_host_key,
-    manifest_path, recovery_dir, split_parent_name, staging_dir,
+    compare_dir, components_below, create_private_dir_all, diff_path, local_path_for,
+    machine_host_key, manifest_path, printable, recovery_dir, split_parent_name, staging_dir,
 };
-use super::remote_check::{RemoteCheck, find_remote_conflicts};
+use super::remote_check::{RemoteCheck, RemoteConflicts, find_remote_conflicts};
 use super::remote_script::{
     CommitMode, ExtractMode, ProbeResult, ProbeStatus, RemoteKind, RemoteTmpDir, UploadCommit, checksum_script,
-    cleanup_command, download_script, parse_checksum_output, parse_probe_output, probe_script,
+    cleanup_command, download_script, light_probe_script, parse_checksum_output,
+    parse_probe_output, probe_script,
     upload_begin_command, upload_chunk_commands, upload_commit_script, validate_tmp_dir,
     wrap_for_any_shell,
 };
 use super::remote_shell::RemoteShell;
 
+const ROOT_DIR: &str = "/";
 const MAX_BACKUP_STEM_CHARS: usize = 150;
 const BACKUP_NONCE_CHARS: usize = 8;
 const BYTES_PER_KIB: u64 = 1024;
@@ -98,16 +101,65 @@ pub struct UploadRequest {
     pub limits: SyncLimits,
 }
 
+/// Where an upload lands on the remote host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadPlacement {
+    /// The path exists on the host: it is replaced, after a backup.
+    Replace,
+    /// Nothing is at the path: it is created inside `anchor`, the closest directory that was
+    /// synced, together with any levels in between.
+    Create { anchor: String },
+}
+
 /// An upload that has been packed and checked against the remote host but not sent yet.
 #[derive(Debug)]
 pub struct PreparedUpload {
     pub archive: UploadArchive,
+    /// What the host reported about the path, or about `anchor` when the path is created.
     pub probe: ProbeResult,
+    pub placement: UploadPlacement,
     /// Whether the host changed since the last sync.
     pub remote_check: RemoteCheck,
     pub remote_path: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
+}
+
+impl PreparedUpload {
+    /// The path that identifies the account and machine the upload is going to.
+    fn probe_path(&self) -> &str {
+        match &self.placement {
+            UploadPlacement::Replace => &self.remote_path,
+            UploadPlacement::Create { anchor } => anchor,
+        }
+    }
+
+    /// The directory the archive is extracted into, and the single entry it holds at the top.
+    fn extraction(&self) -> Result<(String, String), WarpSyncError> {
+        match &self.placement {
+            UploadPlacement::Replace => Ok(split_parent_name(&self.remote_path)),
+            UploadPlacement::Create { anchor } => {
+                let first_level = components_below(anchor, &self.remote_path)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        WarpSyncError::InvalidPath(format!(
+                            "{} is not below {}",
+                            printable(&self.remote_path),
+                            printable(anchor)
+                        ))
+                    })?;
+                Ok((anchor.clone(), first_level))
+            }
+        }
+    }
+
+    fn commit_mode(&self) -> CommitMode {
+        match self.placement {
+            UploadPlacement::Replace => CommitMode::Replace,
+            UploadPlacement::Create { .. } => CommitMode::CreateOnly,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -255,6 +307,10 @@ pub async fn prepare_upload(
     request: &UploadRequest,
 ) -> Result<PreparedUpload, WarpSyncError> {
     let probe = probe(shell, &request.remote_path).await?;
+    match probe.status {
+        ProbeStatus::NotFound => return prepare_new_upload(shell, request).await,
+        ProbeStatus::Ok | ProbeStatus::PermissionDenied => {}
+    }
     ensure_readable(&probe, &request.remote_path)?;
     if !probe.has_base64 {
         return Err(WarpSyncError::MissingTool("base64"));
@@ -280,8 +336,91 @@ pub async fn prepare_upload(
     Ok(PreparedUpload {
         archive,
         probe,
+        placement: UploadPlacement::Replace,
         remote_check,
         remote_path: request.remote_path.clone(),
+        host_key,
+        mirror_root: request.mirror_root.clone(),
+    })
+}
+
+/// Prepares an upload of a path that the host does not have. That is only allowed inside a
+/// directory that was synced and is still there, so that ownership is known and the new path
+/// cannot land somewhere the user never looked at.
+async fn prepare_new_upload(
+    shell: &dyn RemoteShell,
+    request: &UploadRequest,
+) -> Result<PreparedUpload, WarpSyncError> {
+    let remote_path = request.remote_path.as_str();
+    let not_found = || WarpSyncError::NotFound(remote_path.to_owned());
+
+    // The mirror to use depends on which machine this is, and a path that is not there cannot
+    // say; the root directory always exists.
+    let host = probe_light(shell, ROOT_DIR).await?;
+    let host_key = resolve_host_key(
+        &request.mirror_root,
+        &request.host_key,
+        host.machine_id.as_deref(),
+    )?;
+    ensure_expected_host_key(request.expected_host_key.as_deref(), &host_key)?;
+    let manifest = load_manifest(&request.mirror_root, &host_key)?;
+    if !manifest.entries_under(remote_path).is_empty() {
+        return Err(not_found());
+    }
+    let Some((anchor, _)) = manifest.nearest_dir(remote_path) else {
+        return Err(not_found());
+    };
+    match fs::symlink_metadata(local_path_for(&request.mirror_root, &host_key, remote_path)) {
+        Ok(_) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => return Err(not_found()),
+        Err(err) => {
+            return Err(local_io(
+                "read",
+                &local_path_for(&request.mirror_root, &host_key, remote_path),
+                &err,
+            ));
+        }
+    }
+
+    let anchor_probe = probe_light(shell, anchor).await?;
+    ensure_readable(&anchor_probe, anchor)?;
+    if anchor_probe.kind != RemoteKind::Dir {
+        return Err(WarpSyncError::InvalidPath(format!(
+            "{} is not a directory on the remote host",
+            printable(anchor)
+        )));
+    }
+    if !anchor_probe.has_base64 {
+        return Err(WarpSyncError::MissingTool("base64"));
+    }
+    // Extracting over a directory that exists but was never synced would reset its owner and
+    // mode, so the outermost new level must really be new.
+    if let Some(outermost) = components_below(anchor, remote_path)?.first() {
+        let outermost = format!("{anchor}/{outermost}");
+        if outermost != remote_path
+            && probe_light(shell, &outermost).await?.status != ProbeStatus::NotFound
+        {
+            return Err(WarpSyncError::NotMirrored(outermost));
+        }
+    }
+
+    let archive = build_new_upload(
+        remote_path,
+        anchor,
+        &manifest,
+        &request.mirror_root,
+        &host_key,
+        request.limits.max_upload_bytes,
+    )?;
+    Ok(PreparedUpload {
+        archive,
+        probe: anchor_probe,
+        placement: UploadPlacement::Create {
+            anchor: anchor.to_owned(),
+        },
+        // Nothing on the host is replaced, so there is nothing to compare.
+        remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
+        remote_path: remote_path.to_owned(),
         host_key,
         mirror_root: request.mirror_root.clone(),
     })
@@ -353,13 +492,30 @@ async fn probe(shell: &dyn RemoteShell, remote_path: &str) -> Result<ProbeResult
     parse_probe_output(&String::from_utf8_lossy(&output))
 }
 
+/// Like [`probe`], without measuring the size of what is probed.
+async fn probe_light(
+    shell: &dyn RemoteShell,
+    remote_path: &str,
+) -> Result<ProbeResult, WarpSyncError> {
+    let output = shell
+        .run(&wrap_for_any_shell(&light_probe_script(remote_path)))
+        .await?;
+    parse_probe_output(&String::from_utf8_lossy(&output))
+}
+
 /// The confirmation may come long after the upload was prepared, so check that the session still
 /// reaches the same account on the same machine before anything is written.
 async fn ensure_same_target(
     shell: &dyn RemoteShell,
     prepared: &PreparedUpload,
 ) -> Result<(), WarpSyncError> {
-    let now = probe(shell, &prepared.remote_path).await?;
+    let now = match prepared.placement {
+        UploadPlacement::Replace => probe(shell, prepared.probe_path()).await?,
+        UploadPlacement::Create { .. } => probe_light(shell, prepared.probe_path()).await?,
+    };
+    if now.status == ProbeStatus::NotFound {
+        return Err(WarpSyncError::NotFound(prepared.probe_path().to_owned()));
+    }
     let before = &prepared.probe;
     if now.user != before.user || now.uid != before.uid || now.machine_id != before.machine_id {
         return Err(WarpSyncError::Manifest(
@@ -758,13 +914,13 @@ async fn send_and_commit(
         shell.run(&command).await?;
     }
 
-    let (parent, name) = split_parent_name(&prepared.remote_path);
+    let (parent, name) = prepared.extraction()?;
     let backup_name = backup_name(&prepared.host_key, &prepared.remote_path, now_unix());
     let script = upload_commit_script(&UploadCommit {
         tmp_dir,
         parent: &parent,
         name: &name,
-        mode: CommitMode::Replace,
+        mode: prepared.commit_mode(),
         expected_len: prepared.archive.bytes.len(),
         backup_name: &backup_name,
         extract_mode: ExtractMode::for_probe(&prepared.probe),
@@ -786,7 +942,7 @@ async fn remove_remote_tmp_dir(shell: &dyn RemoteShell, tmp_dir: &RemoteTmpDir) 
 /// files. Entries that the mirror no longer has are kept, since they still exist on the remote
 /// host.
 fn record_upload(prepared: &PreparedUpload) -> Result<BTreeSet<String>, WarpSyncError> {
-    let (parent, name) = split_parent_name(&prepared.remote_path);
+    let (parent, name) = prepared.extraction()?;
     ensure_mirror_root(&prepared.mirror_root)?;
     let staging = staging_dir(&prepared.mirror_root);
     let report = extract_download(&prepared.archive.bytes, &name, &parent, &staging);

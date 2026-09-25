@@ -9,6 +9,7 @@ use warpui::ModelHandle;
 use super::super::archive::UploadArchive;
 use super::super::diff::FileChange;
 use super::super::remote_script::{ProbeResult, ProbeStatus, RemoteKind, TarFlavor};
+use super::super::transfer::UploadPlacement;
 use super::*;
 use crate::warp_sync::MAX_EXTERNAL_PENDING;
 
@@ -58,6 +59,7 @@ fn pending_upload(host_key: &str, remote_path: &str) -> PendingUpload {
                 has_base64: true,
                 machine_id: Some("0123456789abcdef".to_owned()),
             },
+            placement: UploadPlacement::Replace,
             remote_check: RemoteCheck::Unavailable,
             remote_path: remote_path.to_owned(),
             host_key: host_key.to_owned(),

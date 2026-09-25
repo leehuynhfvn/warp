@@ -1357,3 +1357,467 @@ fn an_upload_is_refused_when_the_session_no_longer_reaches_the_prepared_machine(
         "nothing may be written on the other machine"
     );
 }
+
+// Uploading paths that do not exist on the server yet.
+
+impl Env {
+    fn request_for_new(&self, relative: &str) -> UploadRequest {
+        UploadRequest {
+            remote_path: format!("{}/{relative}", self.remote_path),
+            ..self.upload_request()
+        }
+    }
+
+    fn prepare_new(&self, relative: &str) -> Result<PreparedUpload, WarpSyncError> {
+        block_on(prepare_upload(&self.shell, &self.request_for_new(relative)))
+    }
+
+    fn upload_new(&self, relative: &str) -> Result<UploadOutcome, WarpSyncError> {
+        let prepared = self.prepare_new(relative)?;
+        block_on(execute_upload(&self.shell, &prepared))
+    }
+
+    /// A downloaded mirror with a new local file `relative` (and its parents).
+    fn with_new_local_file(relative: &str, contents: &str) -> Self {
+        let env = Self::new();
+        env.download_done();
+        let local = env.local(relative);
+        fs::create_dir_all(local.parent().unwrap()).unwrap();
+        fs::write(local, contents).unwrap();
+        env
+    }
+}
+
+fn exit_code_of(result: &Result<UploadOutcome, WarpSyncError>) -> Option<i32> {
+    match result {
+        Err(WarpSyncError::RemoteCommandFailed { exit_code, .. }) => *exit_code,
+        Ok(_) | Err(_) => None,
+    }
+}
+
+#[test]
+fn a_new_file_in_a_synced_directory_uploads_without_touching_its_siblings() {
+    let env = Env::with_new_local_file("fresh.conf", "fresh");
+    fs::write(env.local("a.conf"), "edited a, not to be uploaded").unwrap();
+
+    let outcome = env.upload_new("fresh.conf").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(env.remote("fresh.conf")).unwrap(),
+        "fresh"
+    );
+    assert_eq!(
+        fs::read_to_string(env.remote("a.conf")).unwrap(),
+        "remote a"
+    );
+    assert_eq!((outcome.files, outcome.dirs), (1, 0));
+    assert_eq!(outcome.backup_path, None, "nothing was replaced");
+    assert!(env.leftover_scratch_dirs().is_empty());
+    assert!(
+        !env.dir.path().join("home/.warp-sync").exists(),
+        "there is nothing to back up"
+    );
+}
+
+#[test]
+fn a_new_directory_tree_is_created_with_every_level_in_between() {
+    let env = Env::with_new_local_file("one/two/three/deep.conf", "deep");
+    fs::write(env.local("one/top.conf"), "top").unwrap();
+
+    let outcome = env.upload_new("one").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(env.remote("one/two/three/deep.conf")).unwrap(),
+        "deep"
+    );
+    assert_eq!(
+        fs::read_to_string(env.remote("one/top.conf")).unwrap(),
+        "top"
+    );
+    assert_eq!((outcome.files, outcome.dirs), (2, 3));
+}
+
+#[test]
+fn a_new_file_several_levels_below_a_synced_directory_creates_the_levels_between() {
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+    fs::write(env.local("one/sibling.conf"), "not uploaded").unwrap();
+
+    env.upload_new("one/two/only.conf").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(env.remote("one/two/only.conf")).unwrap(),
+        "only"
+    );
+    assert!(
+        !env.remote("one/sibling.conf").exists(),
+        "only the requested path is uploaded"
+    );
+}
+
+#[test]
+fn the_manifest_records_the_new_path_and_the_levels_created_for_it() {
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+
+    env.upload_new("one/two/only.conf").unwrap();
+
+    let manifest = env.manifest();
+    for relative in ["one", "one/two", "one/two/only.conf"] {
+        assert!(
+            manifest
+                .entries_under(&format!("{}/{relative}", env.remote_path))
+                .contains_key(&format!("{}/{relative}", env.remote_path)),
+            "{relative}"
+        );
+    }
+    let file = manifest
+        .entry(&format!("{}/one/two/only.conf", env.remote_path))
+        .unwrap();
+    assert_eq!(file.sha256.as_deref(), Some(sha256_hex("only").as_str()));
+}
+
+#[test]
+fn a_path_uploaded_before_is_replaced_and_backed_up_the_next_time() {
+    let env = Env::with_new_local_file("one/only.conf", "first");
+    env.upload_new("one/only.conf").unwrap();
+    fs::write(env.local("one/only.conf"), "second").unwrap();
+
+    let outcome = env.upload_new("one/only.conf").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(env.remote("one/only.conf")).unwrap(),
+        "second"
+    );
+    assert!(outcome.backup_path.is_some());
+}
+
+#[test]
+fn the_summary_lists_what_will_be_created_including_the_levels_in_between() {
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+
+    let prepared = env.prepare_new("one/two/only.conf").unwrap();
+
+    let prefix = &env.remote_path;
+    assert_eq!(
+        prepared.archive.new_files,
+        [
+            format!("{prefix}/one"),
+            format!("{prefix}/one/two"),
+            format!("{prefix}/one/two/only.conf"),
+        ]
+    );
+    assert_eq!(prepared.remote_check, RemoteCheck::Checked(Default::default()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_file_keeps_the_permission_bits_it_has_locally() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::with_new_local_file("secret.conf", "s");
+    fs::set_permissions(env.local("secret.conf"), fs::Permissions::from_mode(0o600)).unwrap();
+
+    env.upload_new("secret.conf").unwrap();
+
+    let mode = fs::metadata(env.remote("secret.conf"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_file_with_setuid_bits_is_refused_and_nothing_is_created() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::with_new_local_file("one/tool.sh", "x");
+    fs::set_permissions(env.local("one/tool.sh"), fs::Permissions::from_mode(0o4755)).unwrap();
+
+    let result = env.prepare_new("one");
+
+    assert!(matches!(result, Err(WarpSyncError::SpecialMode(_))));
+    assert!(!env.remote("one").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_levels_created_in_between_are_world_readable_directories() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+
+    env.upload_new("one/two/only.conf").unwrap();
+
+    let mode = fs::metadata(env.remote("one")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o7777, 0o755);
+}
+
+#[test]
+fn a_path_that_appears_before_the_confirmation_is_not_overwritten() {
+    let env = Env::with_new_local_file("fresh.conf", "mine");
+    let prepared = env.prepare_new("fresh.conf").unwrap();
+    fs::write(env.remote("fresh.conf"), "theirs").unwrap();
+
+    let result = block_on(execute_upload(&env.shell, &prepared));
+
+    assert_eq!(
+        exit_code_of(&result),
+        Some(super::super::remote_script::EXIT_TARGET_EXISTS),
+        "{result:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(env.remote("fresh.conf")).unwrap(),
+        "theirs"
+    );
+    assert!(env.leftover_scratch_dirs().is_empty());
+}
+
+#[test]
+fn a_dangling_symlink_that_appears_at_the_path_is_not_written_through() {
+    let env = Env::with_new_local_file("fresh.conf", "mine");
+    let prepared = env.prepare_new("fresh.conf").unwrap();
+    let outside = env.dir.path().join("outside");
+    std::os::unix::fs::symlink(&outside, env.remote("fresh.conf")).unwrap();
+
+    let result = block_on(execute_upload(&env.shell, &prepared));
+
+    assert_eq!(
+        exit_code_of(&result),
+        Some(super::super::remote_script::EXIT_TARGET_EXISTS),
+        "{result:?}"
+    );
+    assert!(!outside.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_level_in_between_that_appears_before_the_confirmation_is_left_alone() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+    let prepared = env.prepare_new("one/two/only.conf").unwrap();
+    fs::create_dir(env.remote("one")).unwrap();
+    fs::set_permissions(env.remote("one"), fs::Permissions::from_mode(0o700)).unwrap();
+
+    let result = block_on(execute_upload(&env.shell, &prepared));
+
+    assert_eq!(
+        exit_code_of(&result),
+        Some(super::super::remote_script::EXIT_TARGET_EXISTS),
+        "{result:?}"
+    );
+    let mode = fs::metadata(env.remote("one")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700, "the directory that was there is untouched");
+    assert!(!env.remote("one/two").exists());
+}
+
+#[test]
+fn a_synced_directory_that_became_a_symlink_is_not_written_into() {
+    let env = Env::with_new_local_file("fresh.conf", "mine");
+    let prepared = env.prepare_new("fresh.conf").unwrap();
+    let elsewhere = env.dir.path().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    let anchor = Path::new(&env.remote_path);
+    fs::rename(anchor, env.dir.path().join("remote/moved")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, anchor).unwrap();
+
+    let result = block_on(execute_upload(&env.shell, &prepared));
+
+    assert_eq!(
+        exit_code_of(&result),
+        Some(super::super::remote_script::EXIT_ANCHOR_UNSAFE),
+        "{result:?}"
+    );
+    assert!(!elsewhere.join("fresh.conf").exists());
+    assert!(env.leftover_scratch_dirs().is_empty());
+}
+
+#[test]
+fn a_new_path_needs_a_synced_ancestor_that_still_exists_on_the_server() {
+    let env = Env::with_new_local_file("sub/one/only.conf", "only");
+    fs::remove_dir_all(env.remote("sub")).unwrap();
+
+    let result = env.prepare_new("sub/one/only.conf");
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotFound(path)) if path.ends_with("/conf/sub")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_synced_ancestor_that_is_a_file_on_the_server_is_refused() {
+    let env = Env::with_new_local_file("sub/one/only.conf", "only");
+    fs::remove_dir_all(env.remote("sub")).unwrap();
+    fs::write(env.remote("sub"), "now a file").unwrap();
+
+    let result = env.prepare_new("sub/one/only.conf");
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::InvalidPath(message)) if message.contains("not a directory")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_new_path_without_a_synced_ancestor_is_not_found_like_before() {
+    let env = Env::new();
+    env.download_done();
+    let unsynced = env.dir.path().join("remote/elsewhere/deep/x.conf");
+    let remote_path = unsynced.to_str().unwrap().to_owned();
+    let local = local_path_for(&env.mirror_root(), HOST_KEY, &remote_path);
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(&local, "x").unwrap();
+    let request = UploadRequest {
+        remote_path,
+        ..env.upload_request()
+    };
+
+    let result = block_on(prepare_upload(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotFound(_))),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_path_that_exists_neither_on_the_server_nor_locally_is_not_found() {
+    let env = Env::new();
+    env.download_done();
+
+    let result = env.prepare_new("nowhere/at/all.conf");
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotFound(path)) if path.ends_with("/nowhere/at/all.conf")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_directory_that_exists_on_the_server_but_is_not_synced_must_be_downloaded_first() {
+    let env = Env::with_new_local_file("extra/new.conf", "new");
+    fs::create_dir(env.remote("extra")).unwrap();
+
+    let result = env.prepare_new("extra/new.conf");
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotMirrored(path)) if path.ends_with("/conf/extra")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_new_path_is_refused_for_another_mirror_folder_before_it_is_packed() {
+    let env = Env::with_new_local_file("fresh.conf", "fresh");
+    let request = UploadRequest {
+        expected_host_key: Some("other-host".to_owned()),
+        ..env.request_for_new("fresh.conf")
+    };
+
+    let result = block_on(prepare_upload(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("another machine")),
+        "{:?}",
+        result.as_ref().err()
+    );
+}
+
+#[test]
+fn a_new_path_uses_the_mirror_of_the_machine_that_owns_it() {
+    let env = Env::new();
+    let machine_a = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_A,
+    };
+    let machine_b = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_B,
+    };
+    block_on(download(&machine_a, &env.download_request(false))).unwrap();
+    block_on(download(&machine_b, &env.download_request(false))).unwrap();
+    let dir_b = machine_host_key(HOST_KEY, MACHINE_B);
+    let local_b = local_path_for(&env.mirror_root(), &dir_b, &env.remote_path);
+    fs::write(local_b.join("fresh.conf"), "fresh from B").unwrap();
+
+    let prepared = block_on(prepare_upload(&machine_b, &env.request_for_new("fresh.conf"))).unwrap();
+    block_on(execute_upload(&machine_b, &prepared)).unwrap();
+
+    assert_eq!(prepared.host_key, dir_b);
+    assert_eq!(
+        fs::read_to_string(env.remote("fresh.conf")).unwrap(),
+        "fresh from B"
+    );
+    assert!(
+        load_manifest(&env.mirror_root(), HOST_KEY)
+            .unwrap()
+            .entries_under(&format!("{}/fresh.conf", env.remote_path))
+            .is_empty(),
+        "the other machine's manifest is not touched"
+    );
+}
+
+#[test]
+fn a_new_path_is_refused_when_the_session_no_longer_reaches_the_prepared_machine() {
+    let env = Env::with_new_local_file("fresh.conf", "fresh");
+    let prepared = env.prepare_new("fresh.conf").unwrap();
+    let other_machine = AsMachine {
+        shell: &env.shell,
+        machine_id: MACHINE_B,
+    };
+
+    let result = block_on(execute_upload(&other_machine, &prepared));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::Manifest(message)) if message.contains("no longer reaches")),
+        "{result:?}"
+    );
+    assert!(!env.remote("fresh.conf").exists());
+}
+
+#[test]
+fn a_new_path_upload_probes_the_anchor_again_when_confirmed() {
+    let env = Env::with_new_local_file("sub/fresh.conf", "fresh");
+    let prepared = env.prepare_new("sub/fresh.conf").unwrap();
+    fs::remove_dir_all(env.remote("sub")).unwrap();
+
+    let result = block_on(execute_upload(&env.shell, &prepared));
+
+    assert!(result.is_err(), "{result:?}");
+    assert!(!env.remote("sub").exists());
+    assert!(env.leftover_scratch_dirs().is_empty());
+}
+
+#[test]
+fn a_new_path_upload_is_not_a_replacement_so_it_makes_no_backup_directory() {
+    let env = Env::with_new_local_file("fresh.conf", "fresh");
+
+    let outcome = env.upload_new("fresh.conf").unwrap();
+
+    assert_eq!(outcome.backup_path, None);
+}
+
+#[test]
+fn a_new_path_upload_enters_the_git_baseline_and_leaves_other_edits_out_of_it() {
+    let env = Env::with_new_local_file("one/two/only.conf", "only");
+    fs::write(env.local("a.conf"), "edited a, not uploaded").unwrap();
+
+    let outcome = env.upload_new("one/two/only.conf").unwrap();
+
+    assert_eq!(outcome.baseline_warning, None);
+    assert_eq!(
+        baseline_contents(&env, "one/two/only.conf").as_deref(),
+        Some("only")
+    );
+    assert_eq!(
+        baseline_contents(&env, "a.conf").as_deref(),
+        Some("remote a"),
+        "what was not uploaded stays as the server has it"
+    );
+}
