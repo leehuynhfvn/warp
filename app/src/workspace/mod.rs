@@ -375,6 +375,18 @@ pub fn init(app: &mut AppContext) {
             )
             .with_context_predicate(id!("Workspace")),
             EditableBinding::new(
+                "workspace:warp_sync_download_path",
+                "Warp Sync: Download a path from the server to local mirror…",
+                WorkspaceAction::WarpSyncDownloadPath,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:warp_sync_upload_path",
+                "Warp Sync: Upload a path from local mirror to the server…",
+                WorkspaceAction::WarpSyncUploadPath,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
                 "workspace:warp_sync_open_mirror",
                 "Warp Sync: Open local mirror",
                 WorkspaceAction::WarpSyncOpenMirror,

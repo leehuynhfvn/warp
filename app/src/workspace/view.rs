@@ -485,6 +485,9 @@ use crate::view_components::{
 use crate::warp_sync::confirm_dialog::{
     ConfirmKind, ConfirmRequest, WarpSyncConfirmDialog, WarpSyncConfirmEvent,
 };
+use crate::warp_sync::path_prompt::{
+    PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent,
+};
 use crate::warp_sync::{
     WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path,
 };
@@ -1121,6 +1124,7 @@ pub struct Workspace {
     rewind_confirmation_dialog: ViewHandle<RewindConfirmationDialog>,
     delete_conversation_confirmation_dialog: ViewHandle<DeleteConversationConfirmationDialog>,
     warp_sync_confirm_dialog: ViewHandle<WarpSyncConfirmDialog>,
+    warp_sync_path_prompt: ViewHandle<WarpSyncPathPrompt>,
     resource_center_view: ViewHandle<ResourceCenterView>,
     command_search_view: ViewHandle<CommandSearchView>,
     autoupdate_unable_to_update_banner_dismissed: bool,
@@ -2021,6 +2025,14 @@ impl Workspace {
             me.handle_warp_sync_confirm_event(event, ctx);
         });
         dialog
+    }
+
+    fn build_warp_sync_path_prompt(ctx: &mut ViewContext<Self>) -> ViewHandle<WarpSyncPathPrompt> {
+        let prompt = ctx.add_typed_action_view(WarpSyncPathPrompt::new);
+        ctx.subscribe_to_view(&prompt, move |me, _, event, ctx| {
+            me.handle_warp_sync_path_prompt_event(event, ctx);
+        });
+        prompt
     }
 
     fn build_native_modal_view(ctx: &mut ViewContext<Self>) -> ViewHandle<NativeModal> {
@@ -3113,6 +3125,7 @@ impl Workspace {
         let delete_conversation_confirmation_dialog =
             Self::build_delete_conversation_confirmation_dialog(ctx);
         let warp_sync_confirm_dialog = Self::build_warp_sync_confirm_dialog(ctx);
+        let warp_sync_path_prompt = Self::build_warp_sync_path_prompt(ctx);
         let command_search_view =
             ctx.add_typed_action_view(|ctx| CommandSearchView::new(ai_client.clone(), ctx));
         ctx.subscribe_to_view(&command_search_view, |me, _, event, ctx| {
@@ -3512,6 +3525,7 @@ impl Workspace {
             rewind_confirmation_dialog,
             delete_conversation_confirmation_dialog,
             warp_sync_confirm_dialog,
+            warp_sync_path_prompt,
             resource_center_view,
             command_search_view,
             autoupdate_unable_to_update_banner_dismissed: false,
@@ -18875,6 +18889,73 @@ impl Workspace {
         });
     }
 
+    fn open_warp_sync_path_prompt(&mut self, kind: PathPromptKind, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        match self.active_warp_sync_session(ctx) {
+            Ok((session, pwd)) => {
+                let hint = match pwd {
+                    Some(pwd) => format!(
+                        "An absolute path on {}, or one relative to {pwd}.",
+                        session.hostname()
+                    ),
+                    None => format!("An absolute path on {}.", session.hostname()),
+                };
+                self.warp_sync_path_prompt
+                    .update(ctx, |prompt, ctx| prompt.open(kind, hint, ctx));
+                self.current_workspace_state.is_warp_sync_path_prompt_open = true;
+                ctx.focus(&self.warp_sync_path_prompt);
+                ctx.notify();
+            }
+            Err(error) => WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
+                warp_sync.report_failure(window_id, error, ctx)
+            }),
+        }
+    }
+
+    fn handle_warp_sync_path_prompt_event(
+        &mut self,
+        event: &WarpSyncPathPromptEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let (kind, input) = match event {
+            WarpSyncPathPromptEvent::Submit { kind, input } => (*kind, input),
+            WarpSyncPathPromptEvent::Cancel => {
+                self.close_warp_sync_path_prompt(ctx);
+                return;
+            }
+        };
+        let request = self.active_warp_sync_session(ctx).and_then(|(session, pwd)| {
+            let remote_path = normalize_remote_path(input, pwd.as_deref())?;
+            Ok((session, remote_path))
+        });
+        if let Err(error @ WarpSyncError::InvalidPath(_)) = &request {
+            // Keep the prompt open so that the user can correct the path.
+            self.warp_sync_path_prompt
+                .update(ctx, |prompt, ctx| prompt.set_error(error.to_string(), ctx));
+            return;
+        }
+        self.close_warp_sync_path_prompt(ctx);
+
+        let window_id = ctx.window_id();
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match (request, kind) {
+            (Ok((session, remote_path)), PathPromptKind::Download) => {
+                warp_sync.start_download(session, remote_path, window_id, ctx)
+            }
+            (Ok((session, remote_path)), PathPromptKind::Upload) => {
+                warp_sync.start_upload(session, remote_path, window_id, ctx)
+            }
+            (Err(error), PathPromptKind::Download | PathPromptKind::Upload) => {
+                warp_sync.report_failure(window_id, error, ctx)
+            }
+        });
+    }
+
+    fn close_warp_sync_path_prompt(&mut self, ctx: &mut ViewContext<Self>) {
+        self.current_workspace_state.is_warp_sync_path_prompt_open = false;
+        self.focus_active_tab(ctx);
+        ctx.notify();
+    }
+
     fn warp_sync_open_mirror(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
         let mirror_dir = self.active_warp_sync_session(ctx).and_then(|(session, _)| {
@@ -25345,6 +25426,8 @@ impl TypedActionView for Workspace {
             }
             WarpSyncDownloadCurrentDirectory => self.warp_sync_download_current_directory(ctx),
             WarpSyncUploadCurrentDirectory => self.warp_sync_upload_current_directory(ctx),
+            WarpSyncDownloadPath => self.open_warp_sync_path_prompt(PathPromptKind::Download, ctx),
+            WarpSyncUploadPath => self.open_warp_sync_path_prompt(PathPromptKind::Upload, ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             NewTabInAgentMode {
                 entrypoint,
@@ -27997,6 +28080,18 @@ impl View for Workspace {
         {
             stack.add_positioned_overlay_child(
                 ChildView::new(&self.warp_sync_confirm_dialog).finish(),
+                OffsetPositioning::offset_from_parent(
+                    Vector2F::zero(),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                ),
+            );
+        }
+
+        if self.current_workspace_state.is_warp_sync_path_prompt_open {
+            stack.add_positioned_overlay_child(
+                ChildView::new(&self.warp_sync_path_prompt).finish(),
                 OffsetPositioning::offset_from_parent(
                     Vector2F::zero(),
                     ParentOffsetBounds::WindowByPosition,

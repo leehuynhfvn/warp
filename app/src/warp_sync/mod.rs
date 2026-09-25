@@ -7,6 +7,7 @@ pub mod confirm_dialog;
 mod error;
 mod manifest;
 mod model;
+pub mod path_prompt;
 mod paths;
 mod remote_check;
 mod remote_script;
