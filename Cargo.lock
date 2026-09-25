@@ -15561,6 +15561,7 @@ name = "warp_cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cfg-if",
  "cfg_aliases 0.2.1",
  "chrono",

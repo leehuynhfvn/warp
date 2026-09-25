@@ -2,6 +2,7 @@
 mod commands;
 mod completions;
 mod output;
+mod remote;
 mod selectors;
 mod sync;
 use std::ffi::OsString;
@@ -17,7 +18,10 @@ use commands::{
 };
 use completions::generate_completions_to_stdout;
 use output::write_control_error;
+use remote::run_remote_command;
 use sync::{parse_pending_id, run_sync_command};
+
+pub use remote::{RemoteCommand, RemoteExecArgs, RemoteReadArgs, RemoteWriteArgs};
 
 use crate::agent::OutputFormat;
 
@@ -197,6 +201,10 @@ pub enum ControlCommand {
     /// Download, compare and upload remote files through a Warp session with Warp Sync.
     #[command(subcommand)]
     Sync(SyncCommand),
+
+    /// Run commands and read and write files in a remote session that agents may use.
+    #[command(subcommand)]
+    Remote(RemoteCommand),
 
     /// Generate shell completions for your shell to stdout.
     ///
@@ -994,6 +1002,7 @@ fn run_inner(args: ControlArgs) -> Result<u8, local_control::protocol::ControlEr
     let output_format = args.output_format;
     let result = match args.command {
         ControlCommand::Sync(command) => return run_sync_command(command, output_format),
+        ControlCommand::Remote(command) => return run_remote_command(command, output_format),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),
         ControlCommand::Capability(command) => run_capability_command(command, output_format),

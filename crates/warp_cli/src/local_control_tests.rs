@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use clap_complete::aot::Shell;
 use local_control::protocol::{
-    ActionKind, ControlError, ErrorCode, SyncChange, SyncConfirmation, SyncDifference,
+    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteExecResult,
+    RemoteFileWriteResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
+    RemoteStream, SyncChange, SyncConfirmation, SyncDifference,
     SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary, SyncSkippedEntry,
     SyncUploadSummary,
 };
@@ -237,14 +239,8 @@ fn generated_bash_completions_include_readonly_commands() {
     assert!(!completions.contains("block"));
 }
 
-/// Remote actions are declared before `warpctrl remote` exists.
-const REMOTE_ACTIONS_WITHOUT_CLI: &[ActionKind] = &[
-    ActionKind::RemoteSessionList,
-    ActionKind::RemoteExec,
-    ActionKind::RemoteFileRead,
-    ActionKind::RemoteFileWrite,
-    ActionKind::RemoteOutputRecent,
-];
+/// Actions that no `warpctrl` command runs yet.
+const REMOTE_ACTIONS_WITHOUT_CLI: &[ActionKind] = &[ActionKind::RemoteOutputRecent];
 
 #[test]
 fn every_retained_catalog_action_has_a_parseable_cli_example() {
@@ -598,6 +594,25 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             ActionKind::FileOpen,
             vec!["warpctrl", "file", "open", "/tmp/example.txt"],
         ),
+        (
+            ActionKind::RemoteSessionList,
+            vec!["warpctrl", "remote", "sessions"],
+        ),
+        (
+            ActionKind::RemoteExec,
+            vec!["warpctrl", "remote", "exec", "--session", "12", "--", "id"],
+        ),
+        (
+            ActionKind::RemoteFileRead,
+            vec!["warpctrl", "remote", "read", "--session", "12", "/etc/hosts"],
+        ),
+        (
+            ActionKind::RemoteFileWrite,
+            vec![
+                "warpctrl", "remote", "write", "--session", "12", "/etc/hosts", "--from", "hosts",
+                "--create",
+            ],
+        ),
         (ActionKind::SyncStatus, vec!["warpctrl", "sync", "status"]),
         (
             ActionKind::SyncDownload,
@@ -781,6 +796,12 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             SurfaceCommand::AgentManagement(command) => match command {
                 SurfaceOpenCommand::Open(_) => Some(ActionKind::SurfaceAgentManagementOpen),
             },
+        },
+        ControlCommand::Remote(command) => match command {
+            RemoteCommand::Sessions(_) => Some(ActionKind::RemoteSessionList),
+            RemoteCommand::Exec(_) => Some(ActionKind::RemoteExec),
+            RemoteCommand::Read(_) => Some(ActionKind::RemoteFileRead),
+            RemoteCommand::Write(_) => Some(ActionKind::RemoteFileWrite),
         },
         ControlCommand::Sync(command) => match command {
             SyncCommand::Status(_) => Some(ActionKind::SyncStatus),
@@ -1164,4 +1185,148 @@ fn a_comparison_lists_each_difference_with_what_changed() {
          changed locally: /etc/a\n  new on the server: /etc/b\nDiff saved at \
          /m/.warp-sync/diffs/h/etc.diff"
     );
+}
+
+#[test]
+fn remote_exec_keeps_the_command_words_and_their_dashes() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl", "remote", "exec", "--session", "12", "--cwd", "/etc", "--timeout", "30", "--",
+        "ls", "-la", "--color=never",
+    ])
+    .expect("remote exec parses");
+    let ControlCommand::Remote(RemoteCommand::Exec(args)) = args.command else {
+        panic!("expected remote exec");
+    };
+    assert_eq!(args.command, ["ls", "-la", "--color=never"]);
+    assert_eq!(args.cwd.as_deref(), Some("/etc"));
+    assert_eq!(args.timeout_secs, 30);
+    assert_eq!(args.target.session.as_deref(), Some("12"));
+}
+
+#[test]
+fn remote_exec_needs_a_command_and_defaults_to_two_minutes() {
+    assert!(ControlArgs::try_parse_from(["warpctrl", "remote", "exec", "--session", "1"]).is_err());
+    let args = ControlArgs::try_parse_from(["warpctrl", "remote", "exec", "--", "true"])
+        .expect("remote exec parses");
+    let ControlCommand::Remote(RemoteCommand::Exec(args)) = args.command else {
+        panic!("expected remote exec");
+    };
+    assert_eq!(args.timeout_secs, 120);
+}
+
+#[test]
+fn remote_write_needs_exactly_one_expectation() {
+    let base = ["warpctrl", "remote", "write", "/etc/hosts", "--from", "hosts"];
+    assert!(ControlArgs::try_parse_from(base).is_err(), "no expectation");
+
+    let both = [&base[..], &["--create", "--expected-sha256", "abc"]].concat();
+    assert!(ControlArgs::try_parse_from(both).is_err(), "both expectations");
+
+    let sha = "a".repeat(64);
+    let overwrite = [&base[..], &["--expected-sha256", sha.as_str()]].concat();
+    let args = ControlArgs::try_parse_from(overwrite).expect("overwrite parses");
+    let ControlCommand::Remote(RemoteCommand::Write(args)) = args.command else {
+        panic!("expected remote write");
+    };
+    assert_eq!(args.expected_sha256.as_deref(), Some(sha.as_str()));
+    assert!(!args.create);
+
+    let create = [&base[..], &["--create"]].concat();
+    let args = ControlArgs::try_parse_from(create).expect("create parses");
+    let ControlCommand::Remote(RemoteCommand::Write(args)) = args.command else {
+        panic!("expected remote write");
+    };
+    assert!(args.create && args.expected_sha256.is_none());
+}
+
+fn exec_result(exit_code: i32) -> RemoteExecResult {
+    let stream = |text: &str| RemoteStream {
+        text: text.to_owned(),
+        total_bytes: text.len() as u64,
+        truncated: false,
+    };
+    RemoteExecResult {
+        session: RemoteSessionRef {
+            session_id: "12".to_owned(),
+            host: "prod-1".to_owned(),
+            user: "root".to_owned(),
+        },
+        cwd: None,
+        exit_code,
+        timed_out: false,
+        duration_ms: 5,
+        stdout: stream("out"),
+        stderr: stream(""),
+    }
+}
+
+#[test]
+fn the_exec_exit_code_is_the_remote_one_kept_in_range() {
+    use remote::exec_exit_code;
+    assert_eq!(exec_exit_code(&exec_result(0)), 0);
+    assert_eq!(exec_exit_code(&exec_result(3)), 3);
+    assert_eq!(exec_exit_code(&exec_result(124)), 124);
+    assert_eq!(exec_exit_code(&exec_result(255)), 255);
+    assert_eq!(exec_exit_code(&exec_result(-1)), 0);
+    assert_eq!(exec_exit_code(&exec_result(1000)), 255);
+}
+
+#[test]
+fn the_session_list_marks_the_active_session_and_shows_what_may_be_used() {
+    use remote::render_sessions;
+    let session = |id: &str, is_active: bool, attached: Option<RemoteAttachment>| {
+        RemoteSessionSummary {
+            session_id: id.to_owned(),
+            window_index: 0,
+            tab_index: 0,
+            pane_index: 0,
+            is_active,
+            session_type: RemoteSessionKind::Remote,
+            host: "prod-1".to_owned(),
+            user: "root".to_owned(),
+            shell: "bash".to_owned(),
+            cwd: Some("/root".to_owned()),
+            attached,
+        }
+    };
+    let attached = RemoteAttachment {
+        access: RemoteAccess::ReadOnly,
+        idle_secs: 30,
+        expires_in_secs: 29 * 60 + 30,
+        exec_count: 2,
+    };
+    let text = render_sessions(&[session("12", true, Some(attached)), session("13", false, None)]);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        "* 12  root@prod-1  bash  /root  [read-only, 2 commands, expires in 29m]"
+    );
+    assert_eq!(lines[1], "  13  root@prod-1  bash  /root  [not attached]");
+    assert_eq!(render_sessions(&[]), "No sessions.");
+}
+
+#[test]
+fn a_write_result_names_the_backup_only_when_there_is_one() {
+    use remote::render_write;
+    let mut result = RemoteFileWriteResult {
+        session: RemoteSessionRef {
+            session_id: "12".to_owned(),
+            host: "prod-1".to_owned(),
+            user: "root".to_owned(),
+        },
+        path: "/etc/app.conf".to_owned(),
+        bytes: 42,
+        sha256: "abc".to_owned(),
+        backup_path: Some("/root/.warp-agent/backups/app.conf.1".to_owned()),
+        created: false,
+    };
+    let text = render_write(&result);
+    assert!(text.starts_with("Wrote /etc/app.conf (42 bytes, sha256 abc)"), "{text}");
+    assert!(text.contains("saved in /root/.warp-agent/backups/app.conf.1"), "{text}");
+
+    result.created = true;
+    result.backup_path = None;
+    let text = render_write(&result);
+    assert!(text.starts_with("Created /etc/app.conf"), "{text}");
+    assert!(!text.contains("saved in"), "{text}");
 }
