@@ -118,6 +118,68 @@ riêng. Phạm vi dự kiến:
 **Gate → O3/O4:** dùng hằng ngày ≥ 1 tuần trên host lab không có sự cố; mọi lệnh ghi đều đi qua
 hộp thoại hoặc allowlist; audit log đủ.
 
+### G — Warp làm cổng SSH cho agent (thêm 2026-09-25, chưa có plan chi tiết)
+
+Mục tiêu: operator khai báo server **một lần** trong Warp (gồm credential, lưu an toàn); bất kỳ agent
+local nào (qua MCP, P2) cũng có thể **tự mở một hoặc nhiều session** tới server đã khai báo, sửa file
+qua **mirror Warp Sync** (có lịch sử Git ở local), mọi thao tác nằm trong audit. Kết luận khảo sát:
+**làm được**, phần lớn dựa trên thứ đã có:
+
+| Đã có | Dùng cho |
+|---|---|
+| `warpui_extras::secure_storage` (Keychain / libsecret, fallback file owner-only) | Lưu mật khẩu SSH/sudo, passphrase |
+| Local control `tab.create` + Warpify SSH + Agent Bridge `remote.*` | Mở session và điều khiển nó |
+| Warp Sync: mirror + Git baseline + upload có backup/kiểm xung đột + hộp thoại xác nhận | Sửa file có lịch sử, diff, rollback |
+| Audit của Bridge (`request_id`, `agent`) | Dòng thời gian thao tác theo server |
+| Host picker (host đã kết nối, `known_hosts`), `remote_server` | Nhập danh sách host |
+| `crates/warp_tui` (front-end headless) | Tuỳ chọn về sau: chạy cổng này trên máy trung gian 24/7 |
+
+**Thứ tự bắt buộc:** G2 trở đi làm **sau O2**. Agent tự mở session root nghĩa là bỏ bước "người
+bấm Attach" — lớp an toàn chính của O1 — nên phải có policy + hộp thoại duyệt và pairing token trước.
+
+- **G1 — Danh bạ server.** `~/.warp/agent-ops/hosts.toml` (không chứa bí mật): alias, host, port,
+  user, jump host, tag (`prod`/`lab`…), cách xác thực (`key` / `agent` / `password`), cách lên root
+  (`root_login` / `sudo_nopasswd` / `sudo_password` / `none`), `requiretty`, transport ưu tiên. Bí mật
+  nằm trong secure storage theo khoá `host:<alias>:ssh_password` / `…:sudo_password`. Nhập từ
+  `~/.ssh/config`. UI: trang Settings + palette "Agent Ops: Add server".
+- **G2 — Agent tự mở session.** MCP tool `open_session {host, access, purpose}` → policy (O2) quyết
+  định: tự mở (lab), hỏi (prod), từ chối. Warp mở tab trong nhóm "Agents" (luôn **hiển thị**, user
+  nhìn và giành lại quyền được), ssh bằng credential trong kho, lên root theo cấu hình, Warpify, tự
+  attach với mức quyền policy cho phép; `close_session`; giới hạn số session theo host/agent. Nhiều
+  session cùng host → agent làm **song song** (giải quyết hạn chế một lệnh một lúc của in-band).
+  Bí mật **không bao giờ** tới agent, audit hay log:
+  - Mật khẩu SSH: `ssh` local gọi `SSH_ASKPASS` (`SSH_ASKPASS_REQUIRE=force`) trỏ tới helper
+    `warp --warpctrl askpass`, helper lấy mật khẩu qua broker — không gõ qua PTY.
+  - Mật khẩu sudo (chạy trên server nên askpass local không dùng được): Warp chỉ tự điền **một lần**,
+    ngay sau khi chính nó gửi `sudo -i` trong session nó vừa mở, khi thấy prompt khớp, có timeout —
+    chống chương trình giả prompt `[sudo] password for` để lấy mật khẩu.
+- **G3 — Transport theo host, cùng một API `remote.*`.** Agent không cần biết bên dưới:
+
+  | Server | Transport | Song song |
+  |---|---|---|
+  | Key + `sudo NOPASSWD` (có hoặc không `requiretty`) hoặc SSH thẳng root | **Kênh exec trực tiếp**: Warp chạy `ssh` (ControlMaster) cho từng lệnh, `-tt` khi `requiretty`; không qua PTY của user | Có |
+  | Cần mật khẩu sudo, hoặc chỉ có mật khẩu | **Session PTY in-band** (Bridge hiện tại), Warp tự điền mật khẩu như G2 | Theo số session |
+  | Server user đã tự mở tay | Attach thủ công như O1 | Không |
+- **G4 — Sửa file qua mirror Warp Sync.** `edit_file`/`write_file` của MCP: tải file vào mirror (nếu
+  chưa có) → áp thay đổi trong mirror → upload bằng Warp Sync (backup trên server, kiểm xung đột) →
+  commit Git trong mirror với message ghi `host`, `agent`, `request_id`, người duyệt. Hộp thoại duyệt
+  O2 hiển thị **diff** (Sync đã có hộp thoại xác nhận). Rollback = `git revert` + upload. Lưu ý:
+  mirror giữ bản sao file chỉ root đọc được → thư mục `0700`, khuyến nghị mã hoá đĩa, policy loại
+  trừ đường dẫn bí mật (`/etc/shadow`, khoá SSH, `*.key`).
+- **G5 — Dòng thời gian theo server.** Gộp audit Bridge + `git log` của mirror + block trong session
+  theo `request_id`: "agent nào đã làm gì trên server X, lúc nào, ai duyệt".
+
+**Rủi ro riêng của G:** (1) Warp thành kho credential + tự mở phiên root → process local nào gọi được
+MCP là mối đe doạ lớn hơn O1: pairing token + policy là điều kiện tiên quyết. (2) Khó nhất không phải
+*lưu* mật khẩu mà là *dùng* nó mà không lộ (prompt giả, lịch sử shell, log `safe_info!` của executor
+in-band — D21 của Bridge). (3) Mirror tích luỹ bản sao file nhạy cảm ở máy local.
+**Lời khuyên:** với server mình quản lý được, tài khoản `ops` riêng dùng key + `sudo NOPASSWD` (có log
+sudo phía server) đơn giản và dễ kiểm toán hơn lưu mật khẩu; kho mật khẩu của G1 dành cho server
+không đổi được cấu hình.
+
+**Gate G:** G1 dùng được cho ≥ 3 server thật; G2 chỉ bật sau gate O2; kênh exec trực tiếp (G3) đo
+được song song trên host `sudo NOPASSWD`; G4 có lịch sử + rollback thử trên host lab.
+
 ### O3 — Bộ công cụ quan sát + runbook (hầu như không sửa Warp)
 
 - Gắn **`grafana/mcp-grafana`** (MCP chính thức của Grafana) cho Claude Code / Codex / Gemini CLI.
@@ -216,6 +278,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [ ] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12) · [ ] gate O1
 - [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, chưa viết)
+- [ ] G1 danh bạ server · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
 - [ ] O5a MCP incident tools · [ ] O5b panel GUI
@@ -230,3 +293,6 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 | AO3 | 2026-09-25 | Duyệt lệnh ghi ở phía Warp (O2), không chỉ dựa vào prompt của agent | Agent-agnostic, không bị bỏ qua bằng cờ của agent |
 | AO4 | 2026-09-25 | Runbook/skill chia sẻ bằng repo git, không dựng lại Warp Drive | Có review qua PR, không cần backend |
 | AO5 | 2026-09-25 | Thử HolmesGPT trước khi tự viết runner | Tránh viết lại thứ đã có |
+| AO6 | 2026-09-25 | Thêm nhánh G: Warp làm cổng SSH cho agent (danh bạ server + kho credential, agent tự mở session, transport theo host, sửa file qua mirror Warp Sync có lịch sử) | Người dùng muốn đơn giản hoá quản lý server; giải quyết giới hạn một-lệnh-một-lúc của in-band mà vẫn giữ credential, policy, audit ở một chỗ |
+| AO7 | 2026-09-25 | G2 (agent tự mở session) chỉ làm sau O2 và pairing token | Bỏ bước Attach thủ công là bỏ lớp an toàn chính của O1 |
+| AO8 | 2026-09-25 | Bí mật không bao giờ tới agent: mật khẩu SSH qua `SSH_ASKPASS` local, mật khẩu sudo chỉ tự điền ngay sau `sudo -i` do Warp gửi | Chống lộ qua MCP/log/lịch sử shell và chống prompt giả |
