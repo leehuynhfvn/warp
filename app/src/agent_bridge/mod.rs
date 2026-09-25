@@ -4,6 +4,8 @@
 pub(crate) mod attachments;
 pub(crate) mod audit;
 pub(crate) mod error;
+pub(crate) mod ops;
+pub(crate) mod path;
 pub(crate) mod script;
 
 use std::time::Duration;

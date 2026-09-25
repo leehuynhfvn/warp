@@ -110,11 +110,12 @@ pub(crate) fn exec_script(
 T=$(mktemp -d "${{TMPDIR:-/tmp}}/warp-agent.XXXXXX") || {{ echo "$M fatal mktemp"; exit 0; }}
 {cd_step}
 export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat NO_COLOR=1 DEBIAN_FRONTEND=noninteractive
+C={command}
 if command -v bash >/dev/null 2>&1; then S=bash; else S=sh; fi
 if command -v timeout >/dev/null 2>&1; then
-  timeout {timeout_secs} "$S" -c {command} </dev/null >"$T/o" 2>"$T/e"; rc=$?; TO=1
+  timeout {timeout_secs} "$S" -c "$C" </dev/null >"$T/o" 2>"$T/e"; rc=$?; TO=1
 else
-  "$S" -c {command} </dev/null >"$T/o" 2>"$T/e"; rc=$?; TO=0
+  "$S" -c "$C" </dev/null >"$T/o" 2>"$T/e"; rc=$?; TO=0
 fi
 emit() {{
   n=$(wc -c < "$2" | tr -d ' ')

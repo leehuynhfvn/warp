@@ -709,7 +709,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 - [x] Phase 0 — Worktree + commit plan
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
-- [x] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
+- [x] 2.1 Flag · [x] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
@@ -736,6 +736,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D14 | 2026-09-25 | Lệnh cargo phải kèm `-p warp` (vd. `cargo test -p warp -p warp_cli --lib local_control`) | `-p warp_cli`/`-p local_control` đứng riêng không bật `dlopen` của `yeslogic-fontconfig-sys` → build script fail vì máy thiếu `fontconfig-devel` |
 | D15 | 2026-09-25 | Script write cứng hơn mục 3.6: tạo file mới bằng `noclobber` (`( set -C; cat > P )`, từ chối cả symlink treo); từ chối backup qua `~/.warp-agent` hoặc `backups` là symlink và `chmod 700` cả hai (như backup của Warp Sync); `read_script`/`parse_read_output` nhận `max_bytes` để test; `exit_code` là `i32` (không `null`) | Agent chạy root: `cp` sẽ ghi xuyên symlink/đè file mới xuất hiện; backup qua symlink là đường leo thang đã được Warp Sync chặn |
 | D16 | 2026-09-25 | `Attachments::check` nhận thêm `user`, `host` của session đang gọi; dùng `instant::Instant` (clippy cấm `std::time::Instant`) | `AgentBridgeError::NotAttached { user, host }` cần nêu session mà registry không biết; repo hỗ trợ wasm |
+| D17 | 2026-09-25 | Không dùng `warp_sync::normalize_remote_path` mà viết `agent_bridge/path.rs` (cùng quy tắc, trừ `.git`; thông báo lỗi nói về agent) | Hàm của Warp Sync từ chối mọi thành phần `.git` (an toàn cho mirror local, vô nghĩa với file trên server) và có lời nhắn "cannot be synced" |
+| D18 | 2026-09-25 | Phân biệt "user đang chạy lệnh foreground": executor in-band trả `CommandOutput{status: Failure, exit_code: None, stdout/stderr rỗng}` (không phải `Err`) → `SessionBusy`; mọi `Err` khác → `Executor`. Kết quả `remote.*` là struct có kiểu trong `local_control::protocol` (`RemoteExecResult`, `RemoteFileReadResult`, `RemoteFileWriteResult`, `RemoteSessionRef`) để CLI/MCP dùng chung. Lệnh người dùng chỉ xuất hiện 1 lần trong exec script (`C=<quoted>`) để dòng gõ qua PTY ngắn hơn. `ops` chạy qua trait `CommandRunner` (thật: `SessionRunner`; test: `sh` thật) | Mục 2.2 của plan yêu cầu ghi lại cách phân biệt; giảm nửa độ dài script; test được cả luồng upload/commit/cleanup |
 
 ### Nhật ký
 
@@ -752,3 +754,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 1.4: `agent_bridge/script.rs` (+52 test gồm `sh` thật: exec/read/write, symlink, mode/inode giữ nguyên, stdin đóng, timeout). Xem D15.
 - 2026-09-25 — Task 1.5: `agent_bridge/attachments.rs` (9 test). Task 1.6: `agent_bridge/audit.rs` (`append`, xoay vòng, quyền 0700/0600; dùng `warp_sync::paths::create_private_dir_all` nên mở `pub(crate) mod paths`) (7 test). Cuối Phase 1: `cargo test -p warp --lib agent_bridge` 68 test pass; clippy `-p warp -p local_control -p warp_cli --all-targets --tests -D warnings` sạch. Xem D16.
 - 2026-09-25 — Task 2.1: `FeatureFlag::AgentBridge` + `DOGFOOD_FLAGS`; theo khuôn của `WarpSync` còn thêm cargo feature `agent_bridge` (`app/Cargo.toml`) và ánh xạ `#[cfg(feature)]` trong `app/src/features.rs` (skill add-feature-flag).
+- 2026-09-25 — Task 2.2: `agent_bridge/{ops,path}.rs` + kết quả có kiểu trong protocol; 24 test `ops` (sh thật: validate trước khi chạy, exec/read/write, upload nhiều chunk, cleanup khi lỗi, audit không chứa output/nội dung). Xem D17, D18. Lưu ý cho Checkpoint A: `exec` trả `user` theo `session.user()` của Warp, cần xác nhận bằng `whoami`/`id` trong checklist 5.A; lệnh 8 KiB toàn dấu `'` gấp ~4 lần khi quote → dòng gõ ~45 KiB, cần thử.

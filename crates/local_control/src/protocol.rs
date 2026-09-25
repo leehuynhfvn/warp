@@ -525,6 +525,73 @@ pub enum SyncResult {
     Cancelled,
 }
 
+/// Identifies the remote session a `remote.*` result is about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionRef {
+    /// The `session` selector value that addresses this session.
+    pub session_id: String,
+    pub host: String,
+    pub user: String,
+}
+
+/// One captured output stream of a remote command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteStream {
+    /// When `truncated`, the middle of the output is replaced by a note.
+    pub text: String,
+    pub total_bytes: u64,
+    pub truncated: bool,
+}
+
+/// Result of `remote.exec`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteExecResult {
+    #[serde(flatten)]
+    pub session: RemoteSessionRef,
+    /// Directory the command ran in, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub exit_code: i32,
+    pub timed_out: bool,
+    pub duration_ms: u64,
+    pub stdout: RemoteStream,
+    pub stderr: RemoteStream,
+}
+
+/// Result of `remote.file.read`; a missing file is a result, not an error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RemoteFileReadResult {
+    Ok {
+        #[serde(flatten)]
+        session: RemoteSessionRef,
+        path: String,
+        size: u64,
+        /// Lowercase hex SHA-256 of the content; pass it back in `MustMatch` to overwrite.
+        sha256: String,
+        content_base64: String,
+    },
+    NotFound {
+        #[serde(flatten)]
+        session: RemoteSessionRef,
+        path: String,
+    },
+}
+
+/// Result of `remote.file.write`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteFileWriteResult {
+    #[serde(flatten)]
+    pub session: RemoteSessionRef,
+    pub path: String,
+    pub bytes: u64,
+    pub sha256: String,
+    /// Where the previous content was saved on the server; absent for a new file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
+    pub created: bool,
+}
+
 /// Typed success payloads for catalog actions that need stable structured data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
