@@ -7,6 +7,8 @@ use ::local_control::auth::CredentialGrant;
 use ::local_control::{
     Action, ActionKind, ControlError, ErrorCode, InstanceId, RequestEnvelope, ResponseEnvelope,
 };
+use futures::channel::oneshot;
+use uuid::Uuid;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::{
@@ -16,6 +18,25 @@ use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
 };
 use crate::local_control::resolver::{validate_action_params, validate_action_target};
+
+/// Outcome of dispatching a control request on the main thread.
+pub(super) enum BridgeResult {
+    /// The action finished synchronously.
+    Ready(ResponseEnvelope),
+    /// The action outlives the main-thread turn; the HTTP layer awaits `receiver` so that the
+    /// model is never blocked on remote work.
+    #[allow(dead_code)] // Constructed by the async actions that build on this branch.
+    Pending {
+        request_id: Uuid,
+        receiver: oneshot::Receiver<Result<serde_json::Value, ControlError>>,
+    },
+}
+
+impl BridgeResult {
+    fn error(request_id: Uuid, error: ControlError) -> Self {
+        Self::Ready(ResponseEnvelope::error(request_id, error))
+    }
+}
 
 /// WarpUI model that executes already-authenticated local-control actions.
 pub struct LocalControlBridge {
@@ -42,15 +63,15 @@ impl LocalControlBridge {
         request: RequestEnvelope,
         grant: CredentialGrant,
         ctx: &mut ModelContext<Self>,
-    ) -> ResponseEnvelope {
+    ) -> BridgeResult {
         if let Err(error) = ensure_feature_enabled() {
-            return ResponseEnvelope::error(request.request_id, error);
+            return BridgeResult::error(request.request_id, error);
         }
         if let Err(error) = ensure_protocol_version(request.protocol_version) {
-            return ResponseEnvelope::error(request.request_id, error);
+            return BridgeResult::error(request.request_id, error);
         }
         let Some(instance_id) = &self.instance_id else {
-            return ResponseEnvelope::error(
+            return BridgeResult::error(
                 request.request_id,
                 ControlError::new(
                     ErrorCode::BridgeUnavailable,
@@ -59,13 +80,13 @@ impl LocalControlBridge {
             );
         };
         if let Err(error) = validate_request_authority(instance_id, &request.action, &grant) {
-            return ResponseEnvelope::error(request.request_id, error);
+            return BridgeResult::error(request.request_id, error);
         }
         if let Err(error) = ensure_action_allowed(request.action.kind, ctx) {
-            return ResponseEnvelope::error(request.request_id, error);
+            return BridgeResult::error(request.request_id, error);
         }
         if let Err(error) = validate_action_target(request.action.kind, &request.target) {
-            return ResponseEnvelope::error(request.request_id, error);
+            return BridgeResult::error(request.request_id, error);
         }
         let result = match request.action.kind {
             ActionKind::InstanceList => metadata::instance(&self.instance_id),
@@ -187,10 +208,10 @@ impl LocalControlBridge {
             ActionKind::TabClose => close::tab_close(&self.instance_id, &request, ctx),
             ActionKind::PaneClose => close::pane_close(&self.instance_id, &request, ctx),
         };
-        match result {
+        BridgeResult::Ready(match result {
             Ok(data) => ResponseEnvelope::ok(request.request_id, data),
             Err(error) => ResponseEnvelope::error(request.request_id, error),
-        }
+        })
     }
 }
 

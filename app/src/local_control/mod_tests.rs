@@ -5,24 +5,29 @@ use ::local_control::protocol::{
     Action, ActionKind, PaneSelector, PaneTarget, TabSelector, TabTarget, TargetSelector,
     WindowSelector, WindowTarget,
 };
-use ::local_control::{ErrorCode, InstanceId, RequestEnvelope};
+use ::local_control::{
+    ControlError, ControlResponse, ErrorCode, InstanceId, RequestEnvelope, ResponseEnvelope,
+};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::{AUTHORIZATION, HOST, ORIGIN};
 use axum::http::{HeaderMap, HeaderValue};
 use chrono::Duration;
+use futures::channel::oneshot;
 use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warpui::SingletonEntity as _;
 
 #[cfg(unix)]
 use super::ensure_peer_uid;
+use super::bridge::BridgeResult;
 use super::resolver::validate_action_target;
 use super::{
     ControlServerState, LocalControlBridge, LocalControlServer, MAX_ACTIVE_CREDENTIALS,
     capabilities, ensure_feature_enabled, ensure_protocol_version, ensure_settings_allow_action,
     handle_control_request, insert_credential, issue_credential, lookup_credential,
-    require_active_window_id, resolve_index_from_ids, resolve_title_from_matches,
+    require_active_window_id, resolve_bridge_result, resolve_index_from_ids,
+    resolve_title_from_matches,
     validate_action_params, validate_loopback_headers, validate_request_authority,
     validate_tab_create_target,
 };
@@ -439,4 +444,78 @@ fn disabling_scripting_invalidates_existing_grant_and_prevents_new_grants() {
             .expect_err("disabled scripting should prevent new grants");
         assert_eq!(err.code, ErrorCode::LocalControlDisabled);
     });
+}
+
+#[tokio::test]
+async fn ready_bridge_result_is_returned_unchanged() {
+    let request_id = uuid::Uuid::new_v4();
+    let ready = ResponseEnvelope::ok(request_id, serde_json::json!({ "ready": true }));
+
+    let response = resolve_bridge_result(BridgeResult::Ready(ready)).await;
+
+    assert_eq!(response.request_id, request_id);
+    let ControlResponse::Ok { data } = response.response else {
+        panic!("ready result should stay successful");
+    };
+    assert_eq!(data, serde_json::json!({ "ready": true }));
+}
+
+#[tokio::test]
+async fn pending_bridge_result_waits_for_the_handler_outcome() {
+    let request_id = uuid::Uuid::new_v4();
+    let (sender, receiver) = oneshot::channel();
+    let pending = tokio::spawn(resolve_bridge_result(BridgeResult::Pending {
+        request_id,
+        receiver,
+    }));
+    assert!(sender.send(Ok(serde_json::json!({ "done": 1 }))).is_ok());
+
+    let response = pending.await.expect("resolver task completes");
+
+    assert_eq!(response.request_id, request_id);
+    let ControlResponse::Ok { data } = response.response else {
+        panic!("handler success should become an ok response");
+    };
+    assert_eq!(data, serde_json::json!({ "done": 1 }));
+}
+
+#[tokio::test]
+async fn pending_bridge_result_forwards_handler_errors() {
+    let request_id = uuid::Uuid::new_v4();
+    let (sender, receiver) = oneshot::channel();
+    assert!(
+        sender
+            .send(Err(ControlError::new(ErrorCode::InvalidRequest, "bad path")))
+            .is_ok()
+    );
+
+    let response = resolve_bridge_result(BridgeResult::Pending {
+        request_id,
+        receiver,
+    })
+    .await;
+
+    let ControlResponse::Error { error } = response.response else {
+        panic!("handler failure should become an error response");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+}
+
+#[tokio::test]
+async fn pending_bridge_result_reports_a_dropped_handler_as_bridge_unavailable() {
+    let request_id = uuid::Uuid::new_v4();
+    let (sender, receiver) = oneshot::channel::<Result<serde_json::Value, ControlError>>();
+    drop(sender);
+
+    let response = resolve_bridge_result(BridgeResult::Pending {
+        request_id,
+        receiver,
+    })
+    .await;
+
+    assert_eq!(response.request_id, request_id);
+    let ControlResponse::Error { error } = response.response else {
+        panic!("a dropped handler should become an error response");
+    };
+    assert_eq!(error.code, ErrorCode::BridgeUnavailable);
 }

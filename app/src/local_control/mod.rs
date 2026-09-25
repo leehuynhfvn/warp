@@ -85,14 +85,17 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
+use bridge::BridgeResult;
 pub use bridge::LocalControlBridge;
 #[cfg(any(unix, test))]
 use chrono::Duration;
 use permissions::ensure_feature_enabled;
 #[cfg(any(unix, test))]
 use permissions::{ensure_action_allowed, ensure_protocol_version};
+use futures::channel::oneshot;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use uuid::Uuid;
 use warp_core::channel::ChannelState;
 use warpui::{Entity, ModelContext, ModelSpawner, SingletonEntity};
 
@@ -580,20 +583,42 @@ async fn handle_control_request(
         .spawn(move |bridge, ctx| bridge.handle_request(request, grant, ctx))
         .await
     {
-        Ok(response) => response,
-        Err(_) => ResponseEnvelope::error(
-            request_id,
-            ControlError::new(
-                ErrorCode::BridgeUnavailable,
-                "local-control app bridge is unavailable",
-            ),
-        ),
+        Ok(result) => resolve_bridge_result(result).await,
+        Err(_) => bridge_unavailable_response(request_id),
     };
     let status = match &response.response {
         ControlResponse::Ok { .. } => StatusCode::OK,
         ControlResponse::Error { .. } => StatusCode::BAD_REQUEST,
     };
     (status, Json(response)).into_response()
+}
+
+/// Completes a bridge dispatch, waiting for asynchronous actions to report their outcome.
+///
+/// The wait happens on the HTTP runtime, not on the main thread, so a slow action never blocks
+/// the WarpUI model graph.
+async fn resolve_bridge_result(result: BridgeResult) -> ResponseEnvelope {
+    match result {
+        BridgeResult::Ready(response) => response,
+        BridgeResult::Pending {
+            request_id,
+            receiver,
+        } => match receiver.await {
+            Ok(Ok(data)) => ResponseEnvelope::ok(request_id, data),
+            Ok(Err(error)) => ResponseEnvelope::error(request_id, error),
+            Err(oneshot::Canceled) => bridge_unavailable_response(request_id),
+        },
+    }
+}
+
+fn bridge_unavailable_response(request_id: Uuid) -> ResponseEnvelope {
+    ResponseEnvelope::error(
+        request_id,
+        ControlError::new(
+            ErrorCode::BridgeUnavailable,
+            "local-control app bridge is unavailable",
+        ),
+    )
 }
 
 #[cfg(any(unix, test))]

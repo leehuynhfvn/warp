@@ -29,6 +29,7 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::path::Path;
+use std::time::Duration;
 
 use crate::auth::{CredentialRequest, ScopedCredential};
 use crate::discovery::InstanceRecord;
@@ -37,11 +38,26 @@ use crate::protocol::{
     RequestEnvelope, ResponseEnvelope,
 };
 
+/// How long [`send_request`] waits for the app to answer.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Requests an action-scoped credential and sends one authenticated control request.
-#[cfg(not(target_family = "wasm"))]
 pub fn send_request(
     instance: &InstanceRecord,
     request: &RequestEnvelope,
+) -> Result<ResponseEnvelope, ControlError> {
+    send_request_with_timeout(instance, request, DEFAULT_REQUEST_TIMEOUT)
+}
+
+/// Like [`send_request`], but waits up to `timeout` for the app's response.
+///
+/// The credential is only checked when the app receives the request, so `timeout` may exceed the
+/// credential's lifetime.
+#[cfg(not(target_family = "wasm"))]
+pub fn send_request_with_timeout(
+    instance: &InstanceRecord,
+    request: &RequestEnvelope,
+    timeout: Duration,
 ) -> Result<ResponseEnvelope, ControlError> {
     instance.validate_local_control_authority()?;
     let credential = request_credential(instance, request.action.kind)?;
@@ -51,10 +67,35 @@ pub fn send_request(
             "local control endpoint is disabled for this instance",
         )
     })?;
-    let client = reqwest::blocking::Client::new();
+    post_request(
+        &endpoint.url(),
+        &credential.authorization_value(),
+        request,
+        timeout,
+    )
+}
+
+/// Posts one authenticated request and decodes the app's response envelope.
+#[cfg(not(target_family = "wasm"))]
+fn post_request(
+    url: &str,
+    authorization: &str,
+    request: &RequestEnvelope,
+    timeout: Duration,
+) -> Result<ResponseEnvelope, ControlError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|err| {
+            ControlError::with_details(
+                ErrorCode::TransportUnavailable,
+                "failed to create local-control HTTP client",
+                err.to_string(),
+            )
+        })?;
     let response = client
-        .post(endpoint.url())
-        .header("Authorization", credential.authorization_value())
+        .post(url)
+        .header("Authorization", authorization)
         .json(request)
         .send()
         .map_err(|err| {
@@ -90,9 +131,11 @@ pub fn send_request(
 
 /// Fails closed on platforms without a native local-control HTTP transport.
 #[cfg(target_family = "wasm")]
-pub fn send_request(
+#[allow(unused_variables)] // The signature must match the native transport.
+pub fn send_request_with_timeout(
     instance: &InstanceRecord,
     request: &RequestEnvelope,
+    timeout: Duration,
 ) -> Result<ResponseEnvelope, ControlError> {
     request_credential(instance, request.action.kind)?;
     Err(ControlError::new(
