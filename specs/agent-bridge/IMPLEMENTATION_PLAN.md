@@ -518,6 +518,12 @@ tương tự `read_file`, `write_file`.
 
 **Task 2.3 — `model.rs`: `AgentBridgeModel`** (mục 3.4) + đăng ký singleton trong `lib.rs`.
 
+> **Cập nhật 2026-09-25:** Task 2.4 và hàm `send_request_with_timeout` (mục 3.9) được làm ở **Warp Sync
+> Phase 7.1** (`feature/warp-sync`, xem `specs/warp-sync/IMPLEMENTATION_PLAN.md`, D15). Trước khi bắt đầu
+> Agent Bridge: rebase `feature/agent-bridge` lên `feature/warp-sync`, kiểm lại Task 1.2 (module
+> `warp_sync` đã đổi nhiều ở Phase 4–6: `paths`, `transfer`, `.git`/baseline) và **bỏ qua Task 2.4** nếu
+> `BridgeResult::Pending` đã có.
+
 **Task 2.4 — Nhánh async của bridge** (mục 3.5) + sửa test `app/src/local_control/mod_tests.rs`.
 Verify: `cargo test -p warp --lib local_control`.
 
