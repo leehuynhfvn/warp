@@ -708,7 +708,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 ### Tiến độ
 
 - [x] Phase 0 — Worktree + commit plan
-- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [ ] 1.3 mod/error · [ ] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
+- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [ ] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
 - [ ] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
@@ -746,3 +746,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Phase 0: rebase `feature/agent-bridge` lên `feature/warp-sync` xong (D13); `cargo check -p warp -p local_control -p warp_cli` pass.
 - 2026-09-25 — Task 1.1: 5 action `remote.*` (Stub), params + `WriteExpectation`, 4 `ErrorCode`, spec mới trong catalog; resolver + arm `UnsupportedAction` trong bridge. Test catalog (`STUB_ACTIONS`) và `warp_cli` (`REMOTE_ACTIONS_WITHOUT_CLI`) tạm loại nhóm remote — gỡ ở Task 2.5 / 2.7 / 4.1.
 - 2026-09-25 — Task 1.2: `pub(crate) mod remote_script` + `pub(crate) const PAYLOAD_FILE_NAME` (đã kiểm lại trên module `warp_sync` mới; `posix_quote`/`wrap_for_any_shell`/`upload_*`/`cleanup_command` đều `pub fn` sẵn; `paths` không cần mở, D13).
+- 2026-09-25 — Task 1.3: `agent_bridge/{mod,error}.rs` (constants 3.7, `AgentBridgeError`, `From` sang `ControlError`/từ `WarpSyncError`), `mod agent_bridge` (tạm `#[allow(dead_code)]`). `From<AgentBridgeError> for ControlError` làm hỏng suy luận `?` ở `handlers/layout.rs` → thêm `Ok::<_, ControlError>`. `NotRemoteSession`/`UnsupportedShell` map sang `InvalidSelector`.

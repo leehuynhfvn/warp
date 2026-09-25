@@ -58,7 +58,7 @@ pub(crate) fn create_tab(
                         "tab.create did not produce an active tab identifier",
                     )
                 })?;
-            Ok((
+            Ok::<_, ControlError>((
                 tab_id,
                 previous_tab_count,
                 workspace.tab_count(),

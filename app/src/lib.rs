@@ -1,5 +1,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
+#[allow(dead_code)]
+mod agent_bridge;
 mod ai;
 mod alloc;
 mod antivirus;
