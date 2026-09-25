@@ -470,7 +470,8 @@ impl Editor {
             Rider => Some(&["rider", "jetbrains-rider"]),
             RubyMine => Some(&["rubymine", "jetbrains-rubymine"]),
             Sublime => Some(&["sublime-text_subl", "sublime_text"]),
-            VSCode => Some(&["code"]),
+            // Recent official packages name the desktop entry after the reverse-DNS app ID.
+            VSCode => Some(&["code", "com.microsoft.VSCode"]),
             VSCodeInsiders => Some(&["code-insiders"]),
             WebStorm => Some(&["webstorm", "jetbrains-webstorm"]),
             Windsurf => Some(&["windsurf"]),

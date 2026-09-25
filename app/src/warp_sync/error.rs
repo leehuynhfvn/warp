@@ -44,7 +44,8 @@ pub enum WarpSyncError {
     AlreadyInProgress,
     #[error(
         "No editor to open the mirror with: choose VS Code, VS Code Insiders, Cursor or Windsurf \
-         under \"Choose an editor to open file links\" in Settings > Features"
+         under \"Choose an editor to open file links\" in Settings > Code > Editor and Code \
+         Review"
     )]
     NoEditor,
     #[error("Could not open the editor: {0}")]

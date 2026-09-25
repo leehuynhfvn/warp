@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use warp_util::path::LineAndColumnArg;
 
-use super::{DesktopExecError, EditorMetadata, tokenize_exec};
+use super::{
+    DesktopExecError, Editor, EditorMetadata, compute_editors_by_id, get_editor_by_app_id,
+    tokenize_exec,
+};
 
 #[cfg(test)]
 fn with_files(tag: &str, contents: &str, cb: impl FnOnce(PathBuf, PathBuf) -> anyhow::Result<()>) {
@@ -681,5 +684,23 @@ fn test_deprecated_field_codes_are_dropped() {
             assert_eq!(cmd.get_args().collect::<Vec<_>>(), [file_path.as_str()]);
             Ok(())
         },
+    );
+}
+
+#[test]
+fn vscode_is_found_by_either_desktop_entry_name() {
+    let editors_by_id = compute_editors_by_id();
+
+    assert_eq!(
+        get_editor_by_app_id(editors_by_id, "code"),
+        Some(Editor::VSCode)
+    );
+    assert_eq!(
+        get_editor_by_app_id(editors_by_id, "com.microsoft.VSCode"),
+        Some(Editor::VSCode)
+    );
+    assert_eq!(
+        get_editor_by_app_id(editors_by_id, "com.microsoft.VSCode.UrlHandler"),
+        None
     );
 }

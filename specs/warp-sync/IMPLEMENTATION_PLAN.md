@@ -481,7 +481,7 @@ remote khi hover.
 Mục tiêu: sửa file của server trong VS Code qua mirror, xem diff native trong VS Code, rồi vẫn
 upload bằng một thao tác trong Warp. Không đổi transport, script remote hay định dạng manifest.
 
-**Chọn editor.** Dùng lại setting có sẵn *Settings → Features → Open files with*
+**Chọn editor.** Dùng lại setting có sẵn *Settings → Code → Editor and Code Review → "Choose an editor to open file links"*
 (`EditorSettings::open_file_editor`). Chỉ các editor họ VS Code có CLI hỗ trợ `--diff`:
 `VSCode` → `code`, `VSCodeInsiders` → `code-insiders`, `Cursor` → `cursor`, `Windsurf` → `windsurf`.
 Setting khác → hành vi cũ (Open folder bằng file manager, diff mở trong editor của Warp); palette
@@ -564,7 +564,7 @@ Upload:
 11. Upload không có `sudo -i` vào file của root → lỗi extract, `/tmp/warp-sync.*` được dọn.
 12. Cancel ở dialog → không có lệnh nào chạy trên server.
 
-Phase 6 (VS Code) — trước tiên đặt *Settings → Features → "Choose an editor to open file links"* = VS Code:
+Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Code Review → "Choose an editor to open file links"* = VS Code (Linux: Warp nhận `code.desktop` hoặc `com.microsoft.VSCode.desktop`):
 13. Download `/etc/nginx` → toast có link "Open in VS Code" → VS Code mở workspace `~/.warp/mirrors/<host>`
     (cả host, không chỉ thư mục vừa tải); Download một file → mở workspace + đúng file đó.
 14. Source Control của VS Code: ngay sau download thì sạch; sửa `nginx.conf` → hiện "M", bấm vào thấy diff
