@@ -2,6 +2,7 @@
 //! remote session that the user explicitly attached, with the privileges of that session's shell.
 
 pub(crate) mod error;
+pub(crate) mod script;
 
 use std::time::Duration;
 

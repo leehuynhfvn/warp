@@ -708,7 +708,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 ### Tiến độ
 
 - [x] Phase 0 — Worktree + commit plan
-- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [ ] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
+- [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [ ] 1.5 attachments · [ ] 1.6 audit
 - [ ] 2.1 Flag · [ ] 2.2 ops · [ ] 2.3 model · [ ] 2.4 bridge async · [ ] 2.5 handlers · [ ] 2.6 palette · [ ] 2.7 CLI · [ ] 2.8 review
 - [ ] ⛔ CHECKPOINT A (user) — độ trễ đo được: _chưa có_
 - [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
@@ -734,6 +734,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D12 | 2026-09-25 | Params `remote.*` có `agent: Option<String>`; audit ghi `agent` + `request_id` | Truy vết theo agent và gắn với lượt duyệt ở O2/O6; thêm sau sẽ phải đổi protocol |
 | D13 | 2026-09-25 | Rebase lên `feature/warp-sync` (31 commit mới); bỏ Task 2.4 (`BridgeResult::Pending`, `SyncReceiver`, `send_request_with_timeout` đã có); Task 1.2 chỉ cần mở `remote_script` + `PAYLOAD_FILE_NAME` (`paths` không cần vì `normalize_remote_path` đã `pub use`) | Đúng ghi chú Phase 2 của plan và thực trạng code |
 | D14 | 2026-09-25 | Lệnh cargo phải kèm `-p warp` (vd. `cargo test -p warp -p warp_cli --lib local_control`) | `-p warp_cli`/`-p local_control` đứng riêng không bật `dlopen` của `yeslogic-fontconfig-sys` → build script fail vì máy thiếu `fontconfig-devel` |
+| D15 | 2026-09-25 | Script write cứng hơn mục 3.6: tạo file mới bằng `noclobber` (`( set -C; cat > P )`, từ chối cả symlink treo); từ chối backup qua `~/.warp-agent` hoặc `backups` là symlink và `chmod 700` cả hai (như backup của Warp Sync); `read_script`/`parse_read_output` nhận `max_bytes` để test; `exit_code` là `i32` (không `null`) | Agent chạy root: `cp` sẽ ghi xuyên symlink/đè file mới xuất hiện; backup qua symlink là đường leo thang đã được Warp Sync chặn |
 
 ### Nhật ký
 
@@ -747,3 +748,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Task 1.1: 5 action `remote.*` (Stub), params + `WriteExpectation`, 4 `ErrorCode`, spec mới trong catalog; resolver + arm `UnsupportedAction` trong bridge. Test catalog (`STUB_ACTIONS`) và `warp_cli` (`REMOTE_ACTIONS_WITHOUT_CLI`) tạm loại nhóm remote — gỡ ở Task 2.5 / 2.7 / 4.1.
 - 2026-09-25 — Task 1.2: `pub(crate) mod remote_script` + `pub(crate) const PAYLOAD_FILE_NAME` (đã kiểm lại trên module `warp_sync` mới; `posix_quote`/`wrap_for_any_shell`/`upload_*`/`cleanup_command` đều `pub fn` sẵn; `paths` không cần mở, D13).
 - 2026-09-25 — Task 1.3: `agent_bridge/{mod,error}.rs` (constants 3.7, `AgentBridgeError`, `From` sang `ControlError`/từ `WarpSyncError`), `mod agent_bridge` (tạm `#[allow(dead_code)]`). `From<AgentBridgeError> for ControlError` làm hỏng suy luận `?` ở `handlers/layout.rs` → thêm `Ok::<_, ControlError>`. `NotRemoteSession`/`UnsupportedShell` map sang `InvalidSelector`.
+- 2026-09-25 — Task 1.4: `agent_bridge/script.rs` (+52 test gồm `sh` thật: exec/read/write, symlink, mode/inode giữ nguyên, stdin đóng, timeout). Xem D15.
