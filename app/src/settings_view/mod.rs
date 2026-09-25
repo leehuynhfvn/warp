@@ -20,6 +20,7 @@ use pathfinder_geometry::vector::Vector2F;
 use privacy_page::{PrivacyPageView, PrivacyPageViewEvent};
 use referrals_page::{ReferralsPageEvent, ReferralsPageView};
 use scripting_page::ScriptingSettingsPageView;
+use warp_sync_page::WarpSyncSettingsPageView;
 use settings_file_footer::{SettingsFooterKind, SettingsFooterMouseStates, render_footer};
 use settings_page::{
     HEADER_PADDING, MatchData, SettingsPage, SettingsPageEvent, SettingsPageMeta,
@@ -112,6 +113,7 @@ mod privacy_page;
 mod referrals_page;
 mod remove_custom_endpoint_confirmation_dialog;
 mod scripting_page;
+mod warp_sync_page;
 mod set_default_model_modal;
 mod settings_file_footer;
 pub(crate) mod settings_page;
@@ -324,6 +326,7 @@ pub enum SettingsSection {
     Teams,
     WarpDrive,
     Warpify,
+    WarpSync,
     // ── Agents umbrella subpages ──
     WarpAgent,
     AgentProfiles,
@@ -349,6 +352,7 @@ impl Display for SettingsSection {
             SettingsSection::Keybindings => write!(f, "Keyboard shortcuts"),
             SettingsSection::SharedBlocks => write!(f, "Shared blocks"),
             SettingsSection::Scripting => write!(f, "Scripting"),
+            SettingsSection::WarpSync => write!(f, "Warp Sync"),
             SettingsSection::WarpDrive => write!(f, "Warp Drive"),
             SettingsSection::WarpAgent => write!(f, "Warp Agent"),
             SettingsSection::AgentProfiles => write!(f, "Profiles"),
@@ -393,6 +397,7 @@ impl SettingsSection {
             Self::Teams => "Teams",
             Self::WarpDrive => "Warp Drive",
             Self::Warpify => "Warpify",
+            Self::WarpSync => "Warp Sync",
             Self::WarpAgent => "Warp Agent",
             Self::AgentProfiles => "Profiles",
             Self::AgentMCPServers => "MCP servers",
@@ -429,6 +434,7 @@ impl SettingsSection {
             "Teams" => Self::Teams,
             "Warp Drive" | "WarpDrive" => Self::WarpDrive,
             "Warpify" => Self::Warpify,
+            "Warp Sync" | "WarpSync" => Self::WarpSync,
             // "Oz" and "AI" are older names for what is now the Warp Agent page.
             "Warp Agent" | "Oz" | "AI" => Self::WarpAgent,
             "Profiles" | "AgentProfiles" => Self::AgentProfiles,
@@ -1152,6 +1158,7 @@ macro_rules! update_page {
             SettingsPageViewHandle::Privacy(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Referrals(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Scripting(handle) => $ctx.update_view(handle, $update),
+            SettingsPageViewHandle::WarpSync(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::WarpAgent(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::AgentProfiles(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Knowledge(handle) => $ctx.update_view(handle, $update),
@@ -1325,6 +1332,12 @@ impl SettingsView {
             None
         };
 
+        let warp_sync_page_handle = if FeatureFlag::WarpSync.is_enabled() {
+            Some(ctx.add_typed_action_view(WarpSyncSettingsPageView::new))
+        } else {
+            None
+        };
+
         // Warp Drive page
         let warp_drive_page_handle =
             ctx.add_typed_action_view(warp_drive_page::WarpDriveSettingsPageView::new);
@@ -1395,6 +1408,10 @@ impl SettingsView {
             settings_pages.push(SettingsPage::new(scripting_page_handle));
         }
 
+        if let Some(warp_sync_page_handle) = warp_sync_page_handle {
+            settings_pages.push(SettingsPage::new(warp_sync_page_handle));
+        }
+
         settings_pages.extend(vec![
             SettingsPage::new(mcp_servers_page_handle),
             SettingsPage::new(environments_page_handle.clone()),
@@ -1456,8 +1473,24 @@ impl SettingsView {
             );
         }
 
+        if FeatureFlag::WarpSync.is_enabled() {
+            let shared_blocks_index = nav_items
+                .iter()
+                .position(|item| {
+                    matches!(item, SettingsNavItem::Page(SettingsSection::SharedBlocks))
+                })
+                .unwrap_or(nav_items.len());
+            nav_items.insert(
+                shared_blocks_index,
+                SettingsNavItem::Page(SettingsSection::WarpSync),
+            );
+        }
+
         let initial_page = match page {
             Some(SettingsSection::Scripting) if !FeatureFlag::WarpControlCli.is_enabled() => {
+                SettingsSection::Account
+            }
+            Some(SettingsSection::WarpSync) if !FeatureFlag::WarpSync.is_enabled() => {
                 SettingsSection::Account
             }
             other => other.unwrap_or_default(),
@@ -2125,6 +2158,7 @@ impl SettingsView {
             SettingsPageViewHandle::Warpify(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Referrals(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Scripting(v) => v.as_ref(app).should_render(app),
+            SettingsPageViewHandle::WarpSync(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::WarpAgent(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::AgentProfiles(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Knowledge(v) => v.as_ref(app).should_render(app),

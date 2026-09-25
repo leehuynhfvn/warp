@@ -45,6 +45,7 @@ use super::mcp_servers_page::MCPServersSettingsPageView;
 use super::privacy_page::PrivacyPageView;
 use super::referrals_page::ReferralsPageView;
 use super::scripting_page::ScriptingSettingsPageView;
+use super::warp_sync_page::WarpSyncSettingsPageView;
 use super::show_blocks_view::ShowBlocksView;
 use super::teams_page::TeamsPageView;
 use super::warp_agent_page::WarpAgentPageView;
@@ -122,6 +123,7 @@ pub enum SettingsPageViewHandle {
     Warpify(ViewHandle<WarpifyPageView>),
     Referrals(ViewHandle<ReferralsPageView>),
     Scripting(ViewHandle<ScriptingSettingsPageView>),
+    WarpSync(ViewHandle<WarpSyncSettingsPageView>),
     WarpAgent(ViewHandle<WarpAgentPageView>),
     AgentProfiles(ViewHandle<AgentProfilesPageView>),
     Knowledge(ViewHandle<KnowledgePageView>),
@@ -150,6 +152,7 @@ impl SettingsPageViewHandle {
             Warpify(view_handle) => ChildView::new(view_handle).finish(),
             Referrals(view_handle) => ChildView::new(view_handle).finish(),
             Scripting(view_handle) => ChildView::new(view_handle).finish(),
+            WarpSync(view_handle) => ChildView::new(view_handle).finish(),
             WarpAgent(view_handle) => ChildView::new(view_handle).finish(),
             AgentProfiles(view_handle) => ChildView::new(view_handle).finish(),
             Knowledge(view_handle) => ChildView::new(view_handle).finish(),
