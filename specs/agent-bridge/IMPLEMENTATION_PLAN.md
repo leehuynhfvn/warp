@@ -3,6 +3,8 @@
 > Người thực thi: một coding agent (Claude Sonnet hoặc Gemini 3.1 Pro qua Antigravity CLI).
 > Làm **tuần tự từng Phase**, dừng ở mọi **CHECKPOINT** để người dùng xác nhận. Không tự ý mở
 > rộng phạm vi. Plan viết ngày 2026-09-24 bởi Claude Opus sau khi khảo sát code thật (mục 1.2).
+> Plan này là phase **O1** của roadmap `specs/agent-ops/ROADMAP.md` (2026-09-25); roadmap bổ sung hai
+> điều chỉnh D11, D12 (mục 8) — đã sửa trực tiếp vào các mục liên quan bên dưới.
 
 ---
 
@@ -160,17 +162,23 @@ pub struct RemoteExecParams {
     pub command: String,                 // 1..=MAX_COMMAND_BYTES, không chứa '\0'
     #[serde(default)] pub cwd: Option<String>,        // None = cwd hiện tại của session
     #[serde(default)] pub timeout_secs: Option<u32>,  // None = 120; tối đa 600
+    #[serde(default)] pub agent: Option<String>,      // D12
 }
-pub struct RemoteFileReadParams { pub path: String }
+pub struct RemoteFileReadParams { pub path: String, #[serde(default)] pub agent: Option<String> }
 pub struct RemoteFileWriteParams {
     pub path: String,
     pub content_base64: String,
     pub expectation: WriteExpectation,
+    #[serde(default)] pub agent: Option<String>,
 }
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WriteExpectation { MustNotExist, MustMatch { sha256: String } } // sha256: 64 hex thường
 pub struct RemoteOutputRecentParams { #[serde(default)] pub count: Option<u32> } // Phase 4
 ```
+
+`agent` (D12): tên client gọi tới, chỉ để ghi audit — không dùng để cấp quyền. Validate: ≤ 64 byte,
+chỉ `[A-Za-z0-9._-]`; sai → `InvalidParams`. MCP adapter điền từ `initialize.params.clientInfo.name`
+(thiếu → `"mcp-unknown"`), `warpctrl remote` điền `"warpctrl-cli"`.
 
 Response (`data` của `ResponseEnvelope::ok`), mọi response có `host`, `user`, `session_id`:
 
@@ -189,8 +197,8 @@ Thêm: `SessionNotAttached`, `SessionBusy`, `Timeout`, `RemoteOperationFailed`. 
 `InsufficientPermissions` (attach `ReadOnly` mà gọi exec/write), `TargetStateConflict` (sha không
 khớp, file đã tồn tại), `InvalidParams`, `MissingTarget`, `InvalidSelector`, `UnsupportedAction`.
 Message phải hướng dẫn được cho model, ví dụ `SessionNotAttached`: "Session 12 (root@prod-1) is not
-attached. Ask the user to run 'Agent Bridge: Allow Claude Code to control this session' from the
-Warp command palette in that pane."
+attached. Ask the user to run 'Agent Bridge: Allow agents to control this session' from the Warp
+command palette in that pane." (D11: không nhắc tên agent cụ thể.)
 
 ### 3.4 Attach registry
 
@@ -348,7 +356,8 @@ phải tuyệt đối, không `\0`/`\n`.
 
 - File `dirs::home_dir()/.warp/agent-bridge/audit.jsonl`; thư mục `0700`, file `0600` (`#[cfg(unix)]`).
 - Mỗi request `remote.exec/read/write` một dòng JSON:
-  `{ts_unix, action, session_id, host, user, cwd?, command?, path?, exit_code?, result: "ok"|"error", error_code?, duration_ms, bytes?}`.
+  `{ts_unix, request_id, agent?, action, session_id, host, user, cwd?, command?, path?, exit_code?, result: "ok"|"error", error_code?, duration_ms, bytes?}`
+  (`request_id`, `agent` theo D12 — roadmap O2/O6 dùng để truy vết theo agent và gắn với lượt duyệt).
 - Ghi trong future nền sau khi xong (không ghi trên main thread). File > `AUDIT_LOG_MAX_BYTES` →
   `rename` thành `audit.jsonl.1` (ghi đè bản cũ) rồi tạo mới. Lỗi ghi audit → `log::warn!`, không
   làm hỏng request.
@@ -544,12 +553,12 @@ AgentBridgeRevoke, AgentBridgeRevokeAll, AgentBridgeCopySetupCommand}`; binding 
 `app/src/workspace/mod.rs` bọc `if FeatureFlag::AgentBridge.is_enabled()` (theo pattern
 `register_editable_bindings` sẵn có), tên `workspace:agent_bridge_attach`, `…_attach_read_only`,
 `…_revoke`, `…_revoke_all`, `…_copy_setup_command`; mô tả:
-"Agent Bridge: Allow Claude Code to control this session", "… to read this session (read-only)",
+"Agent Bridge: Allow agents to control this session", "… to read this session (read-only)",
 "Agent Bridge: Revoke access to this session", "Agent Bridge: Revoke all sessions",
 "Agent Bridge: Copy Claude Code setup command". Context `id!("Workspace")`. **Không** đưa vào group
 `Settings`, **không** thêm vào `should_save_app_state_on_action`.
 Handler (`app/src/workspace/view.rs`): `self.active_session_view(ctx)` → active session; không phải
-remote → toast lỗi. Attach → toast: "Claude Code can now run commands as root@prod-1 in this session
+remote → toast lỗi. Attach → toast: "Agents can now run commands as root@prod-1 in this session
 (expires after 30 min idle). Revoke: 'Agent Bridge: Revoke…'". Copy setup → ghi
 `claude mcp add --scope user warp-bridge -- '<std::env::current_exe()>' --warpctrl mcp` vào clipboard
 (`ClipboardContent::plain_text`) + toast. Toast dùng `self.toast_stack.update(..add_ephemeral_toast..)`
@@ -611,7 +620,7 @@ SSH/remote indicator) để làm theo. Không tìm được pattern rõ ràng �
 
 Chế độ "visible": chạy lệnh thành block thật trên terminal (`Input::try_execute_command` /
 `TerminalView::execute_command_or_set_pending`) rồi đọc output block; duyệt từng lệnh phía Warp
-(dialog); pairing token; stream output; PowerShell; Windows; đóng gói `warpctrl` cho bản release;
+(dialog — đã tách thành phase **O2** của `specs/agent-ops/ROADMAP.md`, có plan riêng); pairing token; stream output; PowerShell; Windows; đóng gói `warpctrl` cho bản release;
 tích hợp với Warp Sync (mở file mirror trong editor rồi upload).
 
 ---
@@ -660,6 +669,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 5. Sửa tay file trên server giữa lúc Claude đã đọc và định sửa → `edit_file` báo file đã thay đổi.
 6. Nhờ Claude đọc 3 file cùng lúc (tool call song song) → đều thành công.
 7. Revoke trong Warp → tool call kế tiếp báo lỗi rõ ràng, Claude dừng lại hỏi.
+8. (D11/D12, gate O1 của roadmap) Thêm Bridge vào một MCP client khác (Codex hoặc Gemini CLI) →
+   `list_sessions` + `exec -- id` thành công; audit log có `agent` khác nhau cho hai client.
 
 ---
 
@@ -683,9 +694,11 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 1. Một lần: palette "Agent Bridge: Copy Claude Code setup command" → dán vào terminal → thêm
    allowlist chỉ-đọc (mục 3.11).
-2. Warp: `ssh user@host` → `sudo -i` → Warpify → palette "Agent Bridge: Allow Claude Code to control
+2. Warp: `ssh user@host` → `sudo -i` → Warpify → palette "Agent Bridge: Allow agents to control
    this session" (hoặc bản read-only).
 3. Mở Claude Code (VSCode hoặc một pane Warp local bên cạnh): "trên server prod-1, …".
+   Agent khác (D11) dùng cùng MCP server — kiểm cú pháp bằng `--help` của bản đang cài:
+   `codex mcp add warp-bridge -- <warp> --warpctrl mcp`, `gemini mcp add warp-bridge <warp> --warpctrl mcp`.
 4. Xong việc: palette "Agent Bridge: Revoke …" (hoặc `exit` khỏi `sudo -i` / để hết hạn 30 phút).
 
 ---
@@ -717,8 +730,14 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D8 | 2026-09-24 | Redaction + ghép `edit_file` ở adapter | Nội dung thô không tới model; không cần param `raw` phía app |
 | D9 | 2026-09-24 | Worktree `feature/agent-bridge` tách từ `feature/warp-sync` | Dùng lại `remote_script`/`paths` đã test; không đụng thay đổi chưa commit của Warp Sync |
 | D10 | 2026-09-24 | v1: máy local unix, server Linux, shell POSIX (bash/zsh/fish qua wrapper) | Broker dùng Unix socket; PowerShell/Windows để v2 |
+| D11 | 2026-09-25 | Chữ trên palette/toast/lỗi trung lập với agent ("Allow agents …"); tên action `workspace:agent_bridge_*` giữ nguyên | Roadmap agent-ops: nhiều MCP client (Codex, Gemini CLI) dùng chung Bridge |
+| D12 | 2026-09-25 | Params `remote.*` có `agent: Option<String>`; audit ghi `agent` + `request_id` | Truy vết theo agent và gắn với lượt duyệt ở O2/O6; thêm sau sẽ phải đổi protocol |
 
 ### Nhật ký
 
 - 2026-09-24 — Plan v1 được viết sau khi khảo sát `local_control`, `warpctrl`, in-band executor,
   Claude Code harness và secret redaction (Claude Opus). Chưa bắt đầu Phase 0.
+- 2026-09-25 — Thêm D11, D12 từ roadmap `specs/agent-ops/ROADMAP.md`. Phase 0 bước worktree đã có
+  sẵn (`../warp-agent-bridge`, nhánh `feature/agent-bridge`), nhưng nhánh đang dựa trên
+  `8fd3fb406` — **việc đầu tiên của phiên kế tiếp**: `git rebase feature/warp-sync`, rồi kiểm lại
+  Task 1.2 và bỏ qua Task 2.4 (xem ghi chú ở Phase 2).

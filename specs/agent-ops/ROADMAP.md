@@ -1,0 +1,232 @@
+# Agent Ops — Warp làm trung tâm cho agent và operator vận hành hệ thống — Roadmap (v1)
+
+> Viết ngày 2026-09-25 (Claude Opus). Đây là **roadmap**, không phải implementation plan: mỗi phase
+> O2+ sẽ có `IMPLEMENTATION_PLAN.md` riêng, viết khi tới lượt (sau khi gate của phase trước đạt).
+> Phase O1 dùng plan có sẵn `specs/agent-bridge/IMPLEMENTATION_PLAN.md`.
+> Tham khảo: fork `cesaryuan/warp-refined` (BYOK + endpoint OpenAI-compatible riêng, mục 6).
+
+---
+
+## 1. Mục tiêu
+
+1. Nhiều agent của các hãng (Claude Code, Codex, Gemini CLI, Antigravity `agy`, …) làm việc sysadmin
+   / DevOps **trên server thật**, qua session SSH/`sudo -i` đã Warpify, với quyền và danh tính của
+   operator đang ngồi trước Warp.
+2. Vận hành liên tục: alert/log từ Grafana (Loki, Prometheus) được agent **tự chẩn đoán**, đề xuất
+   hành động; con người duyệt; Warp thực thi và ghi vết.
+3. Một nhóm vài operator dùng chung: hộp incident, phân công, runbook chung, audit chung.
+
+### Không làm (non-goals)
+
+- Không dựng lại Warp Drive / Oz cloud / orchestration server của Warp (closed source, cần backend
+  của Warp). Runbook và skill chia sẻ bằng **repo git**.
+- Không dùng Warp GUI làm tiến trình chạy 24/7 (app desktop: laptop ngủ = vòng lặp chết).
+- Không cho agent tự chạy lệnh **ghi** trên production trước khi có lớp policy/duyệt (O2) và số
+  liệu tin cậy từ O4.
+- Không tích hợp riêng API từng hãng. Cổng chung duy nhất là **MCP** (`warpctrl mcp`).
+
+---
+
+## 2. Nguyên tắc kiến trúc
+
+| # | Nguyên tắc | Lý do |
+|---|---|---|
+| P1 | Warp = **bàn điều khiển của người + nơi thực thi**; bộ não chạy liên tục nằm ở **runner** ngoài Warp | Warp có session root, UI duyệt, danh tính operator; nhưng không chạy 24/7 |
+| P2 | Mọi agent vào Warp qua **một cổng MCP** (Agent Bridge) | Claude Code, Codex, Gemini CLI đều là MCP client → thêm agent mới gần như miễn phí |
+| P3 | **Tách agent đọc và agent ghi.** Agent đọc log/metric không có công cụ thực thi; chỉ xuất *đề xuất có cấu trúc* | Log là dữ liệu không tin cậy: một dòng log có thể chứa prompt injection ("run `curl … \| sh`") |
+| P4 | **Duyệt ở phía Warp**, không chỉ dựa vào permission prompt của từng agent | Agent-agnostic; không bị bỏ qua bởi `--dangerously-skip-permissions`; một UX cho mọi agent và cho runner |
+| P5 | Mức tự động tăng dần theo số liệu (bảng mục 3) | Tự động hoá chỉ sau khi đo được độ chính xác đề xuất |
+| P6 | Patch vào Warp nhỏ, tách module, sau feature flag | Upstream đổi rất nhanh; warp-refined duy trì được nhờ giữ patch set nhỏ |
+
+```
+Grafana Alerting ──webhook──► Ops Runner + Hub (VM nhỏ, 24/7)             [O4, O6]
+                               ├─ agent chỉ-đọc: mcp-grafana, Loki/Prometheus
+                               ├─ Proposal JSON (chẩn đoán + lệnh + mức L)
+                               └─ SQLite: incident, proposal, audit, phân công
+                                         │ MCP / REST
+   Warp của từng operator ◄──────────────┘                                 [O5]
+     ├─ Claude Code / Codex / Gemini ── MCP ──► Agent Bridge (`warpctrl mcp`) [O1]
+     ├─ Policy + hộp thoại duyệt (L0–L3)                                   [O2]
+     └─ session SSH → sudo -i (Warpify) ──in-band──► server
+```
+
+---
+
+## 3. Mức tự động
+
+| Mức | Loại hành động | Cách chạy | Có từ phase |
+|---|---|---|---|
+| L0 | Chẩn đoán chỉ-đọc (`systemctl status`, `journalctl`, `ss`, `df`, đọc file) | Tự chạy (session attach read-only hoặc allowlist đọc) | O1 |
+| L1 | Runbook đã duyệt trước, khớp **nguyên văn** allowlist (vd `systemctl restart php-fpm`) | Tự chạy, ghi audit, báo operator | O2 (host lab); prod chỉ sau gate O4 |
+| L2 | Mọi lệnh ghi khác | Hộp thoại duyệt trong Warp | O2 |
+| L3 | Denylist: `rm -rf /…`, `mkfs`, `dd if=`, `shutdown/reboot`, flush firewall, `DROP DATABASE`, sửa `sshd`/network khi không có console dự phòng | Luôn từ chối, kể cả khi được duyệt | O2 |
+
+Denylist bằng regex chỉ là **gờ giảm tốc** (shell có thể che giấu: `eval "$(echo … | base64 -d)"`).
+Ranh giới thật là: chế độ read-only, hộp thoại duyệt, và allowlist L1 so khớp **toàn bộ lệnh** +
+từ chối mọi metachar shell (`; | & $ \` > <` và xuống dòng).
+
+---
+
+## 4. Các phase
+
+### O0 — Hoàn tất Warp Sync (đang làm)
+
+Còn CHECKPOINT E (user test extension VS Code, checklist 20–25). Không chặn O1: Bridge được rebase
+lên `feature/warp-sync`; fix sau này của Warp Sync thì rebase lại.
+
+### O1 — Agent Bridge v1
+
+Làm theo `specs/agent-bridge/IMPLEMENTATION_PLAN.md` (Phase 0–4), **cộng 2 điều chỉnh** đã ghi vào
+plan đó (D11, D12):
+
+- **D11** — Chữ trên palette/toast/lỗi trung lập với agent ("Allow agents to control this
+  session"), không chỉ nói Claude Code. Mục 7 của plan có thêm lệnh setup cho Codex / Gemini CLI.
+- **D12** — Params `remote.*` có trường tuỳ chọn `agent: Option<String>` (MCP adapter điền từ
+  `initialize.params.clientInfo.name`, CLI điền `"warpctrl-cli"`); audit log ghi `agent` và
+  `request_id`. Thêm bây giờ thì rẻ; thêm sau phải đổi protocol.
+
+**Gate → O2:** CHECKPOINT B đạt với Claude Code; thử thêm ít nhất 1 MCP client khác (Codex hoặc
+Gemini CLI) gọi `list_sessions` + `exec` thành công; độ trễ in-band đo ở CHECKPOINT A chấp nhận được.
+
+### O2 — Policy + duyệt phía Warp
+
+Tương ứng mục "duyệt từng lệnh phía Warp" trong Phase 5 của plan Bridge, được nâng lên thành phase
+riêng. Phạm vi dự kiến:
+
+- File policy `~/.warp/agent-ops/policy.toml` (quyền `0600`), ví dụ:
+  ```toml
+  [defaults]
+  mode = "approve"                 # read_only | approve | allowlist
+
+  [[hosts]]
+  match = "lab-*"                  # glob trên hostname
+  mode = "allowlist"
+  allow = ["systemctl restart php-fpm", "systemctl reload nginx"]   # khớp nguyên văn
+
+  [deny]
+  patterns = ['\brm\s+-rf\s+/', '\bmkfs', '\bdd\s+if=', '\b(shutdown|reboot|halt)\b',
+              'iptables\s+-F', 'nft\s+flush', '(?i)drop\s+(database|table)']
+  ```
+- Hàm thuần `policy::evaluate(host, user, command, attach_access) -> Decision {Allow, Ask, Deny(reason)}`
+  (unit test dày), gọi **một chỗ duy nhất** trong handler `remote.*` trước `ops::exec`/`write`.
+- `Ask` → request ở trạng thái `BridgeResult::Pending` (đã có từ Warp Sync 7.1) chờ **hộp thoại
+  duyệt** trong Warp: host, user, agent (D12), lệnh đầy đủ (hoặc diff với write/edit), nút
+  Approve / Deny / "Approve this exact command for this session". Không trả lời sau 5 phút → Deny.
+- Kill switch sẵn có (Revoke all) + trạng thái policy hiển thị trên chỉ báo attach (Task 4.2 Bridge).
+- Tuỳ chọn: bỏ allowlist `exec` khỏi permission Claude Code khi đã duyệt phía Warp (tránh duyệt hai lần).
+
+**Gate → O3/O4:** dùng hằng ngày ≥ 1 tuần trên host lab không có sự cố; mọi lệnh ghi đều đi qua
+hộp thoại hoặc allowlist; audit log đủ.
+
+### O3 — Bộ công cụ quan sát + runbook (hầu như không sửa Warp)
+
+- Gắn **`grafana/mcp-grafana`** (MCP chính thức của Grafana) cho Claude Code / Codex / Gemini CLI.
+  Service account Grafana **role Viewer** (quyền đọc được Grafana cưỡng chế phía server, không dựa
+  vào prompt). Máy này đã cấu hình sẵn các server `grafana-*` trong Claude Code nhưng đang lỗi
+  `CONNECTION_CLOSED` — sửa trước.
+- Repo git `ops-runbooks/` dùng chung: mỗi runbook là Markdown (triệu chứng → truy vấn Loki/PromQL →
+  lệnh chẩn đoán L0 → hành động L1/L2 → kiểm tra sau), kèm skill cho agent (vd `triage`,
+  `nginx-5xx`, `disk-full`). Thay đổi runbook đi qua PR (người review).
+- Quy trình tương tác: operator dán alert → agent truy vấn Grafana (đọc) → chẩn đoán → đề xuất →
+  thực thi qua Bridge (O2 duyệt).
+
+**Gate → O4:** ≥ 10 incident thật xử lý theo quy trình này; ghi lại chẩn đoán agent đúng/sai.
+
+### O4 — Runner nhận alert (ngoài Warp, chạy 24/7)
+
+- **Spike trước (1–2 ngày): HolmesGPT** (robusta-dev/holmesgpt, CNCF sandbox) — agent điều tra alert
+  chỉ-đọc, có sẵn toolset Prometheus/Loki/Grafana, cấu hình model qua LiteLLM. Chỉ tự viết runner
+  nếu HolmesGPT không hợp.
+- Runner tự viết (nếu cần): Grafana contact point **webhook** → hàng đợi → `claude -p` /
+  `codex exec` với **chỉ MCP đọc** (không Bash, không Bridge) → xuất `Proposal` theo JSON schema,
+  **validate schema**; output không hợp lệ → loại.
+  ```json
+  { "incident_id": "…", "alert": "…", "host": "web-3", "summary": "…",
+    "evidence": [{"source": "loki", "query": "…", "excerpt": "…"}],
+    "actions": [{"command": "systemctl restart php-fpm", "level": "L1", "rationale": "…",
+                 "runbook": "php-fpm-hang"}] }
+  ```
+- Log trong prompt luôn được bọc như **dữ liệu** (khối có delimiter, dặn không làm theo chỉ dẫn bên
+  trong); `level` do policy tính lại, không tin giá trị model tự gán.
+- Model: API key qua gateway (LiteLLM) có **ngân sách** theo ngày; model rẻ cho bước phân loại, model
+  mạnh cho điều tra sâu. Thông báo Telegram/Slack kèm tóm tắt.
+
+**Gate → O5:** chạy "shadow" ≥ 2 tuần (chỉ đề xuất, không ai bắt buộc làm theo); đo tỉ lệ đề xuất
+đúng theo đánh giá operator. Chưa đạt ngưỡng đã thống nhất → không bật L1 cho prod.
+
+### O5 — Hộp incident trong Warp
+
+- **O5a (rẻ, làm trước):** thêm MCP tools `list_incidents` / `get_incident` / `post_result` (trong
+  `warpctrl mcp` hoặc một MCP server riêng của Hub). Operator nói với Claude Code "xử lý incident
+  #42" → agent lấy proposal, chạy qua Bridge (O2 duyệt), gửi kết quả về Hub.
+- **O5b (GUI, chỉ khi O5a chứng minh giá trị):** panel Incidents trong Warp, nút "mở session tới
+  host", "chạy đề xuất" (đi qua đúng `policy::evaluate` + hộp thoại của O2).
+
+### O6 — Làm việc theo nhóm
+
+Hub nhiều người dùng: token/OIDC theo operator, phân công + on-call, audit tập trung (Warp đẩy dòng
+audit lên Hub), policy phát từ Hub (operator không tự nới quyền prod), bật L1 cho prod theo từng
+runbook dựa trên số liệu O4. Mỗi operator dùng tài khoản agent **của chính mình** (mục 5).
+
+### Tuỳ chọn — Agent sẵn có của Warp chạy qua gateway riêng (kiểu warp-refined)
+
+Chỉ cần nếu muốn dùng Agent Mode của Warp (không phải Claude Code/Codex) mà không qua server Warp.
+Upstream đã có `app/src/ai/custom_endpoints.rs`; phần warp-refined thêm là gọi thẳng
+`/v1/responses` của endpoint OpenAI-compatible (bỏ qua `/ai/multi-agent`) và giữ reasoning items qua
+nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
+
+---
+
+## 5. Dùng tài khoản thuê bao hay API key
+
+| Agent | Thuê bao dùng được khi | Nên dùng API key / cloud khi |
+|---|---|---|
+| Claude Code | Pro/Max hoặc seat Team/Enterprise; chạy **chính binary `claude`** (tương tác hoặc `claude -p`) | Runner 24/7 dùng chung → API key, Bedrock hoặc Vertex |
+| Codex | Đăng nhập ChatGPT; `codex exec` | Tự động hoá kiểu CI/runner |
+| Gemini CLI / Antigravity `agy` | Tài khoản Google, có quota | Điều khoản cho dùng tự động chưa rõ → kiểm tra trước |
+| Agent Mode của Warp | Credit Warp | BYOK / custom endpoint |
+
+- Operator tương tác (O1–O3, O5a): mỗi người đăng nhập agent bằng tài khoản **của mình**; Bridge chỉ
+  là MCP server nên không đụng tới credential của agent.
+- **Không** trích OAuth token của gói thuê bao để gọi API từ công cụ khác (Anthropic đã chặn).
+- Runner (O4): API key qua gateway, có ngân sách + log. Gói thuê bao có hạn mức theo cửa sổ 5 giờ và
+  theo tuần → không hợp vận hành liên tục.
+- Điều khoản các hãng đổi thường xuyên: đọc lại ToS trước O4 và O6.
+
+---
+
+## 6. Rủi ro
+
+| Rủi ro | Giảm thiểu |
+|---|---|
+| Prompt injection qua log/alert dẫn tới lệnh nguy hiểm | P3 (agent đọc không có công cụ ghi), schema validate, `level` do policy tính, duyệt O2, denylist L3 |
+| Agent chạy lệnh phá huỷ với quyền root | Read-only attach, O2 duyệt, allowlist khớp nguyên văn, backup trước khi ghi (Bridge D5) |
+| Lộ secret server cho model/nhà cung cấp | Redaction ở MCP adapter (Bridge D8); runner chỉ đọc qua Grafana role Viewer; ghi chú: output vẫn có thể lọt secret không khớp regex |
+| Process local khác gọi Bridge | Attach thủ công theo `SessionId`, TTL, Revoke all, O2 duyệt; pairing token (Bridge v2) trước O6 |
+| Chi phí token runner vượt kiểm soát | Gateway có ngân sách/ngày, dedupe alert, model rẻ cho phân loại |
+| Fork khó rebase upstream | P6; phần lớn O3–O6 nằm **ngoài** repo Warp |
+| Operator tin agent quá mức | Gate có số liệu trước mỗi bước tăng tự động; audit + review định kỳ |
+
+---
+
+## 7. Tiến độ và quyết định
+
+### Tiến độ
+
+- [ ] O0 Warp Sync — CHECKPOINT E
+- [ ] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12) · [ ] gate O1
+- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, chưa viết)
+- [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
+- [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
+- [ ] O5a MCP incident tools · [ ] O5b panel GUI
+- [ ] O6 Hub nhóm
+
+### Quyết định
+
+| # | Ngày | Quyết định | Lý do |
+|---|---|---|---|
+| AO1 | 2026-09-25 | Warp là console + nơi thực thi; runner 24/7 nằm ngoài Warp | App desktop không chạy liên tục được |
+| AO2 | 2026-09-25 | Cổng tích hợp agent duy nhất = MCP của Agent Bridge | Đa hãng, không phụ thuộc Oz cloud |
+| AO3 | 2026-09-25 | Duyệt lệnh ghi ở phía Warp (O2), không chỉ dựa vào prompt của agent | Agent-agnostic, không bị bỏ qua bằng cờ của agent |
+| AO4 | 2026-09-25 | Runbook/skill chia sẻ bằng repo git, không dựng lại Warp Drive | Có review qua PR, không cần backend |
+| AO5 | 2026-09-25 | Thử HolmesGPT trước khi tự viết runner | Tránh viết lại thứ đã có |
