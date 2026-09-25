@@ -15,7 +15,7 @@ mod model;
 pub mod path_prompt;
 mod paths;
 pub mod remote_check;
-mod remote_script;
+pub(crate) mod remote_script;
 mod remote_shell;
 pub mod requester;
 pub mod risk;

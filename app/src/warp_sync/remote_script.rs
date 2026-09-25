@@ -20,7 +20,7 @@ const MIN_MACHINE_ID_LEN: usize = 8;
 const MAX_MACHINE_ID_LEN: usize = 64;
 
 /// Name of the payload file inside the remote temporary directory.
-const PAYLOAD_FILE_NAME: &str = "payload.tgz";
+pub(crate) const PAYLOAD_FILE_NAME: &str = "payload.tgz";
 
 /// Remote directory (relative to `$HOME`) that receives a backup of every overwritten target.
 /// It lives outside the target so that config globs such as `conf.d/*.conf` cannot load it.
