@@ -1,0 +1,158 @@
+{
+  "name": "vscode-warp-sync",
+  "displayName": "Warp Sync",
+  "description": "Download, compare and upload files of a Warp Sync mirror through the Warp terminal that is connected to the server.",
+  "version": "0.1.0",
+  "publisher": "warp-sync-local",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Warp Sync",
+      "properties": {
+        "warpSync.command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "default": [
+            "warpctrl"
+          ],
+          "markdownDescription": "The command that runs `warpctrl`, as a list of arguments (no shell is involved). For a development build, for example `[\"/path/to/warp/target/debug/warp-oss\", \"--warpctrl\"]`.",
+          "scope": "machine"
+        },
+        "warpSync.mirrorRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The folder that holds Warp Sync mirrors. Only needed when you changed it in Warp (Settings > Warp Sync); the default `~/.warp/mirrors` is recognised without it.",
+          "scope": "machine"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "warpSync.download",
+        "title": "Download from Server",
+        "category": "Warp Sync"
+      },
+      {
+        "command": "warpSync.upload",
+        "title": "Upload to Server",
+        "category": "Warp Sync"
+      },
+      {
+        "command": "warpSync.compare",
+        "title": "Compare with Server",
+        "category": "Warp Sync"
+      },
+      {
+        "command": "warpSync.uploadChanged",
+        "title": "Upload Changed Files to Server",
+        "category": "Warp Sync",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "warpSync.compareChanged",
+        "title": "Compare Changed Files with Server",
+        "category": "Warp Sync",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "warpSync.status",
+        "title": "Show Connection Status",
+        "category": "Warp Sync"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "warpSync.download",
+          "when": "warpSync.active"
+        },
+        {
+          "command": "warpSync.upload",
+          "when": "warpSync.active"
+        },
+        {
+          "command": "warpSync.compare",
+          "when": "warpSync.active"
+        },
+        {
+          "command": "warpSync.uploadChanged",
+          "when": "warpSync.active"
+        },
+        {
+          "command": "warpSync.compareChanged",
+          "when": "warpSync.active"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "warpSync.download",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@1"
+        },
+        {
+          "command": "warpSync.upload",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@2"
+        },
+        {
+          "command": "warpSync.compare",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@3"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "warpSync.download",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@1"
+        },
+        {
+          "command": "warpSync.upload",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@2"
+        },
+        {
+          "command": "warpSync.compare",
+          "when": "warpSync.active && resourceScheme == file",
+          "group": "warpSync@3"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "warpSync.uploadChanged",
+          "when": "warpSync.active && scmProvider == git",
+          "group": "navigation@90"
+        },
+        {
+          "command": "warpSync.compareChanged",
+          "when": "warpSync.active && scmProvider == git",
+          "group": "navigation@91"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node --test \"out/**/*.test.js\"",
+    "package": "npm run compile && npx --yes @vscode/vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.0"
+  }
+}
