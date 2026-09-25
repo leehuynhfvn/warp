@@ -17,7 +17,7 @@ use crate::warp_sync::remote_script::{PAYLOAD_FILE_NAME, RemoteTmpDir, posix_quo
 const NONCE_LEN: usize = 16;
 const UNEXPECTED_OUTPUT_TAIL_BYTES: usize = 200;
 const MAX_BACKUP_BASENAME_CHARS: usize = 100;
-const BACKUP_SUFFIX_CHARS: usize = 4;
+const BACKUP_SUFFIX_CHARS: usize = 8;
 const BACKUP_TIMESTAMP_FORMAT: &str = "%Y%m%dT%H%M%S";
 
 /// Exit status `timeout` uses when it kills the command.
@@ -380,7 +380,9 @@ fn read_status_error(
 ///
 /// An existing file is overwritten in place (never replaced by a new inode) so that its owner,
 /// mode, ACLs, SELinux label and hard links survive, after its current content was copied to the
-/// backup directory. A new file is created with `noclobber`, which fails instead of following a
+/// backup directory. Symlinks to the file are followed on purpose (`sites-enabled/*`), which is
+/// why a file in a directory that everyone can write to is refused: the link could be swapped
+/// between the checks and the write. A new file is created with `noclobber`, which fails instead of following a
 /// symlink or replacing a file that appeared in the meantime.
 pub(crate) fn write_commit_script(
     nonce: &str,
@@ -428,11 +430,12 @@ fn overwrite_step(sha256: &str, backup_name: &str) -> String {
     format!(
         r#"[ -e "$P" ] || fail not_found
 [ -f "$P" ] || fail not_regular
+if [ -n "$(find "$(dirname "$P")" -maxdepth 0 -perm -0002 2>/dev/null)" ]; then fail unsafe_directory; fi
 cur=$(h "$P"); [ -n "$cur" ] || fail missing_sha256
 [ "$cur" = {sha256} ] || fail changed_on_server
 B="{BACKUP_DIR}"
-if [ -z "$HOME" ] || [ ! -d "$HOME" ] || [ -L "$HOME/.warp-agent" ] || [ -L "$B" ]; then fail backup_failed; fi
-mkdir -p "$B" && chmod 700 "$HOME/.warp-agent" "$B" || fail backup_failed
+if [ -z "$HOME" ] || [ ! -d "$HOME" ] || [ ! -O "$HOME" ] || [ -L "$HOME/.warp-agent" ] || [ -L "$B" ]; then fail backup_failed; fi
+( umask 077; mkdir -p "$B" ) && chmod 700 "$HOME/.warp-agent" "$B" || fail backup_failed
 cp -p "$P" "$B/"{backup_file} || fail backup_failed
 echo "$M backup $B/"{backup_file}
 cat "$F" > "$P" || fail write_failed"#
@@ -497,6 +500,10 @@ fn write_error(code: &str, backup_path: Option<&str>) -> AgentBridgeError {
         ),
         "not_found" => failed("The file no longer exists on the server"),
         "not_regular" => failed("The path is not a regular file"),
+        "unsafe_directory" => failed(
+            "The directory of the file is writable by everyone, so it could be swapped for a \
+             symlink while root writes to it. Use exec if this is really what you want",
+        ),
         "parent_missing" => failed("The parent directory does not exist on the server"),
         "missing_sha256" => failed("The server has neither `sha256sum` nor `shasum`"),
         "backup_failed" => failed(

@@ -100,7 +100,7 @@ fn read_and_write_scripts_only_contain_paths_quoted() {
 fn backup_names_are_shell_safe_and_carry_the_time() {
     let now = Utc.with_ymd_and_hms(2026, 9, 25, 13, 4, 5).unwrap();
     let name = backup_name("/etc/nginx/sites available/my site.conf", now);
-    let shape = Regex::new(r"^my_site\.conf\.20260925T130405\.[0-9a-f]{4}$").unwrap();
+    let shape = Regex::new(r"^my_site\.conf\.20260925T130405\.[0-9a-f]{8}$").unwrap();
     assert!(shape.is_match(&name), "{name}");
 
     let odd = backup_name("/etc/$(reboot)`x`", now);
@@ -160,6 +160,19 @@ fn a_cut_section_keeps_head_and_tail_and_says_how_much_was_omitted() {
     assert!(parsed.stdout.truncated);
     assert_eq!(parsed.stdout.total_bytes, total as u64);
     assert!(!parsed.stderr.truncated);
+}
+
+#[test]
+fn output_that_is_not_utf8_is_decoded_lossily_without_losing_the_frame() {
+    let m = marker(NONCE);
+    let mut report = format!("{m} stdout 3\n").into_bytes();
+    report.extend_from_slice(b"a\xffb");
+    report.extend_from_slice(format!("\n{m} end\n{m} stderr 0\n\n{m} end\n{m} rc 0 1\n").as_bytes());
+
+    let parsed = parse_exec_output(NONCE, &report, b"").unwrap();
+
+    assert_eq!(parsed.stdout.text, "a\u{fffd}b");
+    assert_eq!(parsed.exit_code, 0);
 }
 
 #[test]
@@ -665,6 +678,23 @@ mod with_sh {
             write(dir.path(), b"x", &must_match(b"y"), home.path()),
             Err(AgentBridgeError::RemoteFailed(_))
         ));
+    }
+
+    #[test]
+    fn must_match_refuses_a_file_in_a_directory_everyone_can_write_to() {
+        let (dir, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("app.conf");
+        fs::write(&path, "old\n").unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+
+        let result = write(&path, b"new\n", &must_match(b"old\n"), home.path());
+
+        assert!(
+            matches!(&result, Err(AgentBridgeError::RemoteFailed(message)) if message.contains("writable by everyone")),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old\n");
+        assert!(!home.path().join(".warp-agent").exists());
     }
 
     #[test]

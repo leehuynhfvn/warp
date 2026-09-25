@@ -110,11 +110,19 @@ fn write_params(path: &Path, content: &[u8], expectation: WriteExpectation) -> R
     }
 }
 
-fn audit_lines(dir: &Path) -> Vec<Value> {
+fn all_audit_lines(dir: &Path) -> Vec<Value> {
     fs::read_to_string(dir.join("audit.jsonl"))
         .unwrap_or_default()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// The closing records: every request also leaves a "started" record before it runs.
+fn audit_lines(dir: &Path) -> Vec<Value> {
+    all_audit_lines(dir)
+        .into_iter()
+        .filter(|record| record["result"] != "started")
         .collect()
 }
 
@@ -584,10 +592,90 @@ fn a_write_is_audited_with_its_size_and_never_its_content() {
 }
 
 #[test]
-fn a_failing_audit_log_does_not_fail_the_request() {
+fn a_request_that_cannot_be_audited_is_not_run() {
     let blocker = tempfile::NamedTempFile::new().unwrap();
-    let runner = ShellRunner::new();
     let audit_dir = blocker.path().join("agent-bridge");
-    let result = block_on(exec(&runner, &target(Some(&audit_dir), None), exec_params("true")));
-    assert!(result.is_ok());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    fs::write(&path, "x").unwrap();
+
+    let runner = ShellRunner::new();
+    let target = target(Some(&audit_dir), None);
+    let results = [
+        block_on(exec(&runner, &target, exec_params("touch ran"))),
+        block_on(read_file(&runner, &target, read_params(path.to_str().unwrap()))),
+        block_on(write_file(
+            &runner,
+            &target,
+            write_params(&dir.path().join("g"), b"y", WriteExpectation::MustNotExist),
+        )),
+    ];
+
+    for result in results {
+        assert!(
+            matches!(&result, Err(AgentBridgeError::Io(message)) if message.contains("audit log")),
+            "{result:?}"
+        );
+    }
+    assert_eq!(runner.call_count(), 0);
+}
+
+#[test]
+fn every_request_leaves_a_start_record_before_its_closing_record() {
+    let audit = tempfile::tempdir().unwrap();
+    let runner = ShellRunner::new();
+    block_on(exec(&runner, &target(Some(audit.path()), None), exec_params("true"))).unwrap();
+
+    let records = all_audit_lines(audit.path());
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["result"], "started");
+    assert_eq!(records[0]["command"], "true");
+    assert_eq!(records[1]["result"], "ok");
+    assert_eq!(records[0]["request_id"], records[1]["request_id"]);
+}
+
+#[test]
+fn a_conflict_does_not_send_a_needless_cleanup_command() {
+    let runner = ShellRunner::new();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("there");
+    fs::write(&path, "keep").unwrap();
+    block_on(write_file(
+        &runner,
+        &target(None, None),
+        write_params(&path, b"x", WriteExpectation::MustNotExist),
+    ))
+    .unwrap_err();
+    assert!(!runner.last_call().starts_with("rm -rf "));
+    assert!(runner.scratch_is_clean());
+}
+
+#[test]
+fn a_commit_that_cannot_report_still_removes_the_upload_directory() {
+    let mut runner = ShellRunner::new();
+    // begin, one chunk, then the commit script itself fails to run
+    runner.fail_call = Some(2);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    block_on(write_file(
+        &runner,
+        &target(None, None),
+        write_params(&path, b"x", WriteExpectation::MustNotExist),
+    ))
+    .unwrap_err();
+    assert!(runner.last_call().starts_with("rm -rf "));
+    assert!(runner.scratch_is_clean());
+}
+
+#[test]
+fn a_write_whose_encoded_content_is_far_too_long_is_refused_before_decoding() {
+    let runner = ShellRunner::new();
+    let dir = tempfile::tempdir().unwrap();
+    let params = RemoteFileWriteParams {
+        content_base64: "A".repeat(WRITE_MAX_BASE64_LEN + 1),
+        ..write_params(&dir.path().join("f"), b"", WriteExpectation::MustNotExist)
+    };
+    let result = block_on(write_file(&runner, &target(None, None), params));
+    assert!(matches!(result, Err(AgentBridgeError::InvalidParams(_))));
+    assert_eq!(runner.call_count(), 0);
 }

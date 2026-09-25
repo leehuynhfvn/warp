@@ -1,5 +1,6 @@
 //! Append-only local record of every request an agent made against a session, so that what ran
-//! as root can be reviewed afterwards. Output of commands and file contents are never recorded.
+//! as root can be reviewed afterwards. Output of commands and file contents are never recorded,
+//! but the commands are, in full, so anything typed into one (a password flag, a token) is too.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
@@ -19,6 +20,8 @@ const ROTATED_FILE_NAME: &str = "audit.jsonl.1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AuditOutcome {
+    /// Written before the request runs, so that it leaves a trace even if Warp stops midway.
+    Started,
     Ok,
     Error,
 }

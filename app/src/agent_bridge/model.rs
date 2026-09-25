@@ -51,7 +51,6 @@ impl AgentBridgeModel {
     ) -> Result<(), AgentBridgeError> {
         self.attachments
             .check(id, needed, user, host, Instant::now())
-            .map(|_| ())
     }
 
     pub(crate) fn record_use(&mut self, id: SessionId, is_exec: bool) {

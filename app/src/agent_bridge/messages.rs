@@ -12,7 +12,7 @@ pub(crate) fn attached_message(access: Access, user: &str, host: &str) -> String
     let minutes = ATTACH_IDLE_TTL.as_secs() / 60;
     let what = match access {
         Access::Full => "run commands and edit files",
-        Access::ReadOnly => "read files (read-only)",
+        Access::ReadOnly => "read any file that user can read (read-only)",
     };
     format!(
         "Agents can now {what} as {user}@{host} in this session. Access ends after {minutes} \

@@ -92,7 +92,7 @@ impl Attachments {
         user: &str,
         host: &str,
         now: Instant,
-    ) -> Result<&Attachment, AgentBridgeError> {
+    ) -> Result<(), AgentBridgeError> {
         let Some(attachment) = self.by_session.get(&id) else {
             return Err(AgentBridgeError::NotAttached {
                 user: user.to_owned(),
@@ -106,7 +106,7 @@ impl Attachments {
         if attachment.access < needed {
             return Err(AgentBridgeError::ReadOnlyAttachment);
         }
-        Ok(&self.by_session[&id])
+        Ok(())
     }
 
     /// Counts a finished request and restarts the idle timer. Does nothing for a session that was

@@ -32,6 +32,8 @@ pub(crate) type RemoteReceiver = oneshot::Receiver<Result<Value, ControlError>>;
 
 /// A terminal session as seen from the main thread.
 struct SessionSnapshot {
+    /// The id clients use to address the session.
+    session_id: String,
     session: Arc<Session>,
     cwd: Option<String>,
 }
@@ -122,7 +124,7 @@ pub(crate) fn start(
 
     let target = Target {
         session: RemoteSessionRef {
-            session_id: session_id(&request.target),
+            session_id: snapshot.session_id,
             host: printable(session.hostname()),
             user: printable(session.user()),
         },
@@ -155,14 +157,6 @@ fn ensure_enabled(kind: ActionKind) -> Result<(), ControlError> {
             kind.as_str()
         ),
     ))
-}
-
-/// The session id the client addressed the request to; `resolve` has checked that there is one.
-fn session_id(target: &TargetSelector) -> String {
-    match &target.session {
-        Some(SessionTarget::Id { id }) => id.0.clone(),
-        Some(SessionTarget::Active) | None => String::new(),
-    }
 }
 
 /// The session the request names. Only an explicit id is accepted.
@@ -205,6 +199,7 @@ fn read_session(
         terminal.read(ctx, |view, ctx| {
             let active = view.active_session().as_ref(ctx);
             Some(SessionSnapshot {
+                session_id: entry.pane_id.to_string(),
                 session: active.session(ctx)?,
                 cwd: active.current_working_directory().cloned(),
             })
@@ -221,7 +216,7 @@ fn summary(
     let id = session.id();
     let attached = AgentBridgeModel::handle(ctx).read(ctx, |model, _| model.status(id));
     RemoteSessionSummary {
-        session_id: entry.pane_id.to_string(),
+        session_id: snapshot.session_id.clone(),
         window_index: entry.window_index as u32,
         tab_index: entry.tab_index as u32,
         pane_index: entry.pane_index as u32,

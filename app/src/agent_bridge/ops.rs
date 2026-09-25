@@ -26,7 +26,7 @@ use super::audit::{self, AuditOutcome, AuditRecord};
 use super::error::AgentBridgeError;
 use super::path::{normalize_path, validate_cwd};
 use super::script::{
-    ExecOutput, ReadOutcome, Stream, backup_name, exec_script, new_nonce, parse_exec_output,
+    ExecOutput, ReadOutcome, Stream, WriteOutcome, backup_name, exec_script, new_nonce, parse_exec_output,
     parse_read_output, parse_write_output, read_script, sha256_hex, write_commit_script,
 };
 use super::{
@@ -43,6 +43,9 @@ use crate::warp_sync::remote_script::{
 
 const MAX_AGENT_NAME_BYTES: usize = 64;
 const SHA256_HEX_LEN: usize = 64;
+
+/// Length of `WRITE_MAX_BYTES` of content in base64, with room for padding and whitespace.
+const WRITE_MAX_BASE64_LEN: usize = WRITE_MAX_BYTES / 3 * 4 + 8;
 
 /// What a command printed and whether the shell reported it as successful.
 #[derive(Debug, Default)]
@@ -135,6 +138,7 @@ pub(crate) async fn exec(
     let mut audit = Audit::begin(target, ActionKind::RemoteExec, params.agent.as_deref());
     audit.record.command = Some(params.command.clone());
     audit.record.cwd = params.cwd.clone().or_else(|| target.cwd.clone());
+    audit.record_start()?;
     let result = run_exec(runner, target, &params).await;
     audit.finish(
         result
@@ -152,6 +156,7 @@ pub(crate) async fn read_file(
 ) -> Result<Value, AgentBridgeError> {
     let mut audit = Audit::begin(target, ActionKind::RemoteFileRead, params.agent.as_deref());
     audit.record.path = Some(params.path.clone());
+    audit.record_start()?;
     let result = run_read(runner, target, &params).await;
     audit.finish(
         result
@@ -169,6 +174,7 @@ pub(crate) async fn write_file(
 ) -> Result<Value, AgentBridgeError> {
     let mut audit = Audit::begin(target, ActionKind::RemoteFileWrite, params.agent.as_deref());
     audit.record.path = Some(params.path.clone());
+    audit.record_start()?;
     let result = run_write(runner, target, &params).await;
     audit.finish(
         result
@@ -347,6 +353,11 @@ async fn run_write(
 ) -> Result<RemoteFileWriteResult, AgentBridgeError> {
     validate_write(params)?;
     let path = normalize_path(&params.path, target.cwd.as_deref())?;
+    if params.content_base64.len() > WRITE_MAX_BASE64_LEN {
+        return Err(AgentBridgeError::InvalidParams(format!(
+            "content is larger than {WRITE_MAX_BYTES} bytes"
+        )));
+    }
     let content = BASE64
         .decode(params.content_base64.trim())
         .map_err(|_| AgentBridgeError::InvalidParams("content_base64 is not valid base64".to_owned()))?;
@@ -357,18 +368,19 @@ async fn run_write(
     }
 
     let tmp_dir = begin_upload(runner).await?;
-    let committed = stage_and_commit(runner, &tmp_dir, &path, &content, &params.expectation).await;
-    if committed.is_err() {
-        // The commit script removes the directory itself, so this only matters when the upload
-        // failed before it.
-        if let Err(err) = runner
-            .run(&cleanup_command(&tmp_dir), COMMAND_TIMEOUT)
-            .await
-        {
-            log::debug!("[Agent Bridge] could not remove the upload directory: {err}");
+    let committed = match stage_upload(runner, &tmp_dir, &content).await {
+        Ok(()) => commit_upload(runner, &tmp_dir, &path, &content, &params.expectation).await,
+        Err(error) => Err((error, true)),
+    };
+    let outcome = match committed {
+        Ok(outcome) => outcome,
+        Err((error, scratch_may_remain)) => {
+            if scratch_may_remain {
+                remove_upload_dir(runner, &tmp_dir).await;
+            }
+            return Err(error);
         }
-    }
-    let outcome = committed?;
+    };
 
     let expected_sha256 = sha256_hex(&content);
     if !outcome.sha256.is_empty() && outcome.sha256 != expected_sha256 {
@@ -398,13 +410,11 @@ async fn begin_upload(runner: &dyn CommandRunner) -> Result<RemoteTmpDir, AgentB
     Ok(validate_tmp_dir(&String::from_utf8_lossy(&output.stdout))?)
 }
 
-async fn stage_and_commit(
+async fn stage_upload(
     runner: &dyn CommandRunner,
     tmp_dir: &RemoteTmpDir,
-    path: &str,
     content: &[u8],
-    expectation: &WriteExpectation,
-) -> Result<super::script::WriteOutcome, AgentBridgeError> {
+) -> Result<(), AgentBridgeError> {
     let mut chunks = upload_chunk_commands(tmp_dir, content);
     if chunks.is_empty() {
         // An empty file has no chunks, but the commit script still expects the payload to exist.
@@ -417,7 +427,18 @@ async fn stage_and_commit(
         let output = runner.run(chunk, COMMAND_TIMEOUT).await?;
         ensure_success(&output)?;
     }
+    Ok(())
+}
 
+/// Runs the commit script. On failure the flag says whether the upload directory may still be on
+/// the server: the script removes it itself whenever it gets to report an error.
+async fn commit_upload(
+    runner: &dyn CommandRunner,
+    tmp_dir: &RemoteTmpDir,
+    path: &str,
+    content: &[u8],
+    expectation: &WriteExpectation,
+) -> Result<WriteOutcome, (AgentBridgeError, bool)> {
     let nonce = new_nonce();
     let script = write_commit_script(
         &nonce,
@@ -429,8 +450,35 @@ async fn stage_and_commit(
     );
     let output = runner
         .run(&wrap_for_any_shell(&script), COMMAND_TIMEOUT)
-        .await?;
-    parse_write_output(&nonce, &output.stdout, &output.stderr)
+        .await
+        .map_err(|error| (error, true))?;
+    parse_write_output(&nonce, &output.stdout, &output.stderr).map_err(|error| {
+        let scratch_may_remain = match error {
+            AgentBridgeError::UnexpectedOutput(_) => true,
+            AgentBridgeError::NotRemoteSession
+            | AgentBridgeError::UnsupportedShell
+            | AgentBridgeError::NotAttached { .. }
+            | AgentBridgeError::AttachmentExpired
+            | AgentBridgeError::ReadOnlyAttachment
+            | AgentBridgeError::SessionBusy
+            | AgentBridgeError::Timeout { .. }
+            | AgentBridgeError::InvalidParams(_)
+            | AgentBridgeError::Conflict(_)
+            | AgentBridgeError::RemoteFailed(_)
+            | AgentBridgeError::Executor(_)
+            | AgentBridgeError::Io(_) => false,
+        };
+        (error, scratch_may_remain)
+    })
+}
+
+async fn remove_upload_dir(runner: &dyn CommandRunner, tmp_dir: &RemoteTmpDir) {
+    if let Err(err) = runner
+        .run(&cleanup_command(tmp_dir), COMMAND_TIMEOUT)
+        .await
+    {
+        log::debug!("[Agent Bridge] could not remove the upload directory: {err}");
+    }
 }
 
 /// For a plain command whose failure is the only thing its output says.
@@ -510,7 +558,25 @@ impl<'a> Audit<'a> {
         }
     }
 
-    /// Writes the record. A failure to audit is logged and does not fail the request.
+    /// Records that the request is about to run. Without a trace nothing runs as root, so a log
+    /// that cannot be written refuses the request.
+    fn record_start(&mut self) -> Result<(), AgentBridgeError> {
+        let Some(dir) = &self.target.audit_dir else {
+            return Ok(());
+        };
+        let started = AuditRecord {
+            result: AuditOutcome::Started,
+            ..self.record.clone()
+        };
+        audit::append(dir, &started).map_err(|err| {
+            AgentBridgeError::Io(format!(
+                "The audit log cannot be written, so the request was not run: {err}"
+            ))
+        })
+    }
+
+    /// Writes the closing record. Failing to write it is logged and does not fail the request,
+    /// which has already run.
     fn finish(mut self, outcome: Result<Details, AgentBridgeError>) {
         self.record.duration_ms =
             u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);

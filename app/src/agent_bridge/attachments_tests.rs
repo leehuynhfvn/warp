@@ -20,9 +20,8 @@ fn check(
     needed: Access,
     now: Instant,
 ) -> Result<Access, AgentBridgeError> {
-    attachments
-        .check(session(id), needed, "alice", "prod-2", now)
-        .map(|attachment| attachment.status(now).access)
+    attachments.check(session(id), needed, "alice", "prod-2", now)?;
+    Ok(attachments.status(session(id), now).expect("a checked session is attached").access)
 }
 
 #[test]

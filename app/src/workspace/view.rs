@@ -161,7 +161,6 @@ use super::util::{
 };
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
@@ -171,6 +170,7 @@ use crate::agent_bridge::{
     revoked_all_message as agent_bridge_revoked_all_message,
     revoked_message as agent_bridge_revoked_message, setup_command as agent_bridge_setup_command,
 };
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::agent::CancellationReason;
 use crate::ai::agent::api::ServerConversationToken;
 #[cfg(not(target_family = "wasm"))]

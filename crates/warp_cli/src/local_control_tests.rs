@@ -1330,3 +1330,13 @@ fn a_write_result_names_the_backup_only_when_there_is_one() {
     assert!(text.starts_with("Created /etc/app.conf"), "{text}");
     assert!(!text.contains("saved in"), "{text}");
 }
+
+#[test]
+fn server_output_cannot_carry_terminal_escape_sequences_to_the_operator() {
+    use remote::terminal_safe;
+    assert_eq!(
+        terminal_safe("ok\u{1b}[31m red\u{1b}]0;title\u{7}\ttab\r\nline\u{0}"),
+        "ok[31m red]0;title\ttab\r\nline"
+    );
+    assert_eq!(terminal_safe("ünïcode ✓"), "ünïcode ✓");
+}

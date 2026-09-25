@@ -32,6 +32,12 @@ const SESSIONS_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const MAX_EXIT_CODE: i32 = 255;
 
+/// Largest file `write` sends, matching what the app accepts.
+const MAX_WRITE_BYTES: u64 = 512 * 1024;
+
+/// Exit code of `read` for a file that does not exist.
+const EXIT_NOT_FOUND: u8 = 1;
+
 /// Commands that act on a remote session an agent may use.
 ///
 /// The session has to be allowed first, from the Warp Command Palette in its pane: "Agent Bridge:
@@ -175,6 +181,13 @@ fn run_read(args: &RemoteReadArgs, output_format: OutputFormat) -> Result<u8, Co
     )?;
     let result: RemoteFileReadResult = decode(data.clone(), "file content")?;
     let content = match result {
+        RemoteFileReadResult::NotFound { path, .. } => {
+            return print_result(&data, output_format, || {
+                eprintln!("error: {path} does not exist on the server");
+                Ok(())
+            })
+            .map(|()| EXIT_NOT_FOUND);
+        }
         RemoteFileReadResult::Ok { content_base64, .. } => {
             BASE64.decode(content_base64).map_err(|err| {
                 ControlError::with_details(
@@ -184,18 +197,29 @@ fn run_read(args: &RemoteReadArgs, output_format: OutputFormat) -> Result<u8, Co
                 )
             })?
         }
-        RemoteFileReadResult::NotFound { path, .. } => {
-            return Err(ControlError::new(
-                ErrorCode::RemoteOperationFailed,
-                format!("{path} does not exist on the server"),
-            ));
-        }
     };
     print_result(&data, output_format, || write_stdout(&content))?;
     Ok(EXIT_SUCCESS)
 }
 
 fn run_write(args: RemoteWriteArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
+    let unreadable = |err: std::io::Error| {
+        ControlError::with_details(
+            ErrorCode::InvalidParams,
+            format!("cannot read {}", args.from.display()),
+            err.to_string(),
+        )
+    };
+    let size = std::fs::metadata(&args.from).map_err(unreadable)?.len();
+    if size > MAX_WRITE_BYTES {
+        return Err(ControlError::new(
+            ErrorCode::InvalidParams,
+            format!(
+                "{} is {size} bytes; at most {MAX_WRITE_BYTES} can be written in one go",
+                args.from.display()
+            ),
+        ));
+    }
     let content = std::fs::read(&args.from).map_err(|err| {
         ControlError::with_details(
             ErrorCode::InvalidParams,
@@ -273,8 +297,8 @@ fn write_stdout(bytes: &[u8]) -> Result<(), ControlError> {
 }
 
 fn print_exec_output(result: &RemoteExecResult) {
-    print!("{}", result.stdout.text);
-    eprint!("{}", result.stderr.text);
+    print!("{}", terminal_safe(&result.stdout.text));
+    eprint!("{}", terminal_safe(&result.stderr.text));
     for (name, stream) in [("stdout", &result.stdout), ("stderr", &result.stderr)] {
         if stream.truncated {
             eprintln!(
@@ -286,6 +310,14 @@ fn print_exec_output(result: &RemoteExecResult) {
     if result.timed_out {
         eprintln!("warpctrl: the command timed out and was stopped");
     }
+}
+
+/// `text` without the characters that a terminal would obey (escape sequences), so that what a
+/// server prints cannot rewrite the operator's screen. Tabs, newlines and carriage returns stay.
+pub(super) fn terminal_safe(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+        .collect()
 }
 
 /// The exit code of the command, so that scripts can use `warpctrl remote exec` like `ssh`.
