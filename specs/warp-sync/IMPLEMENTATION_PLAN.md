@@ -530,6 +530,115 @@ huỷ khi shell đang chạy lệnh của user (`pty_controller.rs:265-271`) →
 kiểm tra xung đột + backup, chỉ bỏ dialog; mặc định tắt, có chỉ báo "Live sync" rõ ràng; chỉ upload file
 đã đổi (hiện upload đóng gói cả path).
 
+### Phase 7 — Điều khiển Warp Sync từ VS Code (user yêu cầu 2026-09-25)
+
+Mục tiêu: Download / Upload / Compare ngay trong VS Code (chuột phải, nút trên Source Control), xác
+nhận upload bằng modal của VS Code, **không** cần chuyển sang Warp. Lệnh vẫn chạy qua session Warpified
+đang mở trong Warp (kênh duy nhất có quyền root sau `sudo -i`, xem D1).
+
+**Điều kiện bắt đầu (⛔ CHECKPOINT C, user):** user đã test tay mục 13–19 của checklist (Phase 5–6).
+Chưa test → agent **dừng và hỏi**, không bắt đầu Phase 7.
+
+**Kênh = local control có sẵn (`warpctrl`)**, không dùng URI scheme (không xác thực, trang web nào cũng
+gọi được). Đã kiểm chứng trong code:
+- `warpctrl` là chính binary Warp chạy với `--warpctrl` (`app/src/lib.rs::run`,
+  `warp_cli::local_control::ControlArgs::from_control_mode_env`). Build OSS cần Cargo feature
+  `warp_control_cli` (`app/Cargo.toml`, `app/src/features.rs:466`) → chạy
+  `./script/run --features warp_sync,warp_control_cli`; user phải bật **Settings → Scripting**.
+- Bảo mật: discovery record 0600 → Unix socket broker (kiểm UID) → bearer ngắn hạn, gắn instance, chỉ
+  cho **một** action → HTTP loopback từ chối `Origin` trình duyệt (`app/src/local_control/mod.rs`).
+- Action khai báo trong `define_action_catalog!` (`crates/local_control/src/catalog.rs`), params là struct
+  `#[serde(deny_unknown_fields)]` trong `crates/local_control/src/protocol.rs` + `ActionParameterSpec`
+  + `resolver.rs::parse_params`; dispatch bằng `match` exhaustive trong
+  `app/src/local_control/bridge.rs::handle_request` (hiện trả `ResponseEnvelope` **đồng bộ**).
+  CLI: `crates/warp_cli/src/local_control/{mod.rs,commands.rs}` (mẫu: `FileCommand::Open` →
+  `run_action_with_params`). Client: `crates/local_control/src/client.rs::send_request` dùng
+  `reqwest::blocking::Client::new()` → **timeout 30 s**.
+- Chọn session: `handlers/metadata.rs::session_list` / `select_pane_entries` / `select_session_entries`
+  (có `target.session`).
+
+**Task 7.1 — Bridge bất đồng bộ + client có timeout (hạ tầng dùng chung với Agent Bridge).** Làm đúng
+thiết kế mục 3.5 và Task 2.4 của `../warp-agent-bridge/specs/agent-bridge/IMPLEMENTATION_PLAN.md`:
+`BridgeResult { Ready(ResponseEnvelope), Pending { request_id, receiver: oneshot::Receiver<Result<Value, ControlError>> } }`;
+`handle_request` trả `BridgeResult`, mọi arm cũ bọc `Ready`; `mod.rs::handle_control_request` await
+`Pending` (`Err(Canceled)` → `BridgeUnavailable`); test cũ dùng helper `#[cfg(test)] expect_ready()`.
+Client: `send_request_with_timeout(instance, request, timeout)`, `send_request` gọi lại nó với hành vi cũ.
+Không thêm action nào ở task này. Verify: `cargo nextest run -p warp --lib -E 'test(/local_control::/)'`,
+`cargo nextest run -p local_control`, clippy. Commit riêng (để Agent Bridge rebase dùng lại).
+
+**Task 7.2 — Model: người yêu cầu là cửa sổ Warp hoặc client ngoài.** Trong `WarpSyncModel`, thay
+`window_id: WindowId` ở các `start_*` bằng `Requester { Window(WindowId), External(ExternalReply) }`
+(`ExternalReply` bọc `oneshot::Sender<Result<SyncReply, WarpSyncError>>`). Một helper `report(requester, …)`:
+`Window` → `ctx.emit(WarpSyncEvent::…)` như cũ; `External` → gửi `SyncReply` có kiểu (không dựng dialog).
+- Pending của client ngoài nằm ở map **riêng**, id là `Uuid` ngẫu nhiên (không phải `PendingId` tuần tự):
+  client ngoài không xác nhận được dialog đang mở trong Warp và ngược lại.
+- Pending ngoài hết hạn sau `EXTERNAL_PENDING_TTL` (10 phút) → tự huỷ, nhả khoá `(host, path)`.
+- Vẫn hiện toast "Warp Sync (VS Code): Uploading …" ở cửa sổ chứa session được dùng — lệnh được gõ vào
+  shell đó, user phải thấy.
+- `SyncReply`: `Downloaded { local_path, files, dirs, bytes, remote_user, skipped, baseline_warning }`,
+  `NeedsConfirmation { pending_id, kind: OverwriteLocalChanges { files } | Upload(UploadSummary) }`,
+  `Uploaded { …, backup_path }`, `Compared { differences, identical_files, diff_path, host_dir, server_copy_dir, remote_user }`,
+  `Unchanged { identical_files }`. Mọi chuỗi đến từ server đi qua `printable`.
+- Test: model_tests cho định tuyến `Window`/`External`, TTL, id riêng.
+
+**Task 7.3 — Action `sync.*` + handler `app/src/local_control/handlers/sync.rs`.** Catalog (group mới,
+`TargetScope::File`), tất cả trả `Pending` (7.1), chỉ khi `FeatureFlag::WarpSync` bật (tắt → `UnsupportedAction`):
+
+| Action | Params | Kết quả |
+|---|---|---|
+| `sync.status` | `{ path? }` | `mirror_root`, và nếu có `path`: `host_key`, `remote_path`, các session khớp (`session_id`, hostname, tab) |
+| `sync.download` | `{ path }` | `Downloaded` hoặc `NeedsConfirmation(OverwriteLocalChanges)` |
+| `sync.upload.prepare` | `{ path }` | `NeedsConfirmation(Upload)` (luôn — upload luôn phải xác nhận) |
+| `sync.confirm` | `{ pending_id }` | `Downloaded` / `Uploaded` |
+| `sync.cancel` | `{ pending_id }` | ack |
+| `sync.compare` | `{ path }` | `Compared` hoặc `Unchanged` |
+
+- `path` = **đường dẫn local tuyệt đối** trong mirror. Handler: `canonicalize` (từ chối symlink thoát
+  ra ngoài), phải nằm dưới `SyncConfig.mirror_root`, không nằm trong `.warp-sync/`; thành phần đầu =
+  thư mục host (`host_dir_name`), phần còn lại → remote path qua `normalize_remote_path` (nên `.git` bị
+  từ chối). Path chưa tồn tại local (download lần đầu một path mới) → chấp nhận nếu cha nằm trong mirror.
+- Chọn session: `target.session` nếu có; không thì các session remote có `host_key(hostname) == host_dir_name`
+  hoặc `host_dir_name` bắt đầu bằng `host_key(hostname) + "-"` (mirror có hậu tố machine-id, D11). Đúng 1 →
+  dùng; nhiều → ưu tiên session active của cửa sổ đang focus nếu nằm trong số đó, không thì lỗi
+  `AmbiguousSession` kèm danh sách; 0 → lỗi "Mở session tới <host> trong Warp".
+- An toàn máy: thêm `expected_host_key: Option<String>` vào `DownloadRequest`/`UploadRequest`/`CompareRequest`;
+  sau `resolve_host_key` nếu khác → `WarpSyncError::Manifest("the mirror belongs to another machine")`.
+  Không bao giờ upload file mirror của máy A qua session của máy B.
+- `ErrorCode` mới cho lỗi Warp Sync (hoặc map vào code sẵn có) — message = `WarpSyncError` Display.
+- Test: map path → (host, remote) (trong/ngoài mirror, symlink thoát, `.warp-sync`, `.git`), chọn session
+  (0/1/nhiều/hậu tố machine-id), `expected_host_key` sai → lỗi.
+
+**Task 7.4 — CLI `warpctrl sync`.** `status [PATH]`, `download PATH`, `upload PATH` (in tóm tắt + `pending_id`,
+exit code 3 = cần xác nhận), `confirm ID`, `cancel ID`, `compare PATH`; `--output-format json` in nguyên
+`data`. Dùng `send_request_with_timeout` với `SYNC_CLIENT_TIMEOUT` = 10 phút (mỗi lệnh remote tối đa
+`COMMAND_TIMEOUT` 120 s, một thao tác chạy vài lệnh). Test parse trong `crates/warp_cli/src/local_control_tests.rs`.
+
+**⛔ CHECKPOINT D (user):** qua CLI trong terminal local: `status` → `download` → sửa file → `upload` →
+`confirm` → `compare`, với session `sudo -i` trên host thật; thử 2 tab cùng host (lỗi AmbiguousSession),
+đóng tab giữa chừng, shell đang chạy `top` (lỗi rõ ràng).
+
+**Task 7.5 — Extension VS Code `tools/vscode-warp-sync/`.** TypeScript, **không** dependency runtime (chỉ
+`@types/vscode`, `typescript` dev), build `npm run compile`, đóng gói `npx @vscode/vsce package` → `.vsix`
+cài tay. Gọi `warpctrl` bằng `child_process.execFile` (không shell), luôn `--output-format json`.
+- Setting `warpSync.command`: mảng argv, mặc định `["warpctrl"]`; dev: `["<repo>/target/debug/warp-oss", "--warpctrl"]`.
+- Kích hoạt khi workspace nằm dưới mirror root (hỏi `sync.status`).
+- Lệnh: Download / Upload / Compare with server — ở `explorer/context`, `editor/title/context`,
+  `scm/title` (Upload + Compare cho cả thư mục đang mở), Command Palette.
+- Upload: `sync.upload.prepare` → `showWarningMessage(modal)` với `user@host`, số file, **cảnh báo xung
+  đột** (changed/missing/already_exist), backup → Upload = `sync.confirm`, huỷ = `sync.cancel`.
+  Download có thay đổi local → modal "Overwrite local changes?" tương tự.
+- Compare: mở `vscode.diff(serverCopyUri, mirrorUri, "server ↔ mirror: <path>")` cho từng file hai phía
+  (tối đa `MAX_EDITOR_DIFFS`), file một phía → mở report `.diff`.
+- Status bar: `$(cloud) root@draff3` hoặc `$(warning) no Warp session`; bấm → `sync.status`.
+- Tiến trình: `withProgress` (notification) trong khi chờ; lỗi → `showErrorMessage` với message từ Warp.
+- Test: logic thuần (dựng argv, parse JSON, dựng nội dung modal) bằng test runner của Node (`node --test`),
+  không cần chạy VS Code.
+
+**Task 7.6 — Review + format.** `code-reviewer` + `security-reviewer` (trọng tâm: map path, chọn session,
+tách pending ngoài/trong, extension không truyền chuỗi qua shell). Clippy, `./script/format`, commit.
+
+**⛔ CHECKPOINT E (user):** checklist mục 20–25.
+
 ---
 
 ## 5. Checklist test tay (cho người dùng)
@@ -580,6 +689,18 @@ Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Co
     palette nhập `/etc/.git` → lỗi "Git metadata (`.git`) is not synced".
 19. Máy không có `git` (hoặc tạm đổi PATH) → download/upload vẫn thành công, không có baseline, không báo lỗi.
 
+Phase 7 (VS Code điều khiển Warp) — chạy `./script/run --features warp_sync,warp_control_cli`, bật
+Settings → Scripting, cài `.vsix` từ `tools/vscode-warp-sync/`, đặt `warpSync.command`:
+20. Mở `~/.warp/mirrors/<host>` trong VS Code khi Warp có tab `sudo -i` tới host → status bar `root@<host>`.
+    Đóng tab → status bar báo không có session.
+21. Chuột phải file trong mirror → Upload → modal VS Code hiện `root@<host>`, số file, backup → Upload →
+    file trên server đổi, Warp hiện toast ở đúng cửa sổ chứa session. Cancel → không lệnh nào chạy.
+22. Sửa file trên server rồi Upload từ VS Code → modal có cảnh báo "changed on the server".
+23. Compare từ nút trên Source Control → tab diff server ↔ mirror mở trong VS Code.
+24. Hai tab Warp cùng host → lỗi nêu rõ phải chọn session; mirror của host khác tên (hậu tố machine-id)
+    không bao giờ được upload qua session của máy kia.
+25. Tắt Settings → Scripting → mọi lệnh trong VS Code báo lỗi local control bị tắt, không có gì chạy.
+
 ---
 
 ## 6. Rủi ro đã biết
@@ -613,6 +734,11 @@ Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Co
   (Phạm vi Phase 5 do user chọn: 4 mục trên; xong 2026-09-25, chờ user test tay. Các mục còn lại — symlink, lan truyền xoá, streaming qua daemon, hover — không làm.)
 - [x] 6.1 Mở mirror bằng VS Code · [x] 6.2 Git baseline trong mirror · [x] 6.3 Compare bằng `code --diff` · 6.4 Live sync — chỉ ghi chú, chưa làm
   (Xong 2026-09-25, chờ user test tay mục 13–19 ở mục 5.)
+- [ ] ⛔ CHECKPOINT C (user) — test tay mục 13–19 (điều kiện bắt đầu Phase 7)
+- [ ] 7.1 Bridge async + client timeout · [ ] 7.2 Model `Requester` · [ ] 7.3 Action `sync.*` · [ ] 7.4 CLI `warpctrl sync`
+- [ ] ⛔ CHECKPOINT D (user) — CLI trên host thật
+- [ ] 7.5 Extension VS Code · [ ] 7.6 Review + format
+- [ ] ⛔ CHECKPOINT E (user) — checklist mục 20–25
 
 ### Quyết định
 
@@ -632,6 +758,7 @@ Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Co
 | D12 | 2026-09-25 | Editor ngoài = setting có sẵn "Choose an editor to open file links", chỉ họ VS Code (`code`/`code-insiders`/`cursor`/`windsurf`); không thêm setting | Cần CLI có `--diff`; tránh thêm setting + mục palette bật/tắt; người dùng editor khác giữ hành vi cũ |
 | D13 | 2026-09-25 | Baseline = git repo ở thư mục host, HEAD = trạng thái server lần sync cuối; không có git → bỏ qua; lỗi git chỉ là cảnh báo trong toast | Source Control của VS Code cho diff native, nhiều file, không cần viết UI; baseline là phụ, không được làm hỏng sync |
 | D14 | 2026-09-25 | Không mirror Git metadata: bỏ mọi thành phần mà một filesystem nào đó hiểu là `.git` (không phân biệt hoa/thường, NTFS `.git.`/`GIT~1`/`::$stream`, ký tự HFS+ bỏ qua); `info/attributes` vô hiệu hoá filter/diff/merge/text; repo `sharedRepository=0600` | Security review: `.GIT` trên macOS/Windows sẽ thành `.git` thật do server điều khiển → VS Code chạy hook/config của server; `.gitattributes` của server có thể gọi filter driver trong config của user |
+| D15 | 2026-09-25 | VS Code điều khiển Warp qua local control (`warpctrl`, action `sync.*`), không qua URI scheme; API hai bước (prepare → confirm/cancel) với xác nhận trong VS Code; pending ngoài dùng id `Uuid` và map riêng; hạ tầng bridge async (Task 2.4 của Agent Bridge) làm ở 7.1 | URI scheme không xác thực; giữ HTTP request trong lúc user suy nghĩ ở dialog Warp sẽ vượt timeout; client ngoài không được xác nhận dialog của Warp; làm hạ tầng chung một lần ở nơi ít rủi ro rồi Agent Bridge rebase dùng lại |
 
 ### Nhật ký
 
@@ -652,3 +779,4 @@ Phase 6 (VS Code) — trước tiên đặt *Settings → Code → Editor and Co
 - 2026-09-25 — 5.4 xong: `transfer::compare` tải bản mới của path vào staging (không đụng mirror/manifest), rồi `diff::compare_trees` so với mirror theo sha256 và gán nhãn theo manifest (`ChangedLocally` / `ChangedOnServer` / `ChangedOnBoth` / `NewOnServer` / `DeletedLocally` / `NewLocally` / `DeletedOnServer`; không có baseline → `ChangedUnknown`). Diff unified (crate `similar`, timeout 2 s/file; file > 1 MiB hoặc nhị phân chỉ liệt kê; cắt ở 8 MiB) ghi ra `<mirror_root>/.warp-sync/diffs/<host_key>/<path>.diff` (0600, ngoài mirror để không bị nhầm là file đã sync). `-` là server, `+` là mirror local. UI: dialog kết quả dùng lại `WarpSyncConfirmDialog` (`ConfirmKind::CompareResult`, nút "Open diff" mở file bằng code editor của Warp, nút Đóng; nút không đỏ vì không phá dữ liệu); không có khác biệt → toast thành công. Vào từ context menu "Warp Sync: Compare with local mirror" và palette `workspace:warp_sync_compare_cwd` / `workspace:warp_sync_compare_path` (prompt nhập path). `ConfirmRequest.id` được thay bằng `ConfirmKind { OverwriteLocalChanges{id}, Upload{id}, CompareResult{diff_path} }`. Compare yêu cầu path đã được download (không thì `NotMirrored`). 1043 test (warp_sync + settings_view + workspace + terminal::view) pass; clippy `-D warnings` sạch.
 - 2026-09-25 — Phase 5 review (`code-reviewer` + `security-reviewer`), đã sửa: mirror folder không được là `/`, `$HOME` hay thư mục cha của `$HOME` (host từ xa chọn tên thư mục con nên mirror root chung với dữ liệu user có thể bị thay); sentinel `no_hash_tool` chỉ nhận khi là **toàn bộ** output (tên file không giả được); tên file có ký tự điều khiển được escape (`printable`) trong dialog và file diff; `Timeout` của lệnh hash → `RemoteCheck::Unavailable` thay vì chặn upload; header report dùng hostname thật (`CompareRequest.hostname`); kết quả compare **không thay** dialog đang mở (tránh huỷ ngầm một upload đang chờ xác nhận) mà hiện toast kèm đường dẫn diff; lỗi trong path prompt tự xoá khi sửa; tham số `app`→`ctx`. Chưa sửa (ghi nhận): trang Settings hoàn giá trị không hợp lệ mà không báo lý do; file diff của các path khác nhau có thể trùng tên sau khi sanitize (ghi đè nhau); dòng hash của tên file có `\`/newline bị coi là "missing" (cảnh báo giả, hiếm); diff cũ còn lại khi lần compare sau không có khác biệt; mirror root có sẵn không bị kiểm quyền sở hữu/mode. 1152 test pass (một test `cloud_preferences_syncer` từng fail 1 lần do timing, chạy lại pass), clippy sạch, `./script/format` đã chạy.
 - 2026-09-25 — Phase 6.1–6.3 xong (6.4 chỉ ghi chú). `warp_sync/editor.rs` (`EditorCli`, `EditorRequest`, `invocations`, `launch`; CLI chạy trên background qua `WarpSyncModel::open_in_editor`, lỗi → toast `Editor`/`NoEditor`); toast download có link "Open in <editor>" (`MirrorLocation { host_dir, local_path, is_file }`); palette `workspace:warp_sync_open_mirror_in_editor`. `warp_sync/baseline.rs`: repo git ở `<mirror_root>/<host_key>`; download commit `--only` cả path (gồm file server đã xoá); upload chỉ commit file đã upload và có đổi (`git status` ∩ file trong archive, vì `status` không nhận danh sách file từ stdin); pathspec qua `--pathspec-from-file` NUL + `--literal-pathspecs`; hook/fsmonitor/ký commit bị tắt bằng `-c` trên dòng lệnh; bỏ env `GIT_*`; `configure()` chạy lại mỗi lần sync (tự sửa khi setup bị ngắt); khoá `BASELINE_LOCK`. Cần git ≥ 2.26. Compare giữ bản server ở `.warp-sync/compare/<host_key>/…` (file 0400); dialog "Open in <editor>" → tối đa `MAX_EDITOR_DIFFS` tab `code -r --diff` + report khi còn khác biệt chưa hiện; không còn khác biệt → xoá report và bản copy cũ (sửa nit "diff cũ còn lại" của Phase 5). Review (`code-reviewer` + `security-reviewer`), đã sửa: tên kiểu `.GIT` lọt qua trên filesystem không phân biệt hoa/thường (CRITICAL, xem D14), `.gitattributes` gọi filter driver (HIGH), git objects chưa 0600, setup repo bị ngắt không tự sửa, `stat()` trên UI thread. Chưa sửa (ghi nhận): các lệnh `code -r --diff` chạy nối tiếp có thể mở cửa sổ mới thay vì cửa sổ workspace khi VS Code chưa chạy (chưa kiểm chứng — mục 16 checklist); manifest cũ có mục `.git` (tải trước Phase 6) sẽ hiện trong "Missing from the local mirror" tới lần download lại. Test: warp_sync + workspace pass (474), clippy `-D warnings` sạch, `./script/format` đã chạy.
+- 2026-09-25 — Thêm Phase 7 (VS Code điều khiển Warp Sync qua `warpctrl`) vào plan theo yêu cầu user; chưa code. Thứ tự đã chốt với user: test tay Phase 5–6 (CHECKPOINT C) → Phase 7 → Agent Bridge (rebase lên `feature/warp-sync`, bỏ Task 2.4 và phần client timeout của 3.9 vì 7.1 đã làm).
