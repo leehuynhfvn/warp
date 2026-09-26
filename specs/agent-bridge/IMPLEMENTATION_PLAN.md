@@ -430,7 +430,7 @@ binary Warp đang chạy. Làm tay (máy không có `warp-channel-config` → bi
 Checkpoint A):
 
 ```bash
-claude mcp add --scope user warp-bridge -- /projects/github/warp/target/debug/warp-oss --warpctrl mcp
+claude mcp add --scope user warp-bridge -- /projects/github/warp-agent-bridge/target/debug/warp-oss --warpctrl mcp
 # tuỳ chọn: --instance <ID> (khi chạy nhiều Warp), --no-redact (không che secret)
 mkdir -p ~/.claude/skills/warp-remote-ops
 cp specs/agent-bridge/claude/SKILL.md ~/.claude/skills/warp-remote-ops/SKILL.md
@@ -789,3 +789,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-26 — Task 3.5: `warpctrl mcp [--instance ID] [--no-redact]` (`mcp/mod.rs`: `run_mcp`, `LocalControlTransport` tìm lại instance mỗi lần gọi qua `send_action`; `BrokenPipe` là thoát bình thường; lỗi của lệnh `mcp` luôn ra stderr kể cả khi `WARP_OUTPUT_FORMAT=json`). Test parse qua `--warpctrl mcp`. Smoke test trên `warp-oss` build với `--features warp_control_cli,warp_sync,agent_bridge`: `initialize`/`tools/list`/`tools/call` qua stdin, stdout đúng 4 dòng JSON-RPC, stderr rỗng (chưa có Warp chạy nên `list_sessions` trả `no_instance` — phần thật để Checkpoint B).
 - 2026-09-26 — Task 3.6: mục 3.11 + 7 cập nhật (lệnh `warp-oss`, `--instance`/`--no-redact`, cài skill); skill `specs/agent-bridge/claude/SKILL.md` (`warp-remote-ops`: chẩn đoán → đề xuất → sửa → kiểm cú pháp → reload → xác minh; bảng lệnh kiểm cú pháp; danh sách lệnh phải hỏi lại; giới hạn của tool).
 - 2026-09-26 — Task 3.7: review bằng rust-reviewer (không CRITICAL/HIGH). Sửa 2 mục MEDIUM: `write_file` gặp file nhị phân đã tồn tại báo thẳng "chỉ thay file văn bản" (trước đó kẹt ở "hãy read_file trước" mà `read_file` lại từ chối file nhị phân); `read_file` với `limit: 0` được nâng lên 1. Ghi chú đúng về redaction: `read_file`/`edit_file` che nội dung **trước** khi cắt trang/snippet (để bắt mẫu nhiều dòng như PEM và để kiểm `****`), rồi `call_tool` che lần nữa toàn bộ text trả về — che lặp là idempotent. `cargo test -p warp -p warp_cli --lib -- local_control`: 64 + 94 test pass (55 test `mcp`); clippy `-p warp -p local_control -p warp_cli --all-targets --tests -D warnings` sạch. **Chờ CHECKPOINT B** (checklist 5.B với Claude Code thật).
+- 2026-09-27 — Checkpoint B bước 1: `warp-bridge` chưa được đăng ký (lệnh chép từ palette chưa chạy). `./script/run` build vào `target/` của worktree, không theo `CARGO_TARGET_DIR` của mục 0.3 → mục 3.11 đổi sang `/projects/github/warp-agent-bridge/target/debug/warp-oss`. Sau khi `claude mcp add`, `claude mcp list` báo Connected; `list_sessions` qua stdio thấy `root@draff3` đã attach.
