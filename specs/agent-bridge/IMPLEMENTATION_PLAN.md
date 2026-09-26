@@ -133,7 +133,7 @@ Không cài gì lên server. Không đặt credential Anthropic lên server. Kh�
 
 ### 2.4 Ngoài phạm vi v1
 
-Chạy lệnh dạng block **hiển thị** trên terminal (như Agent Mode), lệnh tương tác (vim/top/sudo hỏi
+Chạy lệnh dạng block **hiển thị** trên terminal (như Agent Mode; làm ở Phase 5), lệnh tương tác (vim/top/sudo hỏi
 mật khẩu), PowerShell, Windows (broker dùng Unix socket), front-end TUI, pairing token, duyệt từng
 lệnh ở phía Warp, nhiều file/thư mục trong một lệnh write, stream output theo thời gian thực.
 
@@ -626,12 +626,183 @@ SSH/remote indicator) để làm theo. Không tìm được pattern rõ ràng �
 
 **⛔ CHECKPOINT C** — người dùng test `recent_output` + indicator.
 
-### Phase 5 — v2 (chỉ làm khi user yêu cầu)
+### Phase 5 — v2: chế độ visible + bản release
 
-Chế độ "visible": chạy lệnh thành block thật trên terminal (`Input::try_execute_command` /
-`TerminalView::execute_command_or_set_pending`) rồi đọc output block; duyệt từng lệnh phía Warp
-(dialog — đã tách thành phase **O2** của `specs/agent-ops/ROADMAP.md`, có plan riêng); pairing token; stream output; PowerShell; Windows; đóng gói `warpctrl` cho bản release;
-tích hợp với Warp Sync (mở file mirror trong editor rồi upload).
+> Lập plan 2026-09-27 (Claude Opus) sau khi đối chiếu từng hạng mục với
+> `specs/agent-ops/ROADMAP.md` (D27). Chỉ bắt đầu sau CHECKPOINT C và khi người dùng đã duyệt bảng
+> phân loại dưới đây.
+
+**Phân loại hạng mục (D27)**
+
+| Hạng mục | Loại | Làm ở đâu / lý do |
+|---|---|---|
+| Chế độ visible (lệnh chạy thành block thật, đọc output block) | **(a)** | Task 5.1–5.7. Roadmap không có phase nào làm việc này; G2 (session của agent "luôn hiển thị") và O2 (hộp thoại duyệt) sau này dùng lại được `remote.exec.visible`. |
+| Đóng gói `warpctrl` cho bản release | **(a)** | Task 5.8. Upstream đã có artifact `warpctrl` (`script/linux/bundle --artifact warpctrl`: binary musl + wrapper `exec warp-oss --warpctrl "$@"`), và `warp_cli` không gate `remote`/`mcp` theo cargo feature. Phần còn thiếu là của Bridge: lệnh setup chép từ palette dùng `current_exe()`, mà với AppImage (gói mặc định của `bundle`) đó là đường mount tạm `/tmp/.mount_*`, đổi mỗi lần mở app. |
+| Duyệt từng lệnh phía Warp | **(b)** O2 | Đã tách thành O2 từ 2026-09-25. |
+| Tích hợp Warp Sync (mở file mirror trong editor rồi upload) | **(b)** G4 | G4 của roadmap chính là việc này (`edit_file`/`write_file` qua mirror + commit Git + diff trong hộp thoại O2). D22 đã để sẵn chỗ chọn backend trong `mcp/tools.rs`. |
+| Pairing token | **(c)** hoãn, làm cùng O2 | Process nào cùng UID cũng đọc được token (file, `~/.claude.json`) và gọi được broker, nên token không chặn thêm được mối đe doạ ở mục 6. Giá trị thật của nó là **danh tính agent đã xác minh** (thay cho `agent` tự khai, D12) và revoke theo agent; người cần hai thứ đó là hộp thoại duyệt O2 và G2 (AO7: agent tự mở session chỉ sau O2 + pairing). Làm cùng O2 để hộp thoại ghép cặp và hộp thoại duyệt dùng chung UI. Đã ghi chéo vào O2 của roadmap. |
+| Stream output | **(c)** hoãn | Local control là một request/một response HTTP (`send_request_with_timeout`), tool MCP cũng trả kết quả một lần; stream phải đổi giao thức ở cả hai tầng. Nhu cầu "người thấy lệnh đang chạy" do chế độ visible giải quyết (output hiện live trong block); agent nhận ảnh chụp khi hết `timeout_secs` (`still_running`) và đọc kết quả cuối bằng `recent_output`. |
+| PowerShell | **(c)** hoãn | Mọi script trong `agent_bridge/script.rs` là POSIX sh; server mục tiêu là Linux (D10); không có máy để test. Chế độ visible về kỹ thuật không cần script, nhưng vẫn giữ `ops::ensure_supported` từ chối PowerShell cho tới khi có nhu cầu và có máy test. |
+| Windows (máy local) | **(c)** hoãn | Broker chỉ có trên unix: bản `#[cfg(not(unix))]` của `client.rs::request_credential_over_owner_ipc` luôn trả `LocalControlDisabled`. Cần một IPC xác thực chủ sở hữu trên Windows (named pipe + kiểm SID). Đó là việc của `local_control`, không riêng gì Bridge, và người dùng chạy Linux. |
+
+**Thứ tự đề xuất:** 5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6 → 5.7 (chế độ visible, từ protocol ra tới
+MCP) → 5.8 (bản release; độc lập, làm trước cũng được) → 5.9 review → 5.10 format → CHECKPOINT D.
+
+**Khảo sát code (2026-09-27).** Chế độ visible đi theo hai khuôn có sẵn:
+`ai/agent_sdk/driver/terminal.rs::execute_command` (gửi lệnh bằng
+`TerminalView::execute_command_or_set_pending`, lấy `active_block_id()` khi thấy
+`Event::ExecuteCommand`, chờ `Event::BlockCompleted`) và
+`ai/blocklist/action_model/execute/shell_command.rs` của Agent Mode (block gắn `AIAgentActionId`;
+lock `TerminalModel` sau khi block xong để copy output; hết giờ thì trả ảnh chụp
+`LongRunningCommandSnapshot`, có xét `is_alt_screen_active`).
+- `TerminalView::execute_command_or_set_pending` luôn `set_pending_command` rồi
+  `execute_pending_command`: shell đang bận thì lệnh **nằm chờ** trong ô input của user và tự chạy
+  khi block hiện tại xong. Không dùng cho Bridge (agent không biết lệnh chạy lúc nào, và lệnh chiếm ô
+  input của user).
+- `Input::try_execute_command` (nguồn `CommandExecutionSource::User`) trả `false` khi
+  `can_execute_command` là `No` (chưa bootstrap, đang có lệnh foreground, history không ghi được) và
+  hiện toast "Cannot run … (command already running)". Nguồn `QueuedCommand` (qua hàm riêng
+  `try_execute_command_with_options(command, true, ctx)`) chạy như lệnh user nhưng **giữ nguyên bản
+  nháp** đang gõ (`should_preserve_input`); ở session đang share thì tự đi nhánh
+  `SharedSession { preserve_input: true }`.
+- Lệnh luôn bắt đầu trong block active (`TerminalModel::start_command_execution` →
+  `BlockList::start_active_block`), nhưng việc này xảy ra khi PTY controller xử lý sự kiện
+  (`writeable_pty/pty_controller.rs`, nhánh `User | QueuedCommand`), nên không chắc đã xảy ra khi
+  `try_execute_…` trả về.
+- `can_execute_command` **vẫn cho chạy** khi block active là block in-band, và PTY controller khi đó
+  gọi `end_in_band_command_output` → một `remote.exec` ẩn đang chạy trong cùng session sẽ bị huỷ
+  (checklist 5.A.5). Vì vậy cần Task 5.2.
+- Đọc kết quả: `Block::{started, is_done, exit_code, pwd, command_to_string, output_grid}`,
+  `BlockList::{active_block_id, block_index_for_id, block_with_id, blocks}`, `OutputGrid::content_summary`
+  — `agent_bridge/recent.rs::capture` đã dùng phần lớn.
+
+**Task 5.1 — Protocol.** Trong `crates/local_control/src/`:
+- Action `remote.exec.visible` (group `remote`, status `Stub`, "Run a command as a visible block in an
+  attached remote session").
+- `RemoteExecVisibleParams { command, timeout_secs: Option<u32>, agent: Option<String> }`,
+  `deny_unknown_fields`. **Không** có `cwd`: lệnh chạy ở thư mục hiện tại của shell; muốn chỗ khác thì
+  agent tự `cd` (và thay đổi đó ở lại, D28).
+- `RemoteExecVisibleResult { #[serde(flatten)] session: RemoteSessionRef, command, cwd: Option<String>,
+  exit_code: Option<i32>, still_running: bool, alt_screen: bool, duration_ms: u64, output: String,
+  output_rows: u64, truncated: bool }` — `exit_code` là `None` khi `still_running`.
+- `ActionParameterSpec`/`ActionResultSpec`; resolver (`target.session` bắt buộc như `remote.exec`); arm
+  `UnsupportedAction` cho `Stub` trong `bridge.rs`; sửa các match exhaustive theo compiler (`warp_cli`
+  `output.rs`/`commands.rs`, …); tạm thêm action vào `STUB_ACTIONS` / `REMOTE_ACTIONS_WITHOUT_CLI`.
+Test: serde round-trip; `deny_unknown_fields` từ chối `cwd`; `exit_code: null` khi `still_running`.
+Verify: test `local_control` + `cargo check -p warp -p warp_cli` (kèm `-p warp`, D14).
+
+**Task 5.2 — Không để lệnh visible và lệnh ẩn chạy chồng nhau** (`attachments.rs` hoặc struct riêng
+trong `model.rs`). Đếm thao tác đang chạy theo `SessionId`:
+`begin(id, OperationKind::{Hidden, Visible}) -> Result<(), AgentBridgeError>` và `end(id, kind)`.
+`Visible` bị từ chối (`SessionBusy`) khi session có bất kỳ thao tác nào đang chạy; `Hidden` bị từ chối
+khi có `Visible` đang chạy; nhiều `Hidden` cùng lúc vẫn được (hàng đợi in-band nối tiếp chúng — checklist
+5.B.6 đọc 3 file song song). Bộ đếm độc lập với attachment: revoke/hết hạn giữa chừng không xoá nó, thao
+tác đang chạy vẫn `end`. `handlers/remote.rs::start` gọi `begin(Hidden)` sau `check_access` và `end`
+trong callback (cạnh `record_use`), kể cả khi lỗi. `output_recent` không tính (không chạm PTY). Xem D30.
+Test: các tổ hợp trên; `end` thừa không làm bộ đếm âm; detach giữa chừng.
+
+**Task 5.3 — `agent_bridge/visible.rs` (logic thuần) + tests.**
+- `validate(&RemoteExecVisibleParams)`: cùng quy tắc với `ops::validate_exec` trừ `cwd` — tách phần chung
+  thành `ops::validate_command(command, timeout_secs, agent)`.
+- `find_command_block(block_list, start: BlockIndex, session, command) -> Option<&Block>`: block đầu tiên
+  từ vị trí `start` (block active lúc gửi lệnh) trở đi có `session_id() == Some(session)`, `started()` và
+  `command_to_string().trim() == command.trim()`. So cả vị trí lẫn nội dung lệnh để không bao giờ nhận
+  nhầm output lệnh user gõ cùng lúc.
+- Tách `recent::capture_block(&Block) -> CapturedBlock` ra khỏi `recent::capture` (dùng chung) và dùng
+  lại `limit_bytes`; giới hạn `VISIBLE_OUTPUT_MAX_BYTES = 32 KiB` (bằng stdout + stderr của `exec`).
+- `result(target, captured, still_running, alt_screen, duration) -> RemoteExecVisibleResult`.
+Test với `TerminalModel` mock như `recent_tests.rs`: đúng block khi có block của session khác / block cũ
+trùng lệnh ở trước `start` / lệnh user khác chen vào; block chưa xong → `still_running`, `exit_code: None`;
+cắt byte không tách ký tự UTF-8.
+
+**Task 5.4 — Gửi lệnh trên main thread** (`terminal/input.rs`, `handlers/remote.rs::exec_visible`,
+arm trong `bridge.rs`).
+- `Input::try_execute_command_preserving_input(&mut self, command: &str, ctx) -> bool` (`pub(crate)`,
+  gọi `try_execute_command_with_options(command, true, ctx)`).
+- Handler theo thứ tự: `ensure_enabled` → parse + `visible::validate` → `resolve` (`SessionSnapshot` giữ
+  thêm `ViewHandle<TerminalView>`) → `ops::ensure_supported` → `check_access(Full)` → `begin(Visible)` →
+  `ctx.spawn` ghi audit `started` (**fail-closed**, như `ops::exec`, D20) → callback trên main thread:
+  1. Session active của terminal view phải còn là `SessionId` đã kiểm; khác → `StaleTarget`.
+  2. Lock model **một lần**: `active_block().is_active_and_long_running() &&
+     !active_block().is_in_band_command_block()` → `SessionBusy` (cùng điều kiện với
+     `can_execute_command`, nên không có toast); lấy `block_index_for_id(active_block_id())` làm `start`.
+     **Nhả lock.**
+  3. `terminal_view.input().update(.. try_execute_command_preserving_input ..)`; `false` →
+     `SessionBusy`.
+  4. `ctx.spawn` future chờ của Task 5.5.
+- Mọi nhánh lỗi sau `begin` đều `end(Visible)` và ghi audit kết thúc (best-effort, như bản ghi cuối của
+  `exec`).
+- Đổi status sang `Implemented`, gỡ khỏi `STUB_ACTIONS`; test handler qua HTTP handler như Task 2.5 (flag
+  tắt, thiếu session, params sai, session không tồn tại). Luồng có session thật để Checkpoint D.
+
+**Task 5.5 — Chờ block xong** (`visible.rs`, chạy trong `ctx.spawn` trên background executor).
+Mỗi `VISIBLE_POLL_INTERVAL` (200 ms): lock `terminal_model` **một lần**, `find_command_block`, nếu
+`is_done()` thì copy `CapturedBlock` rồi nhả lock và kết thúc. Không thấy block sau
+`VISIBLE_START_TIMEOUT` (10 s) → `Executor("the command did not start …")`. Hết `timeout_secs` (mặc định
+`EXEC_DEFAULT_TIMEOUT_SECS`, tối đa `EXEC_MAX_TIMEOUT_SECS`) → ảnh chụp với `still_running: true` và
+`alt_screen = model.is_alt_screen_active()`, **không** ngắt lệnh (D31). Block đã thấy rồi biến mất (user
+xoá blocklist) → `Executor`. Callback: `end(Visible)`, `record_use(id, true)`, audit kết thúc (exit code
+hoặc `still_running`, không ghi output), gửi kết quả. Poll thay vì subscribe sự kiện: D29.
+
+**Task 5.6 — CLI.** `warpctrl remote exec --visible` (clap `conflicts_with = "cwd"`) gửi
+`remote.exec.visible`; in output rồi một dòng trạng thái (`exit N` / `still running` / `still running
+(full-screen program)`); exit code của CLI = exit code lệnh, `still_running` → 124 như `timed_out` của
+`exec`. Test parse/render; gỡ action khỏi `REMOTE_ACTIONS_WITHOUT_CLI`.
+
+**Task 5.7 — Tool MCP `exec_visible`** (`mcp/tools.rs`, `mcp/format.rs`). Annotation như `exec` (không
+`readOnlyHint`); params `{session_id?, command, timeout_secs?}`; chọn session qua `resolve_session`
+(D22); text trả về đi qua `Redactor::to_model_text` ở `call_tool` như mọi tool. Mô tả tool + `INSTRUCTIONS`
++ skill `specs/agent-bridge/claude/SKILL.md` nói rõ:
+- dùng khi user muốn **thấy** lệnh chạy, khi cần giữ lại `cd`/`export`, hoặc khi lệnh có thể hỏi (user
+  trả lời ngay trong terminal); mặc định vẫn dùng `exec`;
+- khác `exec`: chạy trong shell thật của user (đổi cwd/biến môi trường của shell đó), vào history của
+  shell trên server, stdout + stderr gộp như trên màn hình, output bị che secret theo setting của user;
+- không chạy `exit`, `logout`, `exec …`, `su`, `sudo -i` (rời `sudo -i` là mất attach, D4);
+- `still_running` nghĩa là lệnh vẫn chạy trong terminal: báo user, xem lại sau bằng `recent_output`.
+Mục 3.11: **không** thêm `exec_visible` vào allowlist. Test với transport giả: render xong / còn chạy /
+full-screen; `SessionBusy` là `isError` với message gốc.
+
+**Task 5.8 — Bản release.**
+- `agent_bridge/messages.rs`: `setup_executable(current_exe: PathBuf, appimage: Option<PathBuf>) ->
+  PathBuf` ưu tiên đường dẫn trong biến `APPIMAGE` (runtime AppImage đặt biến này;
+  `autoupdate/linux.rs` đã đọc nó). Chỗ gọi trong `workspace/view.rs` truyền
+  `std::env::var_os("APPIMAGE")`. Test cả hai nhánh. Xem D32.
+- Mục 3.11 + 7: build bản dùng hằng ngày
+  `./script/linux/bundle --channel oss --features warp_control_cli,warp_sync,agent_bridge` (mặc định
+  gói AppImage, đổi bằng `--packages`); `warpctrl` độc lập
+  `./script/linux/bundle --channel oss --artifact warpctrl` (musl tĩnh + wrapper) rồi
+  `claude mcp add --scope user warp-bridge -- <dir>/warpctrl mcp`. Ghi rõ: cargo feature `agent_bridge`
+  bật flag qua `app/src/features.rs` bất kể channel; Settings > Scripting vẫn phải bật tay.
+- Thử build `--artifact warpctrl` một lần (script tự cấu hình toolchain musl). Không build được trên máy
+  này thì ghi nhật ký và để thành bước của checklist 5.C.
+
+**Task 5.9 — Tự review** bằng rust-reviewer + security-reviewer như Task 2.8 (lệnh visible có qua đủ
+attach `Full`, audit fail-closed, không có đường nào đẩy lệnh vào hàng pending, lock đúng bảng dưới) +
+test (`agent_bridge`, `local_control`, `terminal::input`, `terminal::view`; test fail khi chạy song song
+thì chạy lại riêng `--test-threads=1` trước khi kết luận) + clippy 3 package.
+
+**Task 5.10 — `./script/format`** đúng một lần, cuối cùng. Commit.
+
+**Lock `TerminalModel` trong Phase 5 (AGENTS.md)**
+
+| Chỗ | Quy tắc |
+|---|---|
+| Handler, trước khi gửi lệnh | Lock một lần để kiểm bận + lấy `start`, **nhả trước** khi gọi `Input` (`try_execute_…` tự lock nhiều lần bên trong; giữ lock lúc gọi là deadlock). |
+| Future chờ | Lock ngắn mỗi 200 ms trên background, không gọi hàm nào khác khi đang giữ, copy `CapturedBlock` rồi nhả (cùng mẫu `LrcActivityMonitor::sample` và `recent::capture`). |
+| Callback | Không lock; chỉ cập nhật `AgentBridgeModel`, audit và gửi kết quả. |
+| Sự kiện | Không subscribe `TerminalView`/`ModelEventDispatcher`, nên không có handler nào của Bridge chạy trong lúc luồng phát sự kiện đang giữ lock. |
+
+**Rủi ro khác của chế độ visible**
+
+| Rủi ro | Giảm thiểu |
+|---|---|
+| Lệnh đổi shell của user (`cd`, `export`, `exit` đóng luôn `sudo -i`) | Đó là mục đích của chế độ này (D28); tool/skill cấm `exit`/`su`/`sudo -i`; rời `sudo -i` → session đổi → tự mất attach (D4) |
+| Lệnh vào history shell trên server và history của Warp | Chấp nhận: minh bạch với user; ghi trong mô tả tool |
+| User gõ Enter đúng lúc agent gửi | `try_execute_…` trả `false` → `SessionBusy`; nếu lệnh user chạy trước, `find_command_block` không khớp nội dung → báo lỗi sau 10 s, không nhận nhầm output |
+| Lệnh treo chờ nhập / chương trình full-screen | Hết `timeout_secs` trả `still_running` + `alt_screen`, user thấy và xử lý trong terminal |
+| Session đang share | Nguồn `QueuedCommand` đi nhánh participant: viewer thấy lệnh của agent. Chấp nhận |
+
+**⛔ CHECKPOINT D** — người dùng chạy checklist 5.C.
 
 ---
 
@@ -682,6 +853,35 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 8. (D11/D12, gate O1 của roadmap) Thêm Bridge vào một MCP client khác (Codex hoặc Gemini CLI) →
    `list_sessions` + `exec -- id` thành công; audit log có `agent` khác nhau cho hai client.
 
+**C. Chế độ visible + bản release (Checkpoint D, Phase 5)**
+1. Attach full `root@vm`, gõ dở một lệnh trong ô input (không Enter).
+   `$W --warpctrl remote exec --visible --session <ID> -- 'id -un; hostname'` → block mới hiện trong
+   pane đúng lệnh đó, CLI in `root`, hostname và `exit 0`; bản nháp trong ô input vẫn còn nguyên.
+2. `exec --visible -- 'cd /etc'` rồi `exec --visible -- pwd` → `/etc`, prompt của pane cũng ở `/etc`
+   (ngược với `exec` ẩn ở 5.A.10).
+3. Pane đang chạy `sleep 30` → `exec --visible` trả `SessionBusy` ngay và không có lệnh nào nằm chờ
+   trong ô input. Đang `exec -- sleep 20` (ẩn) → `exec --visible` trả `SessionBusy`, lệnh ẩn vẫn chạy
+   xong. Ngược lại, đang `exec --visible -- sleep 20` → `exec` ẩn trả `SessionBusy`.
+4. `exec --visible --timeout 5 -- 'sleep 30; echo done'` → sau ~5 s CLI báo `still running` (exit
+   124), block vẫn chạy trong pane; khi xong, `$W --warpctrl remote recent --session <ID>` thấy `done`.
+5. `exec --visible --timeout 20 -- 'read -p "name? " x; echo hi $x'` → gõ tên trong pane trước 20 s →
+   kết quả có `hi <tên>`.
+6. `exec --visible --timeout 5 -- 'less /etc/passwd'` → `still running (full-screen program)`; bấm `q`
+   trong pane.
+7. `exec --visible -- 'seq 1 200000'` → output bị cắt giữa, `truncated`; terminal vẫn mượt.
+8. Attach read-only → `exec --visible` bị từ chối `InsufficientPermissions`; Revoke → `SessionNotAttached`.
+9. `~/.warp/agent-bridge/audit.jsonl` có bản ghi `remote.exec.visible` `started` + kết thúc, không có
+   output.
+10. Claude Code: "chạy `systemctl status nginx --no-pager` sao cho tôi thấy trên terminal" → Claude dùng
+    `exec_visible` và hỏi duyệt; `exec` thường vẫn là lựa chọn mặc định cho lệnh chẩn đoán.
+11. Bản release: `./script/linux/bundle --channel oss --features warp_control_cli,warp_sync,agent_bridge`,
+    mở AppImage, bật Settings > Scripting, palette "Agent Bridge: Copy Claude Code setup command" → lệnh
+    chứa đường dẫn file `.AppImage` (không phải `/tmp/.mount_*`). Đóng/mở lại AppImage, `claude mcp list`
+    vẫn báo `warp-bridge` Connected.
+12. `warpctrl` độc lập (`./script/linux/bundle --channel oss --artifact warpctrl`): `<dir>/warpctrl remote
+    sessions` chạy với Warp bản release đang mở; `claude mcp add --scope user warp-bridge -- <dir>/warpctrl
+    mcp` → Connected, `list_sessions` thấy session đã attach.
+
 ---
 
 ## 6. Rủi ro đã biết
@@ -726,6 +926,9 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] ⛔ CHECKPOINT B (user, 2026-09-27) — người dùng báo checklist 5.B đạt với Claude Code thật qua `warp-bridge` (MCP Connected, session `root@draff3`)
 - [x] 4.1 recent_output · [x] 4.2 indicator · [x] 4.3 format
 - [ ] ⛔ CHECKPOINT C (user)
+- [x] Plan Phase 5 (D27–D32) · [ ] người dùng duyệt bảng phân loại
+- [ ] 5.1 protocol · [ ] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
+- [ ] ⛔ CHECKPOINT D (user, checklist 5.C)
 
 ### Quyết định
 
@@ -757,6 +960,12 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 | D26 | 2026-09-27 | Indicator 4.2 theo khuôn **shared session** trên pane header của `TerminalView` (`terminal/view/pane_impl.rs`): `should_render_header` bật header khi session đang active của pane được attach (như khi đang share); ô indicator trước tiêu đề (chỗ icon `Sharing`) là icon `Agent` + nhãn "Agents · root" ("· read-only" khi chỉ đọc), màu vàng khi full access, màu chữ phụ khi read-only; nút Revoke bên phải bằng `icon_button_with_color` (icon `SlashCircle`, tooltip "Revoke agent access to root@host", `MouseStateHandle` tạo một lần trên view) dispatch `PaneHeaderAction::CustomAction(TerminalAction::RevokeAgentBridgeAccess)`; overflow menu có "Revoke agent access". `TerminalView` chỉ `observe` `AgentBridgeModel` khi `FeatureFlag::AgentBridge` bật (các app test không đăng ký singleton này, flag tắt mặc định trong test). Nhãn trung lập với agent (D11), không ghi "Claude Code" vì Warp không biết agent nào đang dùng | Skill `gui-ui-guidelines` chỉ yêu cầu dùng lại theme nút; shared session là indicator thường trực có sẵn trên đúng chỗ đó. Rủi ro chấp nhận: hết hạn 30 phút không phát sự kiện nên indicator có thể còn đến lần header vẽ lại kế tiếp (request của agent vẫn bị từ chối đúng lúc) |
 | D25 | 2026-09-27 | `remote.output.recent` chi tiết hơn mục 3.2/3.10: params có thêm `agent` (D12); kết quả `{session…, blocks: [{command, exit_code, cwd?, output, output_rows, truncated}]}` cũ trước mới — báo `output_rows` (số hàng terminal, tính cả dòng wrap) thay vì `total_bytes` vì output đã cắt theo hàng (200 đầu + 400 cuối qua `content_summary`) trước khi cắt 16 KiB (¼ đầu, ¾ cuối); chỉ lấy block **đã xong** của đúng `SessionId` đã attach (bỏ block local trước `ssh`, shell trước `sudo -i`) và qua `can_be_ai_context` (bỏ block ẩn/in-band/agent) như `ai_context_menu/blocks`; không ép che secret (theo setting của user, adapter MCP che lại); copy dưới **một** lần `model.lock()` trên main thread rồi nhả, audit (fail-closed) + trả kết quả trong `ctx.spawn`; app từ chối `count` ngoài 1..10 (`InvalidParams`), MCP kẹp về 1..10, CLI `warpctrl remote recent --count` kiểm bằng clap | Đếm byte thật của output bị cắt theo hàng sẽ phải đọc cả grid trong lúc giữ lock; attach là theo session nên output của session khác trong cùng pane không được lộ |
 | D24 | 2026-09-26 | Tool MCP chặt hơn mục 3.10: `edit_file` cũng bắt buộc đã `read_file` và sha trên server khớp bản đã đọc (như Edit của Claude Code); bản vừa ghi được coi là "đã đọc" nên sửa liên tiếp không cần đọc lại; `edit_file` từ chối `new_string` lặp lại chuỗi `****` chỉ có trong bản đã che (sẽ ghi sao đè lên secret); sau khi ghi, adapter so sha server trả về với sha của nội dung đã gửi; tên agent (`clientInfo.name`) được làm sạch thành `[A-Za-z0-9._-]{1,64}` thay vì để app trả `InvalidParams`; trait `ControlTransport::call` nhận `&mut self` | Checklist 5.B.5 (sửa tay giữa lúc Claude đọc và sửa) chỉ đạt được nếu `edit_file` so với bản đã đọc; client khác ("Gemini CLI") có dấu cách trong tên |
+| D27 | 2026-09-27 | Phân loại Phase 5 (bảng ở đầu Phase 5): **làm trong plan này** chế độ visible và bản release; **ghi chéo** duyệt từng lệnh → O2, tích hợp Warp Sync → G4; **hoãn** pairing token (làm cùng O2), stream output, PowerShell, Windows | Đối chiếu `specs/agent-ops/ROADMAP.md`; pairing không chặn được process cùng UID, giá trị của nó (danh tính agent) nằm ở hộp thoại O2 và G2 |
+| D28 | 2026-09-27 | Chế độ visible là action riêng `remote.exec.visible` (tool MCP `exec_visible`, CLI `exec --visible`), không phải cờ của `remote.exec`: chạy trong shell thật của user qua `Input` nguồn `QueuedCommand` (giữ bản nháp), không có `cwd`, `cd`/`export` ở lại; shell bận → `SessionBusy` ngay, **không** dùng `execute_command_or_set_pending` (sẽ xếp lệnh chờ trong ô input); kết quả là output của block (stdout + stderr gộp, che secret theo setting của user) | Ngữ nghĩa và kiểu kết quả khác hẳn `exec` ẩn; tool riêng thì permission prompt/allowlist của agent tách được; lệnh nằm chờ sẽ chạy vào lúc agent và user không kiểm soát |
+| D29 | 2026-09-27 | Chờ block xong bằng poll 200 ms trên background (mỗi nhịp lock ngắn một lần), không subscribe sự kiện của `TerminalView` | Handler của local control không có model riêng theo từng terminal để giữ subscription; poll gói trọn trong một future, cùng mẫu `LrcActivityMonitor::sample`; trễ thêm tối đa 200 ms là chấp nhận được so với độ trễ in-band |
+| D30 | 2026-09-27 | Mỗi session: lệnh visible chạy một mình; lệnh ẩn (`exec`/`read`/`write`) vẫn chạy song song với nhau nhưng không chạy cùng lệnh visible | `can_execute_command` cho gõ lệnh khi block in-band đang chạy và PTY controller khi đó huỷ lệnh in-band — thiếu chốt này thì `exec_visible` giết `exec` ẩn của một tool call song song |
+| D31 | 2026-09-27 | Hết `timeout_secs` thì trả `still_running` + ảnh chụp output, không gửi Ctrl-C | Lệnh hiện trước mắt user, user tự ngắt hoặc trả lời prompt; ngắt tự động dễ làm hỏng lệnh đang ghi dở; agent đọc kết quả cuối bằng `recent_output` |
+| D32 | 2026-09-27 | Lệnh setup trên palette ưu tiên `$APPIMAGE` rồi mới tới `current_exe()`; `warpctrl` độc lập dùng artifact có sẵn của upstream, không thêm script đóng gói | AppImage chạy từ mount tạm đổi mỗi lần mở nên đường `current_exe()` hỏng sau khi khởi động lại; `script/linux/bundle --artifact warpctrl` đã build được `warpctrl` gồm cả `remote`/`mcp` |
 
 ### Nhật ký
 
@@ -796,3 +1005,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-27 — Task 4.1: `remote.output.recent` (`Implemented`, `capabilities` = 95) qua `agent_bridge/recent.rs` (`block_count`, `capture`, `command_block`) + `ops::recent_output` (audit) + `handlers/remote.rs::output_recent`; CLI `warpctrl remote recent [--count N]`; tool MCP `recent_output` (`readOnlyHint`), `INSTRUCTIONS` và skill nhắc dùng nó khi user nói tới lỗi vừa gặp. Xem D25. Test: 9 test `recent` (mock `TerminalModel`: lọc theo session, bỏ block đang chạy, cắt byte không tách ký tự UTF-8), handler (params sai trước khi tìm session), CLI parse/render, 2 test MCP. `cargo test -p warp -p warp_cli --lib -- local_control` 64 + 98 pass, `agent_bridge` pass; clippy 3 package sạch.
 - 2026-09-27 — Task 4.2: indicator trên pane header (D26): `agent_bridge_access`, `render_agent_bridge_indicator`, `render_agent_bridge_revoke_button`, `revoke_agent_bridge_access` trong `pane_impl.rs`; `TerminalAction::RevokeAgentBridgeAccess`; chữ `indicator_label`/`revoke_tooltip` trong `agent_bridge/messages.rs` (+1 test, và kiểm không nhắc "claude"). Test `agent_bridge`/`terminal::view::`/`pane_group`: 585 pass, 8 fail khi chạy song song đều pass khi chạy lại `--test-threads=1` (4 test `terminal::view` đã fail như vậy trước thay đổi này; test `ops`/`script` dùng `sh` thật nhạy với tải). Clippy 3 package sạch. Hiển thị thật để Checkpoint C.
 - 2026-09-27 — Task 4.3: `./script/format` chạy một lần; chỉ đổi định dạng trong 31 file của feature (rustfmt các file viết tay từ Phase 1–4). Không chạy lại test/lint sau format (AGENTS.md). **Chờ CHECKPOINT C** (người dùng test `recent_output` + indicator).
+- 2026-09-27 — Lập plan Phase 5 (chưa code): đối chiếu roadmap, phân loại 7 hạng mục (D27); khảo sát `Input::try_execute_command*`, `TerminalView::execute_command_or_set_pending`, driver agent SDK, `ShellCommandExecutor`, `script/linux/bundle --artifact warpctrl`; viết Task 5.1–5.10, bảng lock, checklist 5.C, CHECKPOINT D (D28–D32). CHECKPOINT C **chưa tick**: prompt của phiên này còn để placeholder kết quả checklist C. Chờ người dùng báo kết quả C và duyệt bảng phân loại.

@@ -114,6 +114,12 @@ riêng. Phạm vi dự kiến:
   Approve / Deny / "Approve this exact command for this session". Không trả lời sau 5 phút → Deny.
 - Kill switch sẵn có (Revoke all) + trạng thái policy hiển thị trên chỉ báo attach (Task 4.2 Bridge).
 - Tuỳ chọn: bỏ allowlist `exec` khỏi permission Claude Code khi đã duyệt phía Warp (tránh duyệt hai lần).
+- **Pairing token** (chuyển từ Phase 5 của plan Bridge, D27 ở đó): ghép cặp từng MCP client với Warp để
+  `agent` trong hộp thoại duyệt/audit là danh tính đã xác minh (không phải tên tự khai, D12 của Bridge),
+  revoke được theo agent. Không chặn được process cùng UID (đọc được token), nên giá trị nằm ở danh tính,
+  là điều kiện của G2 (AO7). Hộp thoại ghép cặp dùng chung UI với hộp thoại duyệt.
+- Hộp thoại duyệt nên dùng lại `remote.exec.visible` của Bridge (Phase 5): lệnh đã duyệt chạy thành block
+  thật trước mắt operator.
 
 **Gate → O3/O4:** dùng hằng ngày ≥ 1 tuần trên host lab không có sự cố; mọi lệnh ghi đều đi qua
 hộp thoại hoặc allowlist; audit log đủ.
@@ -202,7 +208,8 @@ bấm Attach" — lớp an toàn chính của O1 — nên phải có policy + h�
   | Key + `sudo NOPASSWD` (có hoặc không `requiretty`) hoặc SSH thẳng root | **Kênh exec trực tiếp**: Warp chạy `ssh` (ControlMaster) cho từng lệnh, `-tt` khi `requiretty`; không qua PTY của user | Có |
   | Cần mật khẩu sudo, hoặc chỉ có mật khẩu | **Session PTY in-band** (Bridge hiện tại), Warp tự điền mật khẩu như G2 | Theo số session |
   | Server user đã tự mở tay | Attach thủ công như O1 | Không |
-- **G4 — Sửa file qua mirror Warp Sync.** `edit_file`/`write_file` của MCP: tải file vào mirror (nếu
+- **G4 — Sửa file qua mirror Warp Sync** (cũng là hạng mục "tích hợp Warp Sync" trong Phase 5 của plan
+  Bridge, chuyển sang đây theo D27 ở đó). `edit_file`/`write_file` của MCP: tải file vào mirror (nếu
   chưa có) → áp thay đổi trong mirror → upload bằng Warp Sync (backup trên server, kiểm xung đột) →
   commit Git trong mirror với message ghi `host`, `agent`, `request_id`, người duyệt. Hộp thoại duyệt
   O2 hiển thị **diff** (Sync đã có hộp thoại xác nhận). Rollback = `git revert` + upload. Lưu ý:
