@@ -23,20 +23,23 @@ const AGENT_NAME: &str = "warpctrl-cli";
 
 /// How long the client waits beyond the command's own timeout: the app waits a little longer than
 /// the timeout itself before it answers.
-const EXEC_CLIENT_MARGIN: Duration = Duration::from_secs(30);
+pub(super) const EXEC_CLIENT_MARGIN: Duration = Duration::from_secs(30);
 
 /// Reading and writing a file are several remote commands that only run while the shell is idle.
-const FILE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub(super) const FILE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-const SESSIONS_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const SESSIONS_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const MAX_EXIT_CODE: i32 = 255;
 
 /// Largest file `write` sends, matching what the app accepts.
-const MAX_WRITE_BYTES: u64 = 512 * 1024;
+pub(super) const MAX_WRITE_BYTES: u64 = 512 * 1024;
 
 /// Exit code of `read` for a file that does not exist.
 const EXIT_NOT_FOUND: u8 = 1;
+
+/// Seconds a command may run when the caller gives no timeout.
+pub(super) const EXEC_DEFAULT_TIMEOUT_SECS: u32 = 120;
 
 /// Commands that act on a remote session an agent may use.
 ///
@@ -75,7 +78,7 @@ pub struct RemoteExecArgs {
     pub cwd: Option<String>,
 
     /// Seconds before the command is stopped (1-600).
-    #[arg(long = "timeout", default_value_t = 120)]
+    #[arg(long = "timeout", default_value_t = EXEC_DEFAULT_TIMEOUT_SECS)]
     pub timeout_secs: u32,
 
     /// The command, joined with spaces and run by the server's shell.
@@ -255,7 +258,7 @@ fn run_write(args: RemoteWriteArgs, output_format: OutputFormat) -> Result<u8, C
 
 /// A result this CLI cannot read (for example from a Warp of another version) must not be taken
 /// for success.
-fn decode<T: serde::de::DeserializeOwned>(
+pub(super) fn decode<T: serde::de::DeserializeOwned>(
     data: serde_json::Value,
     what: &str,
 ) -> Result<T, ControlError> {

@@ -4,3 +4,4 @@ mod edit;
 mod format;
 mod jsonrpc;
 mod redact;
+mod tools;
