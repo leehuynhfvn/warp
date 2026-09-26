@@ -425,9 +425,19 @@ bản thật dùng discovery + `send_request_with_timeout`; test dùng fake.
 
 ### 3.11 Thiết lập Claude Code (đưa vào toast "Copy setup command" + mục 7)
 
+Cách nhanh: palette "Agent Bridge: Copy Claude Code setup command" chép đúng lệnh với đường dẫn
+binary Warp đang chạy. Làm tay (máy không có `warp-channel-config` → binary là `warp-oss`, xem nhật ký
+Checkpoint A):
+
 ```bash
-claude mcp add --scope user warp-bridge -- /projects/github/warp/target/debug/warp --warpctrl mcp
+claude mcp add --scope user warp-bridge -- /projects/github/warp/target/debug/warp-oss --warpctrl mcp
+# tuỳ chọn: --instance <ID> (khi chạy nhiều Warp), --no-redact (không che secret)
+mkdir -p ~/.claude/skills/warp-remote-ops
+cp specs/agent-bridge/claude/SKILL.md ~/.claude/skills/warp-remote-ops/SKILL.md
 ```
+
+Warp phải đang chạy, bật Settings > Scripting, có flag `AgentBridge` (bản Local/Dev, hoặc
+`./script/run --features warp_control_cli,warp_sync,agent_bridge`).
 
 `~/.claude/settings.json` — chỉ tự động cho phép tool chỉ-đọc; `exec`/`write_file`/`edit_file`
 luôn hỏi:
@@ -693,7 +703,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 ## 7. Hướng dẫn dùng hằng ngày (sau Phase 3)
 
 1. Một lần: palette "Agent Bridge: Copy Claude Code setup command" → dán vào terminal → thêm
-   allowlist chỉ-đọc (mục 3.11).
+   allowlist chỉ-đọc và (tuỳ chọn) skill `warp-remote-ops` (mục 3.11). `claude mcp list` phải báo
+   `warp-bridge` connected.
 2. Warp: `ssh user@host` → `sudo -i` → Warpify → palette "Agent Bridge: Allow agents to control
    this session" (hoặc bản read-only).
 3. Mở Claude Code (VSCode hoặc một pane Warp local bên cạnh): "trên server prod-1, …".
@@ -711,7 +722,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
 - [x] 2.1 Flag · [x] 2.2 ops · [x] 2.3 model · [x] 2.4 bridge async (bỏ qua, D13) · [x] 2.5 handlers · [x] 2.6 palette · [x] 2.7 CLI · [x] 2.8 review
 - [x] ⛔ CHECKPOINT A (user, 2026-09-25) — độ trễ đo được: `exec -- 'id -un; hostname'` 0,183 s tổng (CLI+HTTP+PTY), `duration_ms` 43; checklist 5.A bước 1–9 đều đúng kỳ vọng (root thật, `SessionBusy`, timeout 124, output 6,9 MB bị cắt, ghi file có backup giữ mode, read-only/revoke/exit, audit 0600, tắt Scripting)
-- [x] 3.1 deps · [x] 3.2 jsonrpc · [x] 3.3 edit/format/redact · [x] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
+- [x] 3.1 deps · [x] 3.2 jsonrpc · [x] 3.3 edit/format/redact · [x] 3.4 tools · [x] 3.5 `warpctrl mcp` · [x] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
 - [ ] 4.1 recent_output · [ ] 4.2 indicator · [ ] 4.3 format
 - [ ] ⛔ CHECKPOINT C (user)
@@ -775,3 +786,5 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-26 — Task 3.2: `local_control/mcp/jsonrpc.rs` (trait `McpHandler`, `serve`, `handle_message`; thương lượng version, notification/response không trả lời, `-32700/-32600/-32601/-32602`, lỗi tool là `isError`) + 11 test.
 - 2026-09-26 — Task 3.3: `mcp/edit.rs` (`apply_edit` trả `Edit{content, replacements, first_change}`), `mcp/format.rs` (`page` kiểu `cat -n`, cắt dòng 2000 ký tự, trang ≤ 80 KiB, `edit_snippet` ±3 dòng, render exec/sessions), `mcp/redact.rs` (D23). 25 test mới (36 test `mcp`).
 - 2026-09-26 — Task 3.4: `mcp/tools.rs` (`Tools<T: ControlTransport>` là `McpHandler`; 5 tool; `resolve_session` là chỗ duy nhất chọn session (D22); mọi text đi qua `Redactor::to_model_text` một lần ở `call_tool`; hằng số timeout/giới hạn dùng chung với `remote.rs`) + 17 test với transport giả (chọn session 0/1/2, exec, read che secret, binary, write tạo mới/chưa đọc/đã đổi/chứa secret/ghi đè, edit đúng `MustMatch` + sửa liên tiếp, 0/2 match, `****`, lỗi `SessionNotAttached`). Xem D24.
+- 2026-09-26 — Task 3.5: `warpctrl mcp [--instance ID] [--no-redact]` (`mcp/mod.rs`: `run_mcp`, `LocalControlTransport` tìm lại instance mỗi lần gọi qua `send_action`; `BrokenPipe` là thoát bình thường; lỗi của lệnh `mcp` luôn ra stderr kể cả khi `WARP_OUTPUT_FORMAT=json`). Test parse qua `--warpctrl mcp`. Smoke test trên `warp-oss` build với `--features warp_control_cli,warp_sync,agent_bridge`: `initialize`/`tools/list`/`tools/call` qua stdin, stdout đúng 4 dòng JSON-RPC, stderr rỗng (chưa có Warp chạy nên `list_sessions` trả `no_instance` — phần thật để Checkpoint B).
+- 2026-09-26 — Task 3.6: mục 3.11 + 7 cập nhật (lệnh `warp-oss`, `--instance`/`--no-redact`, cài skill); skill `specs/agent-bridge/claude/SKILL.md` (`warp-remote-ops`: chẩn đoán → đề xuất → sửa → kiểm cú pháp → reload → xác minh; bảng lệnh kiểm cú pháp; danh sách lệnh phải hỏi lại; giới hạn của tool).
