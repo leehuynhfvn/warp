@@ -18,15 +18,14 @@ use commands::{
     run_tab_command, run_theme_command, run_window_command,
 };
 use completions::generate_completions_to_stdout;
+pub use mcp::McpArgs;
 use mcp::run_mcp;
 use output::write_control_error;
 use remote::run_remote_command;
-use sync::{parse_pending_id, run_sync_command};
-
-pub use mcp::McpArgs;
 pub use remote::{
     RemoteCommand, RemoteExecArgs, RemoteReadArgs, RemoteRecentArgs, RemoteWriteArgs,
 };
+use sync::{parse_pending_id, run_sync_command};
 
 use crate::agent::OutputFormat;
 

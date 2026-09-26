@@ -125,10 +125,7 @@ pub(super) fn handle_message(line: &[u8], handler: &mut impl McpHandler) -> Opti
 }
 
 fn initialize(params: &Value, handler: &mut impl McpHandler) -> Value {
-    if let Some(name) = params
-        .pointer("/clientInfo/name")
-        .and_then(Value::as_str)
-    {
+    if let Some(name) = params.pointer("/clientInfo/name").and_then(Value::as_str) {
         handler.set_client_name(name);
     }
     let requested = params.get("protocolVersion").and_then(Value::as_str);

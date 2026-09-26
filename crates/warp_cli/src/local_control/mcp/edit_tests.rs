@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn replaces_the_single_occurrence() {
-    let edit = apply_edit("a\nworker_connections 768;\nb\n", "768", "2048", false)
-        .expect("edit applies");
+    let edit =
+        apply_edit("a\nworker_connections 768;\nb\n", "768", "2048", false).expect("edit applies");
 
     assert_eq!(edit.content, "a\nworker_connections 2048;\nb\n");
     assert_eq!(edit.replacements, 1);
@@ -30,8 +30,14 @@ fn a_missing_old_string_is_not_found() {
 
 #[test]
 fn empty_or_unchanged_edits_are_rejected() {
-    assert_eq!(apply_edit("abc", "", "e", false), Err(EditError::EmptyOldString));
-    assert_eq!(apply_edit("abc", "b", "b", false), Err(EditError::Unchanged));
+    assert_eq!(
+        apply_edit("abc", "", "e", false),
+        Err(EditError::EmptyOldString)
+    );
+    assert_eq!(
+        apply_edit("abc", "b", "b", false),
+        Err(EditError::Unchanged)
+    );
 }
 
 #[test]

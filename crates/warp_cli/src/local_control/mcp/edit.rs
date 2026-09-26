@@ -16,7 +16,9 @@ pub(super) enum EditError {
     Unchanged,
     NotFound,
     /// `old` occurs `count` times and only one replacement was asked for.
-    Ambiguous { count: usize },
+    Ambiguous {
+        count: usize,
+    },
 }
 
 /// Replaces `old` with `new` in `content`: exactly one occurrence, or every one with

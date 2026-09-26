@@ -28,8 +28,9 @@ use super::error::AgentBridgeError;
 use super::path::{normalize_path, validate_cwd};
 use super::recent::{CapturedBlock, command_block};
 use super::script::{
-    ExecOutput, ReadOutcome, Stream, WriteOutcome, backup_name, exec_script, new_nonce, parse_exec_output,
-    parse_read_output, parse_write_output, read_script, sha256_hex, write_commit_script,
+    ExecOutput, ReadOutcome, Stream, WriteOutcome, backup_name, exec_script, new_nonce,
+    parse_exec_output, parse_read_output, parse_write_output, read_script, sha256_hex,
+    write_commit_script,
 };
 use super::{
     EXEC_DEFAULT_TIMEOUT_SECS, EXEC_MAX_TIMEOUT_SECS, EXEC_TIMEOUT_GRACE, MAX_COMMAND_BYTES,
@@ -234,7 +235,9 @@ pub(crate) fn validate_agent(agent: Option<&str>) -> Result<(), AgentBridgeError
 fn validate_exec(params: &RemoteExecParams) -> Result<(), AgentBridgeError> {
     validate_agent(params.agent.as_deref())?;
     if params.command.trim().is_empty() {
-        return Err(AgentBridgeError::InvalidParams("command is empty".to_owned()));
+        return Err(AgentBridgeError::InvalidParams(
+            "command is empty".to_owned(),
+        ));
     }
     if params.command.len() > MAX_COMMAND_BYTES {
         return Err(AgentBridgeError::InvalidParams(format!(
@@ -285,12 +288,10 @@ async fn run_exec(
     let timeout_secs = params.timeout_secs.unwrap_or(EXEC_DEFAULT_TIMEOUT_SECS);
     // The session's own directory comes from the shell, so an odd one is dropped rather than
     // failing the command.
-    let cwd = params.cwd.clone().or_else(|| {
-        target
-            .cwd
-            .clone()
-            .filter(|cwd| validate_cwd(cwd).is_ok())
-    });
+    let cwd = params
+        .cwd
+        .clone()
+        .or_else(|| target.cwd.clone().filter(|cwd| validate_cwd(cwd).is_ok()));
 
     let nonce = new_nonce();
     let script = exec_script(&nonce, &params.command, cwd.as_deref(), timeout_secs);
@@ -377,9 +378,9 @@ async fn run_write(
             "content is larger than {WRITE_MAX_BYTES} bytes"
         )));
     }
-    let content = BASE64
-        .decode(params.content_base64.trim())
-        .map_err(|_| AgentBridgeError::InvalidParams("content_base64 is not valid base64".to_owned()))?;
+    let content = BASE64.decode(params.content_base64.trim()).map_err(|_| {
+        AgentBridgeError::InvalidParams("content_base64 is not valid base64".to_owned())
+    })?;
     if content.len() > WRITE_MAX_BYTES {
         return Err(AgentBridgeError::InvalidParams(format!(
             "content is larger than {WRITE_MAX_BYTES} bytes"
@@ -492,10 +493,7 @@ async fn commit_upload(
 }
 
 async fn remove_upload_dir(runner: &dyn CommandRunner, tmp_dir: &RemoteTmpDir) {
-    if let Err(err) = runner
-        .run(&cleanup_command(tmp_dir), COMMAND_TIMEOUT)
-        .await
-    {
+    if let Err(err) = runner.run(&cleanup_command(tmp_dir), COMMAND_TIMEOUT).await {
         log::debug!("[Agent Bridge] could not remove the upload directory: {err}");
     }
 }

@@ -6,14 +6,20 @@ fn normalize(input: &str) -> Result<String, AgentBridgeError> {
 
 #[test]
 fn absolute_paths_are_cleaned_up() {
-    assert_eq!(normalize("/etc//nginx/./nginx.conf").unwrap(), "/etc/nginx/nginx.conf");
+    assert_eq!(
+        normalize("/etc//nginx/./nginx.conf").unwrap(),
+        "/etc/nginx/nginx.conf"
+    );
     assert_eq!(normalize("  /etc/hosts  ").unwrap(), "/etc/hosts");
     assert_eq!(normalize("/etc/hosts/").unwrap(), "/etc/hosts");
 }
 
 #[test]
 fn relative_paths_are_taken_from_the_session_directory() {
-    assert_eq!(normalize("conf.d/site.conf").unwrap(), "/etc/nginx/conf.d/site.conf");
+    assert_eq!(
+        normalize("conf.d/site.conf").unwrap(),
+        "/etc/nginx/conf.d/site.conf"
+    );
     assert!(normalize_path("conf.d/site.conf", None).is_err());
     assert!(normalize_path("conf.d/site.conf", Some("relative")).is_err());
 }
@@ -45,7 +51,10 @@ fn unsafe_or_meaningless_paths_are_refused() {
 
 #[test]
 fn hidden_and_git_files_are_ordinary_files() {
-    assert_eq!(normalize("/srv/app/.git/config").unwrap(), "/srv/app/.git/config");
+    assert_eq!(
+        normalize("/srv/app/.git/config").unwrap(),
+        "/srv/app/.git/config"
+    );
     assert_eq!(normalize("/root/.bashrc").unwrap(), "/root/.bashrc");
 }
 

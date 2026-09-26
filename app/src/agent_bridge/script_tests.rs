@@ -104,7 +104,10 @@ fn backup_names_are_shell_safe_and_carry_the_time() {
     assert!(shape.is_match(&name), "{name}");
 
     let odd = backup_name("/etc/$(reboot)`x`", now);
-    assert!(odd.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)));
+    assert!(
+        odd.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+    );
     assert!(backup_name("/", now).starts_with("file."));
     assert_ne!(backup_name("/etc/a", now), backup_name("/etc/a", now));
 }
@@ -167,7 +170,8 @@ fn output_that_is_not_utf8_is_decoded_lossily_without_losing_the_frame() {
     let m = marker(NONCE);
     let mut report = format!("{m} stdout 3\n").into_bytes();
     report.extend_from_slice(b"a\xffb");
-    report.extend_from_slice(format!("\n{m} end\n{m} stderr 0\n\n{m} end\n{m} rc 0 1\n").as_bytes());
+    report
+        .extend_from_slice(format!("\n{m} end\n{m} stderr 0\n\n{m} end\n{m} rc 0 1\n").as_bytes());
 
     let parsed = parse_exec_output(NONCE, &report, b"").unwrap();
 
@@ -191,7 +195,10 @@ fn the_frame_is_found_on_stderr_when_stdout_has_none() {
 #[test]
 fn a_report_without_an_exit_status_is_an_error() {
     let output = exec_report("ok", "", "0 1");
-    let without_rc = output.rsplit_once(&format!("{} rc", marker(NONCE))).unwrap().0;
+    let without_rc = output
+        .rsplit_once(&format!("{} rc", marker(NONCE)))
+        .unwrap()
+        .0;
     assert!(matches!(
         parse_exec(without_rc),
         Err(AgentBridgeError::UnexpectedOutput(_))
@@ -243,7 +250,12 @@ fn a_read_report_decodes_the_file_and_hashes_it() {
         &format!("{m} size 5\n{m} status ok\n"),
         &format!("aGVs\nbG8=\n\n{m} end\n"),
     );
-    let ReadOutcome::Ok { bytes, sha256, user } = parse_read(&output).unwrap() else {
+    let ReadOutcome::Ok {
+        bytes,
+        sha256,
+        user,
+    } = parse_read(&output).unwrap()
+    else {
         panic!("expected content");
     };
     assert_eq!(bytes, b"hello");
@@ -255,7 +267,10 @@ fn a_read_report_decodes_the_file_and_hashes_it() {
 #[test]
 fn an_empty_file_reads_as_empty_content() {
     let m = marker(NONCE);
-    let output = read_report(&format!("{m} size 0\n{m} status ok\n"), &format!("\n{m} end\n"));
+    let output = read_report(
+        &format!("{m} size 0\n{m} status ok\n"),
+        &format!("\n{m} end\n"),
+    );
     let ReadOutcome::Ok { bytes, .. } = parse_read(&output).unwrap() else {
         panic!("expected content");
     };
@@ -272,8 +287,20 @@ fn a_missing_file_is_an_outcome_not_an_error() {
 
 #[test]
 fn read_status_failures_become_errors() {
-    for status in ["not_regular", "permission_denied", "missing_base64", "too_large"] {
-        let output = read_report(&format!("{}{}", frame("size 999999"), frame(&format!("status {status}"))), "");
+    for status in [
+        "not_regular",
+        "permission_denied",
+        "missing_base64",
+        "too_large",
+    ] {
+        let output = read_report(
+            &format!(
+                "{}{}",
+                frame("size 999999"),
+                frame(&format!("status {status}"))
+            ),
+            "",
+        );
         assert!(
             matches!(parse_read(&output), Err(AgentBridgeError::RemoteFailed(_))),
             "{status}"
@@ -297,7 +324,10 @@ fn a_permission_error_names_the_user() {
 fn a_file_that_grew_past_the_limit_is_refused_even_if_the_size_said_otherwise() {
     let m = marker(NONCE);
     let big = BASE64.encode(vec![b'a'; 2000]);
-    let output = read_report(&format!("{m} size 10\n{m} status ok\n"), &format!("{big}\n{m} end\n"));
+    let output = read_report(
+        &format!("{m} size 10\n{m} status ok\n"),
+        &format!("{big}\n{m} end\n"),
+    );
     assert!(matches!(
         parse_read(&output),
         Err(AgentBridgeError::RemoteFailed(_))
@@ -307,8 +337,14 @@ fn a_file_that_grew_past_the_limit_is_refused_even_if_the_size_said_otherwise() 
 #[test]
 fn a_file_that_changed_size_while_it_was_read_is_a_conflict() {
     let m = marker(NONCE);
-    let output = read_report(&format!("{m} size 10\n{m} status ok\n"), &format!("aGk=\n{m} end\n"));
-    assert!(matches!(parse_read(&output), Err(AgentBridgeError::Conflict(_))));
+    let output = read_report(
+        &format!("{m} size 10\n{m} status ok\n"),
+        &format!("aGk=\n{m} end\n"),
+    );
+    assert!(matches!(
+        parse_read(&output),
+        Err(AgentBridgeError::Conflict(_))
+    ));
 }
 
 #[test]
@@ -329,7 +365,12 @@ fn content_that_is_cut_short_or_not_base64_is_an_error() {
 
 #[test]
 fn a_new_file_report_says_it_was_created() {
-    let output = format!("{}{}{}", frame("created 1"), frame("sha256 abc"), frame("status ok"));
+    let output = format!(
+        "{}{}{}",
+        frame("created 1"),
+        frame("sha256 abc"),
+        frame("status ok")
+    );
     assert_eq!(
         parse_write(&output).unwrap(),
         WriteOutcome {
@@ -389,9 +430,16 @@ fn write_errors_distinguish_conflicts_from_failures() {
 
 #[test]
 fn a_failed_write_after_the_backup_points_at_the_backup() {
-    let output = format!("{}{}", frame("backup /root/.warp-agent/backups/x"), frame("error write_failed"));
+    let output = format!(
+        "{}{}",
+        frame("backup /root/.warp-agent/backups/x"),
+        frame("error write_failed")
+    );
     let error = parse_write(&output).unwrap_err();
-    assert!(error.to_string().contains("/root/.warp-agent/backups/x"), "{error}");
+    assert!(
+        error.to_string().contains("/root/.warp-agent/backups/x"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -425,7 +473,11 @@ mod with_sh {
         command.output().expect("sh is available")
     }
 
-    fn exec(command: &str, cwd: Option<&str>, timeout_secs: u32) -> Result<ExecOutput, AgentBridgeError> {
+    fn exec(
+        command: &str,
+        cwd: Option<&str>,
+        timeout_secs: u32,
+    ) -> Result<ExecOutput, AgentBridgeError> {
         let nonce = new_nonce();
         let script = exec_script(&nonce, command, cwd, timeout_secs);
         let output = run_sh(&wrap_for_any_shell(&script), None);
@@ -444,7 +496,9 @@ mod with_sh {
     #[test]
     fn exec_cuts_long_output_and_reports_its_size() {
         let output = exec("seq 1 200000", None, 60).unwrap();
-        let expected_total: u64 = (1..=200_000u64).map(|n| n.to_string().len() as u64 + 1).sum();
+        let expected_total: u64 = (1..=200_000u64)
+            .map(|n| n.to_string().len() as u64 + 1)
+            .sum();
         assert!(output.stdout.truncated);
         assert_eq!(output.stdout.total_bytes, expected_total);
         assert!(output.stdout.text.starts_with("1\n2\n"));
@@ -525,7 +579,10 @@ mod with_sh {
     #[test]
     fn read_reports_a_missing_file_a_directory_and_an_oversized_file() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(read(&dir.path().join("nope"), 1024).unwrap(), ReadOutcome::NotFound);
+        assert_eq!(
+            read(&dir.path().join("nope"), 1024).unwrap(),
+            ReadOutcome::NotFound
+        );
         assert!(matches!(
             read(dir.path(), 1024),
             Err(AgentBridgeError::RemoteFailed(message)) if message.contains("regular file")
@@ -556,7 +613,10 @@ mod with_sh {
 
     /// Stages `content` in a scratch directory the way `ops` does and returns it.
     fn stage(content: &[u8]) -> (tempfile::TempDir, RemoteTmpDir) {
-        let scratch = tempfile::Builder::new().prefix("warp-sync.").tempdir().unwrap();
+        let scratch = tempfile::Builder::new()
+            .prefix("warp-sync.")
+            .tempdir()
+            .unwrap();
         let dir = validate_tmp_dir(scratch.path().to_str().unwrap()).unwrap();
         for command in upload_chunk_commands(&dir, content) {
             assert!(run_sh(&command, None).status.success());
@@ -594,7 +654,13 @@ mod with_sh {
     fn must_not_exist_creates_a_new_file() {
         let (dir, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let path = dir.path().join("new.conf");
-        let outcome = write(&path, b"fresh\n", &WriteExpectation::MustNotExist, home.path()).unwrap();
+        let outcome = write(
+            &path,
+            b"fresh\n",
+            &WriteExpectation::MustNotExist,
+            home.path(),
+        )
+        .unwrap();
         assert!(outcome.created);
         assert_eq!(outcome.backup_path, None);
         assert_eq!(outcome.sha256, sha256_hex(b"fresh\n"));
@@ -607,7 +673,12 @@ mod with_sh {
         let existing = dir.path().join("there");
         fs::write(&existing, "keep").unwrap();
         assert!(matches!(
-            write(&existing, b"x", &WriteExpectation::MustNotExist, home.path()),
+            write(
+                &existing,
+                b"x",
+                &WriteExpectation::MustNotExist,
+                home.path()
+            ),
             Err(AgentBridgeError::Conflict(_))
         ));
         assert_eq!(fs::read_to_string(&existing).unwrap(), "keep");
@@ -644,14 +715,21 @@ mod with_sh {
 
         assert!(!outcome.created);
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
         assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
         assert_eq!(outcome.sha256, sha256_hex(b"new\n"));
         let backup = outcome.backup_path.expect("an overwrite is backed up");
         assert_eq!(fs::read_to_string(&backup).unwrap(), "old\n");
         assert!(backup.starts_with(home.path().join(".warp-agent/backups").to_str().unwrap()));
         assert_eq!(
-            fs::metadata(home.path().join(".warp-agent/backups")).unwrap().permissions().mode() & 0o777,
+            fs::metadata(home.path().join(".warp-agent/backups"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o700
         );
     }
@@ -663,7 +741,10 @@ mod with_sh {
         fs::write(&path, "changed by someone else\n").unwrap();
         let result = write(&path, b"new\n", &must_match(b"what I read\n"), home.path());
         assert!(matches!(result, Err(AgentBridgeError::Conflict(_))));
-        assert_eq!(fs::read_to_string(&path).unwrap(), "changed by someone else\n");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "changed by someone else\n"
+        );
         assert!(!home.path().join(".warp-agent").exists());
     }
 
@@ -671,7 +752,12 @@ mod with_sh {
     fn must_match_needs_an_existing_regular_file() {
         let (dir, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         assert!(matches!(
-            write(&dir.path().join("gone"), b"x", &must_match(b"y"), home.path()),
+            write(
+                &dir.path().join("gone"),
+                b"x",
+                &must_match(b"y"),
+                home.path()
+            ),
             Err(AgentBridgeError::RemoteFailed(_))
         ));
         assert!(matches!(

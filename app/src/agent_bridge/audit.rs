@@ -85,7 +85,9 @@ fn append_with_limit(
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options.open(&path).map_err(io_error("open the audit log"))?;
+    let mut file = options
+        .open(&path)
+        .map_err(io_error("open the audit log"))?;
     file.write_all(line.as_bytes())
         .map_err(io_error("write to the audit log"))
 }

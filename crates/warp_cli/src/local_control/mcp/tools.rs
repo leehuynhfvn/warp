@@ -235,12 +235,9 @@ impl<T: ControlTransport> Tools<T> {
     fn edit_file(&mut self, args: Value) -> Result<String, ToolError> {
         let args: EditFileArgs = parse_args("edit_file", args)?;
         let session_id = self.resolve_session(args.session_id)?;
-        let file = self.read_raw(&session_id, &args.path)?.ok_or_else(|| {
-            format!(
-                "{} does not exist; create it with write_file.",
-                args.path
-            )
-        })?;
+        let file = self
+            .read_raw(&session_id, &args.path)?
+            .ok_or_else(|| format!("{} does not exist; create it with write_file.", args.path))?;
         self.check_seen(&file)?;
         let where_ = place(&file.session, &file.path);
         let content = String::from_utf8(file.bytes)

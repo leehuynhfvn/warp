@@ -7,10 +7,9 @@ use std::time::Duration;
 
 use instant::Instant;
 
-use crate::terminal::model::session::SessionId;
-
 use super::ATTACH_IDLE_TTL;
 use super::error::AgentBridgeError;
+use crate::terminal::model::session::SessionId;
 
 /// What an attached session may be used for. Variants are ordered by privilege.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

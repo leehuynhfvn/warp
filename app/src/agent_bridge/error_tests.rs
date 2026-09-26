@@ -7,8 +7,14 @@ fn code_of(error: AgentBridgeError) -> ErrorCode {
 #[test]
 fn every_error_maps_to_the_documented_code() {
     let cases = [
-        (AgentBridgeError::NotRemoteSession, ErrorCode::InvalidSelector),
-        (AgentBridgeError::UnsupportedShell, ErrorCode::InvalidSelector),
+        (
+            AgentBridgeError::NotRemoteSession,
+            ErrorCode::InvalidSelector,
+        ),
+        (
+            AgentBridgeError::UnsupportedShell,
+            ErrorCode::InvalidSelector,
+        ),
         (
             AgentBridgeError::NotAttached {
                 user: "root".to_owned(),
@@ -16,7 +22,10 @@ fn every_error_maps_to_the_documented_code() {
             },
             ErrorCode::SessionNotAttached,
         ),
-        (AgentBridgeError::AttachmentExpired, ErrorCode::SessionNotAttached),
+        (
+            AgentBridgeError::AttachmentExpired,
+            ErrorCode::SessionNotAttached,
+        ),
         (
             AgentBridgeError::ReadOnlyAttachment,
             ErrorCode::InsufficientPermissions,
@@ -43,7 +52,10 @@ fn every_error_maps_to_the_documented_code() {
             AgentBridgeError::UnexpectedOutput("x".to_owned()),
             ErrorCode::RemoteOperationFailed,
         ),
-        (AgentBridgeError::Io("x".to_owned()), ErrorCode::RemoteOperationFailed),
+        (
+            AgentBridgeError::Io("x".to_owned()),
+            ErrorCode::RemoteOperationFailed,
+        ),
     ];
     for (error, code) in cases {
         assert_eq!(code_of(error.clone()), code, "{error:?}");
@@ -57,12 +69,18 @@ fn a_not_attached_message_names_the_session_and_tells_the_user_what_to_do() {
         host: "prod-1".to_owned(),
     });
     assert!(error.message.contains("root@prod-1"));
-    assert!(error.message.contains("Agent Bridge: Allow agents to control this session"));
+    assert!(
+        error
+            .message
+            .contains("Agent Bridge: Allow agents to control this session")
+    );
 }
 
 #[test]
 fn control_messages_do_not_carry_terminal_escape_sequences() {
-    let error = ControlError::from(AgentBridgeError::RemoteFailed("bad \u{1b}[31mred".to_owned()));
+    let error = ControlError::from(AgentBridgeError::RemoteFailed(
+        "bad \u{1b}[31mred".to_owned(),
+    ));
     assert!(!error.message.contains('\u{1b}'));
 }
 

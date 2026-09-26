@@ -10,8 +10,8 @@ use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams, RemoteExecResult,
     RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
-    RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind,
-    RemoteSessionListResult, RemoteSessionSummary, WriteExpectation,
+    RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult,
+    RemoteSessionSummary, WriteExpectation,
 };
 
 use crate::agent::OutputFormat;

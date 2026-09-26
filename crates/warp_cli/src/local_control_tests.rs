@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, HashSet};
 
 use clap_complete::aot::Shell;
 use local_control::protocol::{
-    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteExecResult,
-    RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
-    RemoteStream, SyncChange, SyncConfirmation, SyncDifference,
-    SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary, SyncSkippedEntry,
-    SyncUploadSummary,
+    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock,
+    RemoteExecResult, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind,
+    RemoteSessionRef, RemoteSessionSummary, RemoteStream, SyncChange, SyncConfirmation,
+    SyncDifference, SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary,
+    SyncSkippedEntry, SyncUploadSummary,
 };
 use serde_json::json;
 
@@ -597,18 +597,40 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
         ),
         (
             ActionKind::RemoteFileRead,
-            vec!["warpctrl", "remote", "read", "--session", "12", "/etc/hosts"],
+            vec![
+                "warpctrl",
+                "remote",
+                "read",
+                "--session",
+                "12",
+                "/etc/hosts",
+            ],
         ),
         (
             ActionKind::RemoteFileWrite,
             vec![
-                "warpctrl", "remote", "write", "--session", "12", "/etc/hosts", "--from", "hosts",
+                "warpctrl",
+                "remote",
+                "write",
+                "--session",
+                "12",
+                "/etc/hosts",
+                "--from",
+                "hosts",
                 "--create",
             ],
         ),
         (
             ActionKind::RemoteOutputRecent,
-            vec!["warpctrl", "remote", "recent", "--session", "12", "--count", "5"],
+            vec![
+                "warpctrl",
+                "remote",
+                "recent",
+                "--session",
+                "12",
+                "--count",
+                "5",
+            ],
         ),
         (ActionKind::SyncStatus, vec!["warpctrl", "sync", "status"]),
         (
@@ -1188,8 +1210,19 @@ fn a_comparison_lists_each_difference_with_what_changed() {
 #[test]
 fn remote_exec_keeps_the_command_words_and_their_dashes() {
     let args = ControlArgs::try_parse_from([
-        "warpctrl", "remote", "exec", "--session", "12", "--cwd", "/etc", "--timeout", "30", "--",
-        "ls", "-la", "--color=never",
+        "warpctrl",
+        "remote",
+        "exec",
+        "--session",
+        "12",
+        "--cwd",
+        "/etc",
+        "--timeout",
+        "30",
+        "--",
+        "ls",
+        "-la",
+        "--color=never",
     ])
     .expect("remote exec parses");
     let ControlCommand::Remote(RemoteCommand::Exec(args)) = args.command else {
@@ -1223,9 +1256,8 @@ fn mcp_is_reached_through_the_control_mode_flag() {
     assert_eq!(args.instance, None);
     assert!(!args.no_redact);
 
-    let args =
-        ControlArgs::try_parse_from(["warpctrl", "mcp", "--instance", "abc", "--no-redact"])
-            .expect("mcp parses");
+    let args = ControlArgs::try_parse_from(["warpctrl", "mcp", "--instance", "abc", "--no-redact"])
+        .expect("mcp parses");
     let ControlCommand::Mcp(args) = args.command else {
         panic!("expected mcp");
     };
@@ -1235,11 +1267,21 @@ fn mcp_is_reached_through_the_control_mode_flag() {
 
 #[test]
 fn remote_write_needs_exactly_one_expectation() {
-    let base = ["warpctrl", "remote", "write", "/etc/hosts", "--from", "hosts"];
+    let base = [
+        "warpctrl",
+        "remote",
+        "write",
+        "/etc/hosts",
+        "--from",
+        "hosts",
+    ];
     assert!(ControlArgs::try_parse_from(base).is_err(), "no expectation");
 
     let both = [&base[..], &["--create", "--expected-sha256", "abc"]].concat();
-    assert!(ControlArgs::try_parse_from(both).is_err(), "both expectations");
+    assert!(
+        ControlArgs::try_parse_from(both).is_err(),
+        "both expectations"
+    );
 
     let sha = "a".repeat(64);
     let overwrite = [&base[..], &["--expected-sha256", sha.as_str()]].concat();
@@ -1267,7 +1309,8 @@ fn remote_recent_shows_three_commands_by_default_and_at_most_ten() {
     };
     assert_eq!(args.count, 3);
     for count in ["0", "11"] {
-        let parsed = ControlArgs::try_parse_from(["warpctrl", "remote", "recent", "--count", count]);
+        let parsed =
+            ControlArgs::try_parse_from(["warpctrl", "remote", "recent", "--count", count]);
         assert!(parsed.is_err(), "--count {count}");
     }
 }
@@ -1306,7 +1349,10 @@ fn recent_output_lists_each_command_with_its_exit_code_and_whether_it_was_cut() 
         session,
         blocks: Vec::new(),
     };
-    assert_eq!(render_recent(&empty), "No finished commands in root@prod-1 yet.");
+    assert_eq!(
+        render_recent(&empty),
+        "No finished commands in root@prod-1 yet."
+    );
 }
 
 fn exec_result(exit_code: i32) -> RemoteExecResult {
@@ -1344,8 +1390,8 @@ fn the_exec_exit_code_is_the_remote_one_kept_in_range() {
 #[test]
 fn the_session_list_marks_the_active_session_and_shows_what_may_be_used() {
     use remote::render_sessions;
-    let session = |id: &str, is_active: bool, attached: Option<RemoteAttachment>| {
-        RemoteSessionSummary {
+    let session =
+        |id: &str, is_active: bool, attached: Option<RemoteAttachment>| RemoteSessionSummary {
             session_id: id.to_owned(),
             window_index: 0,
             tab_index: 0,
@@ -1357,15 +1403,17 @@ fn the_session_list_marks_the_active_session_and_shows_what_may_be_used() {
             shell: "bash".to_owned(),
             cwd: Some("/root".to_owned()),
             attached,
-        }
-    };
+        };
     let attached = RemoteAttachment {
         access: RemoteAccess::ReadOnly,
         idle_secs: 30,
         expires_in_secs: 29 * 60 + 30,
         exec_count: 2,
     };
-    let text = render_sessions(&[session("12", true, Some(attached)), session("13", false, None)]);
+    let text = render_sessions(&[
+        session("12", true, Some(attached)),
+        session("13", false, None),
+    ]);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines[0],
@@ -1391,8 +1439,14 @@ fn a_write_result_names_the_backup_only_when_there_is_one() {
         created: false,
     };
     let text = render_write(&result);
-    assert!(text.starts_with("Wrote /etc/app.conf (42 bytes, sha256 abc)"), "{text}");
-    assert!(text.contains("saved in /root/.warp-agent/backups/app.conf.1"), "{text}");
+    assert!(
+        text.starts_with("Wrote /etc/app.conf (42 bytes, sha256 abc)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("saved in /root/.warp-agent/backups/app.conf.1"),
+        "{text}"
+    );
 
     result.created = true;
     result.backup_path = None;

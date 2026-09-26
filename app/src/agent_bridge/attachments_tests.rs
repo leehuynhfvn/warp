@@ -21,22 +21,34 @@ fn check(
     now: Instant,
 ) -> Result<Access, AgentBridgeError> {
     attachments.check(session(id), needed, "alice", "prod-2", now)?;
-    Ok(attachments.status(session(id), now).expect("a checked session is attached").access)
+    Ok(attachments
+        .status(session(id), now)
+        .expect("a checked session is attached")
+        .access)
 }
 
 #[test]
 fn a_full_attachment_allows_every_kind_of_access() {
     let now = Instant::now();
     let mut attachments = attached(Access::Full, now);
-    assert_eq!(check(&mut attachments, 1, Access::ReadOnly, now), Ok(Access::Full));
-    assert_eq!(check(&mut attachments, 1, Access::Full, now), Ok(Access::Full));
+    assert_eq!(
+        check(&mut attachments, 1, Access::ReadOnly, now),
+        Ok(Access::Full)
+    );
+    assert_eq!(
+        check(&mut attachments, 1, Access::Full, now),
+        Ok(Access::Full)
+    );
 }
 
 #[test]
 fn a_read_only_attachment_refuses_commands_and_writes() {
     let now = Instant::now();
     let mut attachments = attached(Access::ReadOnly, now);
-    assert_eq!(check(&mut attachments, 1, Access::ReadOnly, now), Ok(Access::ReadOnly));
+    assert_eq!(
+        check(&mut attachments, 1, Access::ReadOnly, now),
+        Ok(Access::ReadOnly)
+    );
     assert_eq!(
         check(&mut attachments, 1, Access::Full, now),
         Err(AgentBridgeError::ReadOnlyAttachment)

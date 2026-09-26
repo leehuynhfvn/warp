@@ -101,7 +101,11 @@ fn read_params(path: &str) -> RemoteFileReadParams {
     }
 }
 
-fn write_params(path: &Path, content: &[u8], expectation: WriteExpectation) -> RemoteFileWriteParams {
+fn write_params(
+    path: &Path,
+    content: &[u8],
+    expectation: WriteExpectation,
+) -> RemoteFileWriteParams {
     RemoteFileWriteParams {
         path: path.to_str().unwrap().to_owned(),
         content_base64: BASE64.encode(content),
@@ -209,7 +213,12 @@ fn an_explicit_cwd_wins_over_the_session_directory() {
 #[test]
 fn a_session_directory_the_bridge_would_not_accept_is_ignored() {
     let runner = ShellRunner::new();
-    let value = block_on(exec(&runner, &target(None, Some("relative")), exec_params("true"))).unwrap();
+    let value = block_on(exec(
+        &runner,
+        &target(None, Some("relative")),
+        exec_params("true"),
+    ))
+    .unwrap();
     let result: RemoteExecResult = serde_json::from_value(value).unwrap();
     assert_eq!(result.cwd, None);
 }
@@ -224,7 +233,13 @@ fn the_runner_waits_for_the_command_timeout_plus_a_grace_period() {
     };
     block_on(exec(&runner, &target(None, None), params)).unwrap();
 
-    let waits: Vec<Duration> = runner.calls.lock().unwrap().iter().map(|call| call.1).collect();
+    let waits: Vec<Duration> = runner
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| call.1)
+        .collect();
     assert_eq!(
         waits,
         [
@@ -239,7 +254,11 @@ fn a_busy_session_is_reported_and_audited() {
     let audit = tempfile::tempdir().unwrap();
     let mut runner = ShellRunner::new();
     runner.busy = true;
-    let result = block_on(exec(&runner, &target(Some(audit.path()), None), exec_params("ls")));
+    let result = block_on(exec(
+        &runner,
+        &target(Some(audit.path()), None),
+        exec_params("ls"),
+    ));
     assert_eq!(result.unwrap_err(), AgentBridgeError::SessionBusy);
 
     let records = audit_lines(audit.path());
@@ -257,7 +276,12 @@ fn a_successful_exec_is_audited_without_its_output() {
         agent: Some("claude-code".to_owned()),
         ..exec_params("echo secret-output; exit 3")
     };
-    block_on(exec(&runner, &target(Some(audit.path()), Some("/tmp")), params)).unwrap();
+    block_on(exec(
+        &runner,
+        &target(Some(audit.path()), Some("/tmp")),
+        params,
+    ))
+    .unwrap();
 
     let records = audit_lines(audit.path());
     assert_eq!(records.len(), 1);
@@ -299,7 +323,12 @@ fn read_returns_the_content_checksum_and_size() {
     fs::write(dir.path().join("app.conf"), "listen 80;\n").unwrap();
     let cwd = dir.path().to_str().unwrap();
 
-    let value = block_on(read_file(&runner, &target(None, Some(cwd)), read_params("app.conf"))).unwrap();
+    let value = block_on(read_file(
+        &runner,
+        &target(None, Some(cwd)),
+        read_params("app.conf"),
+    ))
+    .unwrap();
 
     let RemoteFileReadResult::Ok {
         path,
@@ -324,7 +353,12 @@ fn a_missing_file_is_a_result_not_an_error() {
     let runner = ShellRunner::new();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nope");
-    let value = block_on(read_file(&runner, &target(None, None), read_params(path.to_str().unwrap()))).unwrap();
+    let value = block_on(read_file(
+        &runner,
+        &target(None, None),
+        read_params(path.to_str().unwrap()),
+    ))
+    .unwrap();
     assert_eq!(value["status"], "not_found");
     assert_eq!(value["host"], "prod-1");
 }
@@ -335,8 +369,15 @@ fn an_oversized_file_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big");
     fs::write(&path, vec![b'x'; READ_MAX_FILE_BYTES + 1]).unwrap();
-    let result = block_on(read_file(&runner, &target(None, None), read_params(path.to_str().unwrap())));
-    assert!(matches!(result, Err(AgentBridgeError::RemoteFailed(_))), "{result:?}");
+    let result = block_on(read_file(
+        &runner,
+        &target(None, None),
+        read_params(path.to_str().unwrap()),
+    ));
+    assert!(
+        matches!(result, Err(AgentBridgeError::RemoteFailed(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -344,7 +385,10 @@ fn unsafe_read_paths_are_refused_before_anything_runs() {
     for path in ["", "~/.bashrc", "/etc/../shadow", "relative"] {
         let runner = ShellRunner::new();
         let result = block_on(read_file(&runner, &target(None, None), read_params(path)));
-        assert!(matches!(result, Err(AgentBridgeError::InvalidParams(_))), "{path:?}");
+        assert!(
+            matches!(result, Err(AgentBridgeError::InvalidParams(_))),
+            "{path:?}"
+        );
         assert_eq!(runner.call_count(), 0);
     }
 }
@@ -356,7 +400,12 @@ fn a_read_is_audited_with_its_size() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("f");
     fs::write(&path, "12345").unwrap();
-    block_on(read_file(&runner, &target(Some(audit.path()), None), read_params(path.to_str().unwrap()))).unwrap();
+    block_on(read_file(
+        &runner,
+        &target(Some(audit.path()), None),
+        read_params(path.to_str().unwrap()),
+    ))
+    .unwrap();
 
     let records = audit_lines(audit.path());
     assert_eq!(records[0]["action"], "remote.file.read");
@@ -466,8 +515,14 @@ fn a_stale_checksum_is_a_conflict_that_changes_nothing() {
         write_params(&path, b"new\n", must_match(b"what I read\n")),
     ));
 
-    assert!(matches!(result, Err(AgentBridgeError::Conflict(_))), "{result:?}");
-    assert_eq!(fs::read_to_string(&path).unwrap(), "someone else edited this\n");
+    assert!(
+        matches!(result, Err(AgentBridgeError::Conflict(_))),
+        "{result:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "someone else edited this\n"
+    );
     assert!(runner.scratch_is_clean());
 }
 
@@ -544,7 +599,10 @@ fn invalid_write_params_are_refused_before_anything_runs() {
     for params in cases {
         let runner = ShellRunner::new();
         let result = block_on(write_file(&runner, &target(None, None), params));
-        assert!(matches!(result, Err(AgentBridgeError::InvalidParams(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AgentBridgeError::InvalidParams(_))),
+            "{result:?}"
+        );
         assert_eq!(runner.call_count(), 0);
     }
 }
@@ -564,8 +622,18 @@ fn what_was_written_can_be_read_back_with_the_same_checksum() {
         .unwrap(),
     );
 
-    let value = block_on(read_file(&runner, &target(None, None), read_params(path.to_str().unwrap()))).unwrap();
-    let RemoteFileReadResult::Ok { sha256, content_base64, .. } = serde_json::from_value(value).unwrap() else {
+    let value = block_on(read_file(
+        &runner,
+        &target(None, None),
+        read_params(path.to_str().unwrap()),
+    ))
+    .unwrap();
+    let RemoteFileReadResult::Ok {
+        sha256,
+        content_base64,
+        ..
+    } = serde_json::from_value(value).unwrap()
+    else {
         panic!("expected content");
     };
     assert_eq!(sha256, written.sha256);
@@ -603,7 +671,11 @@ fn a_request_that_cannot_be_audited_is_not_run() {
     let target = target(Some(&audit_dir), None);
     let results = [
         block_on(exec(&runner, &target, exec_params("touch ran"))),
-        block_on(read_file(&runner, &target, read_params(path.to_str().unwrap()))),
+        block_on(read_file(
+            &runner,
+            &target,
+            read_params(path.to_str().unwrap()),
+        )),
         block_on(write_file(
             &runner,
             &target,
@@ -624,7 +696,12 @@ fn a_request_that_cannot_be_audited_is_not_run() {
 fn every_request_leaves_a_start_record_before_its_closing_record() {
     let audit = tempfile::tempdir().unwrap();
     let runner = ShellRunner::new();
-    block_on(exec(&runner, &target(Some(audit.path()), None), exec_params("true"))).unwrap();
+    block_on(exec(
+        &runner,
+        &target(Some(audit.path()), None),
+        exec_params("true"),
+    ))
+    .unwrap();
 
     let records = all_audit_lines(audit.path());
     assert_eq!(records.len(), 2);

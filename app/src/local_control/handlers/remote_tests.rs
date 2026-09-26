@@ -184,7 +184,9 @@ fn a_session_that_does_not_exist_is_a_stale_target() {
         let harness = Harness::new(&mut app).await;
 
         for kind in SESSION_ACTIONS {
-            let result = harness.call(kind, params_for(kind), session_id("999")).await;
+            let result = harness
+                .call(kind, params_for(kind), session_id("999"))
+                .await;
             assert_eq!(error_code(result), ErrorCode::StaleTarget, "{kind:?}");
         }
     });
@@ -247,7 +249,11 @@ fn output_recent_rejects_a_count_out_of_range_and_a_bad_agent_name() {
             serde_json::json!({ "agent": "Gemini CLI" }),
         ] {
             let result = harness
-                .call(ActionKind::RemoteOutputRecent, params.clone(), session_id("1"))
+                .call(
+                    ActionKind::RemoteOutputRecent,
+                    params.clone(),
+                    session_id("1"),
+                )
                 .await;
             assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
         }

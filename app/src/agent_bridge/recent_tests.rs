@@ -32,7 +32,10 @@ fn count_defaults_to_three_and_must_be_between_one_and_ten() {
     assert_eq!(block_count(Some(10)), Ok(10));
     for count in [0, 11, u32::MAX] {
         assert!(
-            matches!(block_count(Some(count)), Err(AgentBridgeError::InvalidParams(_))),
+            matches!(
+                block_count(Some(count)),
+                Err(AgentBridgeError::InvalidParams(_))
+            ),
             "{count}"
         );
     }

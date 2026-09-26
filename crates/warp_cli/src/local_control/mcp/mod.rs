@@ -10,14 +10,14 @@ use std::io;
 use std::time::Duration;
 
 use clap::Args;
+use jsonrpc::serve;
 use local_control::protocol::{ActionKind, ControlError, ErrorCode};
+use redact::Redactor;
 use serde_json::Value;
+use tools::{ControlTransport, Tools};
 
 use crate::local_control::commands::send_action;
 use crate::local_control::{EXIT_SUCCESS, TargetArgs};
-use jsonrpc::serve;
-use redact::Redactor;
-use tools::{ControlTransport, Tools};
 
 /// Serve the remote-session tools to an agent over MCP on stdin and stdout.
 ///

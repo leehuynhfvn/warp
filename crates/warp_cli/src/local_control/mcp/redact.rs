@@ -52,7 +52,9 @@ impl Redactor {
             .filter_map(|pattern| match Regex::new(pattern) {
                 Ok(regex) => Some(regex),
                 Err(err) => {
-                    eprintln!("warpctrl mcp: ignoring a secret pattern that does not compile: {err}");
+                    eprintln!(
+                        "warpctrl mcp: ignoring a secret pattern that does not compile: {err}"
+                    );
                     None
                 }
             })

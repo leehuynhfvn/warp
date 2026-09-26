@@ -30,9 +30,9 @@ pub(crate) fn normalize_path(input: &str, cwd: Option<&str>) -> Result<String, A
     let joined = if input.starts_with('/') {
         input.to_owned()
     } else {
-        let cwd = cwd
-            .filter(|cwd| cwd.starts_with('/'))
-            .ok_or_else(|| invalid("the path is relative but the session's directory is unknown"))?;
+        let cwd = cwd.filter(|cwd| cwd.starts_with('/')).ok_or_else(|| {
+            invalid("the path is relative but the session's directory is unknown")
+        })?;
         format!("{cwd}/{input}")
     };
 

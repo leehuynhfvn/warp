@@ -208,7 +208,9 @@ pub struct RemoteFileReadParams {
 pub enum WriteExpectation {
     MustNotExist,
     /// The file currently has this SHA-256 (64 lowercase hex characters).
-    MustMatch { sha256: String },
+    MustMatch {
+        sha256: String,
+    },
 }
 
 /// Parameters for `remote.file.write`.

@@ -83,7 +83,10 @@ fn ping_and_tools_list_are_answered() {
     let mut handler = FakeHandler::default();
 
     let ping = handle(r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#, &mut handler);
-    assert_eq!(ping, Some(json!({ "jsonrpc": "2.0", "id": 2, "result": {} })));
+    assert_eq!(
+        ping,
+        Some(json!({ "jsonrpc": "2.0", "id": 2, "result": {} }))
+    );
 
     let list = handle(
         r#"{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}"#,
@@ -213,7 +216,12 @@ fn serve_answers_invalid_utf8_with_a_parse_error() {
     let mut handler = FakeHandler::default();
     let mut output = Vec::new();
 
-    serve(Cursor::new(b"\xff\xfe\n".to_vec()), &mut output, &mut handler).expect("serve succeeds");
+    serve(
+        Cursor::new(b"\xff\xfe\n".to_vec()),
+        &mut output,
+        &mut handler,
+    )
+    .expect("serve succeeds");
 
     let response: Value = serde_json::from_slice(&output).expect("JSON answer");
     assert_eq!(error_code(&response), Some(-32700));

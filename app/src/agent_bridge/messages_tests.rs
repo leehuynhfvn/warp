@@ -3,12 +3,21 @@ use super::*;
 #[test]
 fn an_attach_message_names_the_session_the_access_and_how_to_undo_it() {
     let full = attached_message(Access::Full, "root", "prod-1");
-    assert!(full.contains("run commands and edit files as root@prod-1"), "{full}");
+    assert!(
+        full.contains("run commands and edit files as root@prod-1"),
+        "{full}"
+    );
     assert!(full.contains("30 minutes"), "{full}");
-    assert!(full.contains("Agent Bridge: Revoke access to this session"), "{full}");
+    assert!(
+        full.contains("Agent Bridge: Revoke access to this session"),
+        "{full}"
+    );
 
     let read_only = attached_message(Access::ReadOnly, "root", "prod-1");
-    assert!(read_only.contains("read any file that user can read (read-only)"), "{read_only}");
+    assert!(
+        read_only.contains("read any file that user can read (read-only)"),
+        "{read_only}"
+    );
     assert!(!read_only.contains("run commands"), "{read_only}");
 }
 
@@ -45,7 +54,10 @@ fn the_indicator_names_the_user_and_says_when_access_is_read_only() {
 fn revoking_all_counts_sessions() {
     assert_eq!(revoked_all_message(0), "No session had agent access.");
     assert_eq!(revoked_all_message(1), "Revoked agent access to 1 session.");
-    assert_eq!(revoked_all_message(3), "Revoked agent access to 3 sessions.");
+    assert_eq!(
+        revoked_all_message(3),
+        "Revoked agent access to 3 sessions."
+    );
 }
 
 #[test]

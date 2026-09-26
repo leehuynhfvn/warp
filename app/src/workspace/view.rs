@@ -160,7 +160,6 @@ use super::util::{
     WorkspaceMouseStates, WorkspaceState,
 };
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
-use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
@@ -170,6 +169,7 @@ use crate::agent_bridge::{
     revoked_all_message as agent_bridge_revoked_all_message,
     revoked_message as agent_bridge_revoked_message, setup_command as agent_bridge_setup_command,
 };
+use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::agent::CancellationReason;
 use crate::ai::agent::api::ServerConversationToken;
@@ -18879,7 +18879,9 @@ impl Workspace {
     /// The session of the active pane, remote or not.
     fn active_terminal_session(&mut self, ctx: &mut ViewContext<Self>) -> Option<Arc<Session>> {
         let view = self.active_session_view(ctx)?;
-        view.read(ctx, |view, ctx| view.active_session().as_ref(ctx).session(ctx))
+        view.read(ctx, |view, ctx| {
+            view.active_session().as_ref(ctx).session(ctx)
+        })
     }
 
     fn agent_bridge_attach(&mut self, read_only: bool, ctx: &mut ViewContext<Self>) {
@@ -18911,13 +18913,13 @@ impl Workspace {
         let was_attached = self.active_terminal_session(ctx).is_some_and(|session| {
             AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.detach(session.id(), ctx))
         });
-        let toast = DismissibleToast::default(agent_bridge_revoked_message(was_attached).to_owned());
+        let toast =
+            DismissibleToast::default(agent_bridge_revoked_message(was_attached).to_owned());
         self.add_agent_bridge_toast(toast, ctx);
     }
 
     fn agent_bridge_revoke_all(&mut self, ctx: &mut ViewContext<Self>) {
-        let count =
-            AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.detach_all(ctx));
+        let count = AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.detach_all(ctx));
         let toast = DismissibleToast::default(agent_bridge_revoked_all_message(count));
         self.add_agent_bridge_toast(toast, ctx);
     }
@@ -18942,7 +18944,11 @@ impl Workspace {
         self.add_agent_bridge_toast(toast, ctx);
     }
 
-    fn add_agent_bridge_toast(&mut self, toast: DismissibleToast<WorkspaceAction>, ctx: &mut ViewContext<Self>) {
+    fn add_agent_bridge_toast(
+        &mut self,
+        toast: DismissibleToast<WorkspaceAction>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         self.toast_stack.update(ctx, |toast_stack, ctx| {
             toast_stack.add_ephemeral_toast(toast, ctx);
         });

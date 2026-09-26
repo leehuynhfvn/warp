@@ -165,7 +165,9 @@ fn render_session(session: &RemoteSessionSummary) -> String {
     let id = serde_json::Value::String(session.session_id.clone());
     let focus = if session.is_active { " (focused)" } else { "" };
     let status = match (&session.session_type, &session.attached) {
-        (RemoteSessionKind::Local, _) => "local session, not usable (use your own shell)".to_owned(),
+        (RemoteSessionKind::Local, _) => {
+            "local session, not usable (use your own shell)".to_owned()
+        }
         (RemoteSessionKind::Remote, None) => {
             "not attached (the user has to allow agents in that pane first)".to_owned()
         }

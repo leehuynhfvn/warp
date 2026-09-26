@@ -15,7 +15,10 @@ fn every_pattern_compiles() {
 fn an_aws_access_key_is_hidden() {
     let redactor = Redactor::with_default_patterns();
     let text = "key AKIAIOSFODNN7EXAMPLE here";
-    assert_eq!(redactor.to_model_text(text), "key ******************** here");
+    assert_eq!(
+        redactor.to_model_text(text),
+        "key ******************** here"
+    );
 }
 
 #[test]

@@ -3,10 +3,10 @@
 //! interactive shell). They always exit 0 and report through lines that start with a per-request
 //! marker, so that a failure of the operation can be told apart from a failure of the transport.
 
+use ::local_control::protocol::WriteExpectation;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{DateTime, Utc};
-use ::local_control::protocol::WriteExpectation;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -163,7 +163,10 @@ pub(crate) fn parse_exec_output(
     let (stderr, rest) = parse_stream(&marker, "stderr", EXEC_STDERR_MAX_BYTES, rest)?;
     let rc_prefix = format!("{marker} rc ");
     let start = find_line(rest, &rc_prefix).ok_or_else(|| unexpected("no exit status"))?;
-    let line = rest[start + rc_prefix.len()..].lines().next().unwrap_or_default();
+    let line = rest[start + rc_prefix.len()..]
+        .lines()
+        .next()
+        .unwrap_or_default();
     let mut fields = line.split_whitespace();
     let exit_code: i32 = fields
         .next()
@@ -360,7 +363,9 @@ fn read_status_error(
     max_bytes: usize,
 ) -> AgentBridgeError {
     match status {
-        "not_regular" => AgentBridgeError::RemoteFailed("The path is not a regular file".to_owned()),
+        "not_regular" => {
+            AgentBridgeError::RemoteFailed("The path is not a regular file".to_owned())
+        }
         "permission_denied" => {
             AgentBridgeError::RemoteFailed(format!("Permission denied (running as {user})"))
         }

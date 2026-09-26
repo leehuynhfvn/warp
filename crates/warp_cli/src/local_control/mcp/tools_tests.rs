@@ -140,7 +140,11 @@ fn write_params(call: &Call) -> RemoteFileWriteParams {
 
 fn read_first(tools: &mut Tools<FakeTransport>, path: &str, content: &str) {
     answer(tools, ActionKind::RemoteFileRead, file(path, content));
-    let result = call(tools, "read_file", json!({ "path": path, "session_id": "Pane 7" }));
+    let result = call(
+        tools,
+        "read_file",
+        json!({ "path": path, "session_id": "Pane 7" }),
+    );
     assert!(!result.is_error, "{}", result.text);
 }
 
@@ -152,7 +156,11 @@ fn the_only_attached_session_is_used_when_none_is_given() {
         ActionKind::RemoteSessionList,
         session_list(&[("Pane 1", false), ("Pane 7", true)]),
     );
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "x\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "x\n"),
+    );
 
     let result = call(&mut tools, "read_file", json!({ "path": "/etc/a" }));
 
@@ -171,7 +179,11 @@ fn no_or_several_attached_sessions_need_the_user_or_a_session_id() {
     );
     let result = call(&mut tools, "exec", json!({ "command": "id" }));
     assert!(result.is_error);
-    assert!(result.text.starts_with("No session is attached."), "{}", result.text);
+    assert!(
+        result.text.starts_with("No session is attached."),
+        "{}",
+        result.text
+    );
     assert!(result.text.contains("\"Pane 1\""));
 
     answer(
@@ -181,7 +193,11 @@ fn no_or_several_attached_sessions_need_the_user_or_a_session_id() {
     );
     let result = call(&mut tools, "exec", json!({ "command": "id" }));
     assert!(result.is_error);
-    assert!(result.text.starts_with("2 sessions are attached"), "{}", result.text);
+    assert!(
+        result.text.starts_with("2 sessions are attached"),
+        "{}",
+        result.text
+    );
 }
 
 #[test]
@@ -279,7 +295,11 @@ fn read_file_reports_missing_and_binary_files() {
 #[test]
 fn read_file_shows_at_least_one_line() {
     let mut tools = tools();
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "x\ny\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "x\ny\n"),
+    );
 
     let result = call(
         &mut tools,
@@ -308,14 +328,20 @@ fn write_file_does_not_replace_binary_files() {
 
     assert_eq!(
         result,
-        ToolResult::error("root@prod-1:/bin/x is a binary file; write_file only replaces text files.")
+        ToolResult::error(
+            "root@prod-1:/bin/x is a binary file; write_file only replaces text files."
+        )
     );
 }
 
 #[test]
 fn write_file_creates_a_missing_file() {
     let mut tools = tools();
-    answer(&mut tools, ActionKind::RemoteFileRead, not_found("/root/new"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        not_found("/root/new"),
+    );
     answer(
         &mut tools,
         ActionKind::RemoteFileWrite,
@@ -328,7 +354,10 @@ fn write_file_creates_a_missing_file() {
         json!({ "path": "/root/new", "content": "hello\n", "session_id": "Pane 7" }),
     );
 
-    assert_eq!(result, ToolResult::ok("Created root@prod-1:/root/new (6 bytes)."));
+    assert_eq!(
+        result,
+        ToolResult::ok("Created root@prod-1:/root/new (6 bytes).")
+    );
     let params = write_params(&tools.transport.calls[1]);
     assert_eq!(params.expectation, WriteExpectation::MustNotExist);
     assert_eq!(params.content_base64, BASE64.encode("hello\n"));
@@ -337,7 +366,11 @@ fn write_file_creates_a_missing_file() {
 #[test]
 fn write_file_needs_a_read_first() {
     let mut tools = tools();
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "old\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "old\n"),
+    );
 
     let result = call(
         &mut tools,
@@ -355,7 +388,11 @@ fn write_file_needs_a_read_first() {
 fn write_file_refuses_a_file_that_changed_since_it_was_read() {
     let mut tools = tools();
     read_first(&mut tools, "/etc/a", "old\n");
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "changed\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "changed\n"),
+    );
 
     let result = call(
         &mut tools,
@@ -364,14 +401,22 @@ fn write_file_refuses_a_file_that_changed_since_it_was_read() {
     );
 
     assert!(result.is_error);
-    assert!(result.text.contains("changed on the server"), "{}", result.text);
+    assert!(
+        result.text.contains("changed on the server"),
+        "{}",
+        result.text
+    );
 }
 
 #[test]
 fn write_file_refuses_to_rewrite_a_file_with_secrets() {
     let mut tools = tools();
     read_first(&mut tools, "/etc/a", "token=abc\n");
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "token=abc\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "token=abc\n"),
+    );
 
     let result = call(
         &mut tools,
@@ -387,7 +432,11 @@ fn write_file_refuses_to_rewrite_a_file_with_secrets() {
 fn write_file_overwrites_the_version_that_was_read() {
     let mut tools = tools();
     read_first(&mut tools, "/etc/a", "old\n");
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "old\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "old\n"),
+    );
     answer(
         &mut tools,
         ActionKind::RemoteFileWrite,
@@ -417,7 +466,11 @@ fn edit_file_sends_the_edited_content_for_the_version_read() {
     let before = "events {\n    worker_connections 768;\n}\nAPI_KEY=s3cr3t\n";
     let after = "events {\n    worker_connections 2048;\n}\nAPI_KEY=s3cr3t\n";
     read_first(&mut tools, "/etc/nginx.conf", before);
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/nginx.conf", before));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/nginx.conf", before),
+    );
     answer(
         &mut tools,
         ActionKind::RemoteFileWrite,
@@ -437,11 +490,17 @@ fn edit_file_sends_the_edited_content_for_the_version_read() {
 
     assert!(!result.is_error, "{}", result.text);
     assert!(
-        result.text.starts_with("Edited root@prod-1:/etc/nginx.conf: replaced 1 occurrence."),
+        result
+            .text
+            .starts_with("Edited root@prod-1:/etc/nginx.conf: replaced 1 occurrence."),
         "{}",
         result.text
     );
-    assert!(result.text.contains("     4\tAPI_KEY=******\n"), "{}", result.text);
+    assert!(
+        result.text.contains("     4\tAPI_KEY=******\n"),
+        "{}",
+        result.text
+    );
     assert!(!result.text.contains("s3cr3t"));
     let params = write_params(&tools.transport.calls[2]);
     assert_eq!(
@@ -453,7 +512,11 @@ fn edit_file_sends_the_edited_content_for_the_version_read() {
     assert_eq!(params.content_base64, BASE64.encode(after));
 
     // The written version counts as seen, so a second edit needs no new read_file.
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/nginx.conf", after));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/nginx.conf", after),
+    );
     answer(
         &mut tools,
         ActionKind::RemoteFileWrite,
@@ -477,23 +540,39 @@ fn edit_file_reports_missing_and_repeated_old_strings() {
     let mut tools = tools();
     read_first(&mut tools, "/etc/a", "x\nx\n");
 
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "x\nx\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "x\nx\n"),
+    );
     let result = call(
         &mut tools,
         "edit_file",
         json!({ "path": "/etc/a", "old_string": "y", "new_string": "z", "session_id": "Pane 7" }),
     );
     assert!(result.is_error);
-    assert!(result.text.starts_with("old_string was not found"), "{}", result.text);
+    assert!(
+        result.text.starts_with("old_string was not found"),
+        "{}",
+        result.text
+    );
 
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "x\nx\n"));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", "x\nx\n"),
+    );
     let result = call(
         &mut tools,
         "edit_file",
         json!({ "path": "/etc/a", "old_string": "x", "new_string": "z", "session_id": "Pane 7" }),
     );
     assert!(result.is_error);
-    assert!(result.text.starts_with("old_string occurs 2 times"), "{}", result.text);
+    assert!(
+        result.text.starts_with("old_string occurs 2 times"),
+        "{}",
+        result.text
+    );
 }
 
 #[test]
@@ -502,7 +581,11 @@ fn edit_file_cannot_match_or_copy_hidden_secrets() {
     let content = "password=hunter22\nport=1\n";
     read_first(&mut tools, "/etc/a", content);
 
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", content));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", content),
+    );
     let result = call(
         &mut tools,
         "edit_file",
@@ -516,7 +599,11 @@ fn edit_file_cannot_match_or_copy_hidden_secrets() {
     assert!(result.is_error);
     assert!(result.text.contains("hidden as ****"), "{}", result.text);
 
-    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", content));
+    answer(
+        &mut tools,
+        ActionKind::RemoteFileRead,
+        file("/etc/a", content),
+    );
     let result = call(
         &mut tools,
         "edit_file",
@@ -528,7 +615,11 @@ fn edit_file_cannot_match_or_copy_hidden_secrets() {
         }),
     );
     assert!(result.is_error);
-    assert!(result.text.contains("stands for a hidden secret"), "{}", result.text);
+    assert!(
+        result.text.contains("stands for a hidden secret"),
+        "{}",
+        result.text
+    );
 }
 
 #[test]
@@ -562,7 +653,11 @@ fn invalid_arguments_and_unknown_tools() {
     let mut tools = tools();
     let result = call(&mut tools, "exec", json!({ "command": "id", "sudo": true }));
     assert!(result.is_error);
-    assert!(result.text.starts_with("Invalid arguments for exec"), "{}", result.text);
+    assert!(
+        result.text.starts_with("Invalid arguments for exec"),
+        "{}",
+        result.text
+    );
 
     assert_eq!(tools.call_tool("run_script", json!({})), None);
 }
@@ -646,7 +741,11 @@ fn recent_output_defaults_to_three_commands_of_the_attached_session() {
         ActionKind::RemoteSessionList,
         session_list(&[("Pane 7", true)]),
     );
-    answer(&mut tools, ActionKind::RemoteOutputRecent, recent(Vec::new()));
+    answer(
+        &mut tools,
+        ActionKind::RemoteOutputRecent,
+        recent(Vec::new()),
+    );
 
     let result = call(&mut tools, "recent_output", json!({}));
 

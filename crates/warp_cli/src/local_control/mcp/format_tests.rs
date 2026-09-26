@@ -126,7 +126,10 @@ fn render_exec_labels_the_streams() {
 
 #[test]
 fn render_exec_notes_cut_output_timeouts_and_silence() {
-    let mut result = exec_result(stream("head…tail\n", 3 * 1024 * 1024, true), stream("", 0, false));
+    let mut result = exec_result(
+        stream("head…tail\n", 3 * 1024 * 1024, true),
+        stream("", 0, false),
+    );
     result.timed_out = true;
     result.exit_code = 124;
     result.duration_ms = 5;
@@ -188,7 +191,10 @@ fn render_sessions_quotes_ids_and_says_what_is_usable() {
          - session_id \"Pane 3\": root@prod-1 cwd /root shell bash — local session, not usable \
          (use your own shell)\n"
     );
-    assert_eq!(render_sessions(&[]), "No terminal sessions are open in Warp.");
+    assert_eq!(
+        render_sessions(&[]),
+        "No terminal sessions are open in Warp."
+    );
 }
 
 #[test]

@@ -1027,8 +1027,7 @@ impl TerminalView {
             AgentBridgeAccess::ReadOnly => theme.sub_text_color(theme.background()).into_solid(),
         };
         let icon_size = appearance.ui_font_size();
-        let label =
-            agent_bridge_messages::indicator_label(access, &printable(session.user()));
+        let label = agent_bridge_messages::indicator_label(access, &printable(session.user()));
         Some(
             Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
