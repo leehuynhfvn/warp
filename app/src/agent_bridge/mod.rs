@@ -8,6 +8,7 @@ pub(crate) mod messages;
 pub(crate) mod model;
 pub(crate) mod ops;
 pub(crate) mod path;
+pub(crate) mod recent;
 pub(crate) mod script;
 
 use std::time::Duration;
@@ -35,6 +36,12 @@ pub(crate) const EXEC_STDERR_MAX_BYTES: usize = 8 * 1024;
 /// inspected with `tail` or `grep` instead.
 pub(crate) const READ_MAX_FILE_BYTES: usize = 512 * 1024;
 pub(crate) const WRITE_MAX_BYTES: usize = 512 * 1024;
+
+pub(crate) const RECENT_OUTPUT_DEFAULT_COUNT: u32 = 3;
+pub(crate) const RECENT_OUTPUT_MAX_COUNT: u32 = 10;
+
+/// Cap on the output of each block returned by `remote.output.recent`.
+pub(crate) const RECENT_OUTPUT_MAX_BYTES: usize = 16 * 1024;
 
 /// How long an attached session may go unused before access is withdrawn.
 pub(crate) const ATTACH_IDLE_TTL: Duration = Duration::from_secs(30 * 60);

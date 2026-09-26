@@ -116,16 +116,18 @@ fn error_code(result: Result<serde_json::Value, ControlError>) -> ErrorCode {
     result.expect_err("the action should fail").code
 }
 
-const SERVER_ACTIONS: [ActionKind; 3] = [
+const SESSION_ACTIONS: [ActionKind; 4] = [
     ActionKind::RemoteExec,
     ActionKind::RemoteFileRead,
     ActionKind::RemoteFileWrite,
+    ActionKind::RemoteOutputRecent,
 ];
 
 fn params_for(kind: ActionKind) -> serde_json::Value {
     match kind {
         ActionKind::RemoteExec => exec_params(),
         ActionKind::RemoteFileRead => read_params(),
+        ActionKind::RemoteOutputRecent => serde_json::json!({ "count": 2 }),
         _ => write_params(),
     }
 }
@@ -139,7 +141,7 @@ fn remote_actions_are_unsupported_when_the_bridge_is_off() {
     warpui::App::test((), |mut app| async move {
         let harness = Harness::new(&mut app).await;
 
-        for kind in SERVER_ACTIONS {
+        for kind in SESSION_ACTIONS {
             let result = harness.call(kind, params_for(kind), session_id("1")).await;
             assert_eq!(error_code(result), ErrorCode::UnsupportedAction, "{kind:?}");
         }
@@ -159,7 +161,7 @@ fn a_request_must_name_a_session_explicitly() {
     warpui::App::test((), |mut app| async move {
         let harness = Harness::new(&mut app).await;
 
-        for kind in SERVER_ACTIONS {
+        for kind in SESSION_ACTIONS {
             for session in [None, Some(SessionTarget::Active)] {
                 let result = harness.call(kind, params_for(kind), session.clone()).await;
                 assert_eq!(
@@ -181,7 +183,7 @@ fn a_session_that_does_not_exist_is_a_stale_target() {
     warpui::App::test((), |mut app| async move {
         let harness = Harness::new(&mut app).await;
 
-        for kind in SERVER_ACTIONS {
+        for kind in SESSION_ACTIONS {
             let result = harness.call(kind, params_for(kind), session_id("999")).await;
             assert_eq!(error_code(result), ErrorCode::StaleTarget, "{kind:?}");
         }
@@ -231,20 +233,23 @@ fn the_session_list_is_empty_without_windows_and_is_not_an_error() {
 }
 
 #[test]
-fn output_recent_is_not_implemented_yet() {
+fn output_recent_rejects_a_count_out_of_range_and_a_bad_agent_name() {
     let _flags = (
         FeatureFlag::WarpControlCli.override_enabled(true),
         FeatureFlag::AgentBridge.override_enabled(true),
     );
     warpui::App::test((), |mut app| async move {
         let harness = Harness::new(&mut app).await;
-        let result = harness
-            .call(
-                ActionKind::RemoteOutputRecent,
-                serde_json::json!({}),
-                session_id("1"),
-            )
-            .await;
-        assert_eq!(error_code(result), ErrorCode::UnsupportedAction);
+
+        for params in [
+            serde_json::json!({ "count": 0 }),
+            serde_json::json!({ "count": 11 }),
+            serde_json::json!({ "agent": "Gemini CLI" }),
+        ] {
+            let result = harness
+                .call(ActionKind::RemoteOutputRecent, params.clone(), session_id("1"))
+                .await;
+            assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
+        }
     });
 }

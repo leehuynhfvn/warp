@@ -1,6 +1,6 @@
-//! The operations behind `remote.exec`, `remote.file.read` and `remote.file.write`. Each one
-//! validates its parameters before anything runs on the server, runs its scripts through a
-//! [`CommandRunner`], and records the request in the audit log whether it succeeded or not.
+//! The operations behind the `remote.*` actions. Each one validates its parameters before
+//! anything runs on the server, runs its scripts through a [`CommandRunner`], and records the
+//! request in the audit log whether it succeeded or not.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +9,8 @@ use std::time::Duration;
 use ::local_control::ActionKind;
 use ::local_control::protocol::{
     RemoteExecParams, RemoteExecResult, RemoteFileReadParams, RemoteFileReadResult,
-    RemoteFileWriteParams, RemoteFileWriteResult, RemoteSessionRef, RemoteStream, WriteExpectation,
+    RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionRef,
+    RemoteStream, WriteExpectation,
 };
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -25,6 +26,7 @@ use warpui::r#async::FutureExt as _;
 use super::audit::{self, AuditOutcome, AuditRecord};
 use super::error::AgentBridgeError;
 use super::path::{normalize_path, validate_cwd};
+use super::recent::{CapturedBlock, command_block};
 use super::script::{
     ExecOutput, ReadOutcome, Stream, WriteOutcome, backup_name, exec_script, new_nonce, parse_exec_output,
     parse_read_output, parse_write_output, read_script, sha256_hex, write_commit_script,
@@ -185,6 +187,23 @@ pub(crate) async fn write_file(
     to_json(result?)
 }
 
+/// Returns blocks that were already copied out of the terminal, audited like a file read.
+pub(crate) fn recent_output(
+    target: &Target,
+    agent: Option<&str>,
+    blocks: Vec<CapturedBlock>,
+) -> Result<Value, AgentBridgeError> {
+    let mut audit = Audit::begin(target, ActionKind::RemoteOutputRecent, agent);
+    audit.record_start()?;
+    let blocks = blocks.into_iter().map(command_block).collect::<Vec<_>>();
+    let bytes = blocks.iter().map(|block| block.output.len() as u64).sum();
+    audit.finish(Ok(Details::bytes(bytes)));
+    to_json(RemoteOutputRecentResult {
+        session: target.session.clone(),
+        blocks,
+    })
+}
+
 fn to_json(result: impl Serialize) -> Result<Value, AgentBridgeError> {
     serde_json::to_value(result)
         .map_err(|err| AgentBridgeError::Io(format!("could not encode the result: {err}")))
@@ -194,7 +213,7 @@ fn to_json(result: impl Serialize) -> Result<Value, AgentBridgeError> {
 // validation
 // ---------------------------------------------------------------------------------------------
 
-fn validate_agent(agent: Option<&str>) -> Result<(), AgentBridgeError> {
+pub(crate) fn validate_agent(agent: Option<&str>) -> Result<(), AgentBridgeError> {
     let Some(agent) = agent else {
         return Ok(());
     };

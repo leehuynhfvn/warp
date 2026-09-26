@@ -24,7 +24,9 @@ use remote::run_remote_command;
 use sync::{parse_pending_id, run_sync_command};
 
 pub use mcp::McpArgs;
-pub use remote::{RemoteCommand, RemoteExecArgs, RemoteReadArgs, RemoteWriteArgs};
+pub use remote::{
+    RemoteCommand, RemoteExecArgs, RemoteReadArgs, RemoteRecentArgs, RemoteWriteArgs,
+};
 
 use crate::agent::OutputFormat;
 

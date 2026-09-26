@@ -1,5 +1,5 @@
-//! `warpctrl remote`: runs commands and reads and writes files in a remote session that the user
-//! has allowed agents to use, with the privileges of that session's shell.
+//! `warpctrl remote`: runs commands, reads and writes files and shows recent output in a remote
+//! session that the user has allowed agents to use, with the privileges of that session's shell.
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -10,7 +10,8 @@ use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams, RemoteExecResult,
     RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
-    RemoteSessionKind, RemoteSessionListResult, RemoteSessionSummary, WriteExpectation,
+    RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind,
+    RemoteSessionListResult, RemoteSessionSummary, WriteExpectation,
 };
 
 use crate::agent::OutputFormat;
@@ -34,6 +35,10 @@ const MAX_EXIT_CODE: i32 = 255;
 
 /// Largest file `write` sends, matching what the app accepts.
 pub(super) const MAX_WRITE_BYTES: u64 = 512 * 1024;
+
+/// Commands `recent` shows by default, and at most, matching what the app accepts.
+pub(super) const RECENT_DEFAULT_COUNT: u32 = 3;
+pub(super) const RECENT_MAX_COUNT: u32 = 10;
 
 /// Exit code of `read` for a file that does not exist.
 const EXIT_NOT_FOUND: u8 = 1;
@@ -65,6 +70,11 @@ pub enum RemoteCommand {
     /// `--expected-sha256` (the app saves a backup on the server first); `--create` only creates
     /// a file that does not exist.
     Write(RemoteWriteArgs),
+
+    /// Print the latest commands the user ran in the session, with their output.
+    ///
+    /// Read from Warp's blocks: nothing runs on the server.
+    Recent(RemoteRecentArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -127,6 +137,20 @@ pub struct RemoteWriteArgs {
     pub create: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct RemoteRecentArgs {
+    #[command(flatten)]
+    pub target: TargetArgs,
+
+    /// How many of the latest commands to show (1-10).
+    #[arg(
+        long = "count",
+        default_value_t = RECENT_DEFAULT_COUNT,
+        value_parser = clap::value_parser!(u32).range(1..=i64::from(RECENT_MAX_COUNT))
+    )]
+    pub count: u32,
+}
+
 pub(super) fn run_remote_command(
     command: RemoteCommand,
     output_format: OutputFormat,
@@ -136,6 +160,7 @@ pub(super) fn run_remote_command(
         RemoteCommand::Exec(args) => run_exec(args, output_format),
         RemoteCommand::Read(args) => run_read(&args, output_format),
         RemoteCommand::Write(args) => run_write(args, output_format),
+        RemoteCommand::Recent(args) => run_recent(&args, output_format),
     }
 }
 
@@ -251,6 +276,25 @@ fn run_write(args: RemoteWriteArgs, output_format: OutputFormat) -> Result<u8, C
     let result: RemoteFileWriteResult = decode(data.clone(), "write result")?;
     print_result(&data, output_format, || {
         println!("{}", render_write(&result));
+        Ok(())
+    })?;
+    Ok(EXIT_SUCCESS)
+}
+
+fn run_recent(args: &RemoteRecentArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
+    let params = RemoteOutputRecentParams {
+        count: Some(args.count),
+        agent: Some(AGENT_NAME.to_owned()),
+    };
+    let data = send_action(
+        &args.target,
+        ActionKind::RemoteOutputRecent,
+        params,
+        SESSIONS_CLIENT_TIMEOUT,
+    )?;
+    let result: RemoteOutputRecentResult = decode(data.clone(), "command history")?;
+    print_result(&data, output_format, || {
+        println!("{}", terminal_safe(&render_recent(&result)));
         Ok(())
     })?;
     Ok(EXIT_SUCCESS)
@@ -381,6 +425,40 @@ pub(super) fn render_write(result: &RemoteFileWriteResult) -> String {
     );
     if let Some(backup) = &result.backup_path {
         text.push_str(&format!("\nPrevious content saved in {backup}"));
+    }
+    text
+}
+
+pub(super) fn render_recent(result: &RemoteOutputRecentResult) -> String {
+    let session = &result.session;
+    if result.blocks.is_empty() {
+        return format!(
+            "No finished commands in {}@{} yet.",
+            session.user, session.host
+        );
+    }
+    let mut text = format!(
+        "Latest commands the user ran in {}@{}, oldest first:",
+        session.user, session.host
+    );
+    for block in &result.blocks {
+        let cwd = block
+            .cwd
+            .as_deref()
+            .map(|cwd| format!(", in {cwd}"))
+            .unwrap_or_default();
+        text.push_str(&format!(
+            "\n\n$ {}\n[exit {}{cwd}]\n{}",
+            block.command.trim_end(),
+            block.exit_code,
+            block.output.trim_end()
+        ));
+        if block.truncated {
+            text.push_str(&format!(
+                "\n[output cut; the whole output is {} rows]",
+                block.output_rows
+            ));
+        }
     }
     text
 }

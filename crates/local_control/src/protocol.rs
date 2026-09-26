@@ -226,8 +226,11 @@ pub struct RemoteFileWriteParams {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteOutputRecentParams {
+    /// How many of the latest finished commands to return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -590,6 +593,30 @@ pub struct RemoteFileWriteResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_path: Option<String>,
     pub created: bool,
+}
+
+/// A command the user ran in a session, as shown in its block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCommandBlock {
+    pub command: String,
+    pub exit_code: i32,
+    /// Directory the command ran in, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// When `truncated`, the middle of the output is replaced by a note.
+    pub output: String,
+    /// Terminal rows the whole output takes up, counting wrapped lines.
+    pub output_rows: u64,
+    pub truncated: bool,
+}
+
+/// Result of `remote.output.recent`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteOutputRecentResult {
+    #[serde(flatten)]
+    pub session: RemoteSessionRef,
+    /// Oldest first.
+    pub blocks: Vec<RemoteCommandBlock>,
 }
 
 /// Whether a session is on the machine running Warp.

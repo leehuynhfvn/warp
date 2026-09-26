@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use local_control::protocol::{
-    ErrorCode, RemoteAccess, RemoteAttachment, RemoteSessionKind, RemoteSessionSummary,
-    RemoteStream,
+    ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteSessionKind,
+    RemoteSessionSummary, RemoteStream,
 };
 
 use super::*;
@@ -564,7 +564,7 @@ fn invalid_arguments_and_unknown_tools() {
     assert!(result.is_error);
     assert!(result.text.starts_with("Invalid arguments for exec"), "{}", result.text);
 
-    assert_eq!(tools.call_tool("recent_output", json!({})), None);
+    assert_eq!(tools.call_tool("run_script", json!({})), None);
 }
 
 #[test]
@@ -589,6 +589,70 @@ fn every_tool_has_a_schema_and_the_list_matches_the_dispatch() {
         .collect();
     assert_eq!(
         names,
-        ["list_sessions", "exec", "read_file", "write_file", "edit_file"]
+        [
+            "list_sessions",
+            "exec",
+            "read_file",
+            "recent_output",
+            "write_file",
+            "edit_file"
+        ]
+    );
+}
+
+fn recent(blocks: Vec<RemoteCommandBlock>) -> RemoteOutputRecentResult {
+    RemoteOutputRecentResult {
+        session: session_ref(),
+        blocks,
+    }
+}
+
+#[test]
+fn recent_output_asks_for_a_count_in_range_and_hides_secrets() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteOutputRecent,
+        recent(vec![RemoteCommandBlock {
+            command: "cat .env".to_owned(),
+            exit_code: 0,
+            cwd: Some("/srv/app".to_owned()),
+            output: "AWS_SECRET_ACCESS_KEY=abcd1234efgh5678".to_owned(),
+            output_rows: 1,
+            truncated: false,
+        }]),
+    );
+
+    let result = call(
+        &mut tools,
+        "recent_output",
+        json!({ "count": 50, "session_id": "Pane 7" }),
+    );
+
+    let sent = &tools.transport.calls[0];
+    assert_eq!(sent.params, json!({ "count": 10, "agent": "mcp-unknown" }));
+    assert_eq!(sent.session.as_deref(), Some("Pane 7"));
+    assert!(!result.is_error, "{}", result.text);
+    let text = &result.text;
+    assert!(text.contains("$ cat .env\n[exit 0, in /srv/app]"), "{text}");
+    assert!(!text.contains("abcd1234efgh5678"), "{text}");
+}
+
+#[test]
+fn recent_output_defaults_to_three_commands_of_the_attached_session() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteSessionList,
+        session_list(&[("Pane 7", true)]),
+    );
+    answer(&mut tools, ActionKind::RemoteOutputRecent, recent(Vec::new()));
+
+    let result = call(&mut tools, "recent_output", json!({}));
+
+    assert_eq!(tools.transport.calls[1].params["count"], json!(3));
+    assert_eq!(
+        result,
+        ToolResult::ok("No finished commands in root@prod-1 yet.")
     );
 }

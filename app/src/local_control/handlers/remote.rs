@@ -9,11 +9,12 @@ use std::sync::Arc;
 
 use ::local_control::protocol::{
     Action, RemoteAccess, RemoteAttachment, RemoteExecParams, RemoteFileReadParams,
-    RemoteFileWriteParams, RemoteSessionKind, RemoteSessionListResult, RemoteSessionRef,
-    RemoteSessionSummary, RequestEnvelope, SessionTarget, TargetSelector,
+    RemoteFileWriteParams, RemoteOutputRecentParams, RemoteSessionKind, RemoteSessionListResult,
+    RemoteSessionRef, RemoteSessionSummary, RequestEnvelope, SessionTarget, TargetSelector,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode};
 use futures::channel::oneshot;
+use parking_lot::FairMutex;
 use serde_json::Value;
 use warpui::{ModelContext, SingletonEntity};
 
@@ -23,8 +24,10 @@ use crate::agent_bridge::audit::audit_dir;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::ops::{self, SessionRunner, Target};
+use crate::agent_bridge::recent;
 use crate::features::FeatureFlag;
 use crate::local_control::LocalControlBridge;
+use crate::terminal::model::TerminalModel;
 use crate::terminal::model::session::Session;
 use crate::warp_sync::printable;
 
@@ -36,6 +39,7 @@ struct SessionSnapshot {
     session_id: String,
     session: Arc<Session>,
     cwd: Option<String>,
+    terminal_model: Arc<FairMutex<TerminalModel>>,
 }
 
 /// One of the operations that run on the server.
@@ -113,25 +117,10 @@ pub(crate) fn start(
     let session = snapshot.session;
     let operation = Operation::parse(&request.action)?;
     let runner = SessionRunner::new(session.clone()).map_err(ControlError::from)?;
+    check_access(&session, operation.needed_access(), ctx)?;
 
     let id = session.id();
-    let needed = operation.needed_access();
-    AgentBridgeModel::handle(ctx)
-        .update(ctx, |model, _| {
-            model.check(id, needed, session.user(), session.hostname())
-        })
-        .map_err(ControlError::from)?;
-
-    let target = Target {
-        session: RemoteSessionRef {
-            session_id: snapshot.session_id,
-            host: printable(session.hostname()),
-            user: printable(session.user()),
-        },
-        cwd: snapshot.cwd,
-        request_id: request.request_id,
-        audit_dir: audit_dir(),
-    };
+    let target = target(snapshot.session_id, &session, snapshot.cwd, request);
     let is_exec = operation.is_exec();
     let (sender, receiver) = oneshot::channel();
     ctx.spawn(
@@ -144,6 +133,73 @@ pub(crate) fn start(
         },
     );
     Ok(receiver)
+}
+
+/// Copies the latest commands of an attached session out of its blocks. The answer arrives on the
+/// returned receiver so that writing the audit log does not hold up the main thread.
+pub(crate) fn output_recent(
+    request: &RequestEnvelope,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<RemoteReceiver, ControlError> {
+    let kind = request.action.kind;
+    ensure_enabled(kind)?;
+    let params = request.action.params_as::<RemoteOutputRecentParams>()?;
+    let count = recent::block_count(params.count).map_err(ControlError::from)?;
+    ops::validate_agent(params.agent.as_deref()).map_err(ControlError::from)?;
+    let snapshot = resolve(&request.target, kind, ctx)?;
+    let session = snapshot.session;
+    ops::ensure_supported(&session).map_err(ControlError::from)?;
+    check_access(&session, Access::ReadOnly, ctx)?;
+
+    let id = session.id();
+    let blocks = {
+        let model = snapshot.terminal_model.lock();
+        recent::capture(model.block_list(), id, count)
+    };
+    let target = target(snapshot.session_id, &session, snapshot.cwd, request);
+    let (sender, receiver) = oneshot::channel();
+    ctx.spawn(
+        async move { ops::recent_output(&target, params.agent.as_deref(), blocks) },
+        move |_, result, ctx| {
+            AgentBridgeModel::handle(ctx).update(ctx, |model, _| model.record_use(id, false));
+            if sender.send(result.map_err(ControlError::from)).is_err() {
+                log::debug!("A local-control client stopped waiting for a remote result");
+            }
+        },
+    );
+    Ok(receiver)
+}
+
+/// Fails unless the user attached `session` with at least `needed` access.
+fn check_access(
+    session: &Session,
+    needed: Access,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<(), ControlError> {
+    let id = session.id();
+    AgentBridgeModel::handle(ctx)
+        .update(ctx, |model, _| {
+            model.check(id, needed, session.user(), session.hostname())
+        })
+        .map_err(ControlError::from)
+}
+
+fn target(
+    session_id: String,
+    session: &Session,
+    cwd: Option<String>,
+    request: &RequestEnvelope,
+) -> Target {
+    Target {
+        session: RemoteSessionRef {
+            session_id,
+            host: printable(session.hostname()),
+            user: printable(session.user()),
+        },
+        cwd,
+        request_id: request.request_id,
+        audit_dir: audit_dir(),
+    }
 }
 
 fn ensure_enabled(kind: ActionKind) -> Result<(), ControlError> {
@@ -202,6 +258,7 @@ fn read_session(
                 session_id: entry.pane_id.to_string(),
                 session: active.session(ctx)?,
                 cwd: active.current_working_directory().cloned(),
+                terminal_model: view.model.clone(),
             })
         })
     })

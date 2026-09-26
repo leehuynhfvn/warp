@@ -6,8 +6,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
     ActionKind, ControlError, RemoteExecParams, RemoteExecResult, RemoteFileReadParams,
-    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteSessionListResult,
-    RemoteSessionRef, WriteExpectation,
+    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
+    RemoteOutputRecentResult, RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -20,7 +20,7 @@ use super::jsonrpc::{McpHandler, ToolResult};
 use super::redact::Redactor;
 use crate::local_control::remote::{
     EXEC_CLIENT_MARGIN, EXEC_DEFAULT_TIMEOUT_SECS, FILE_CLIENT_TIMEOUT, MAX_WRITE_BYTES,
-    SESSIONS_CLIENT_TIMEOUT, decode,
+    RECENT_DEFAULT_COUNT, RECENT_MAX_COUNT, SESSIONS_CLIENT_TIMEOUT, decode, render_recent,
 };
 
 /// Audit name when the client does not say who it is.
@@ -39,6 +39,8 @@ These tools act on a remote server through a terminal session the user opened in
 `ssh` then `sudo -i`, so commands often run as root). They are not your local shell: use your own \
 Bash/Read/Edit tools for this machine and these tools for the server.
 - Call list_sessions first and name the user@host you are about to change before any change.
+- When the user refers to something they just ran or an error they just saw in that terminal, \
+call recent_output to read it instead of running the command again.
 - Prefer read_file + edit_file for config files; edit_file only needs the lines you change.
 - Check syntax before reloading a service (nginx -t, sshd -t, visudo -c, apachectl configtest, \
 systemd-analyze verify) and verify the result afterwards.
@@ -102,6 +104,13 @@ struct ReadFileArgs {
 struct WriteFileArgs {
     path: String,
     content: String,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecentOutputArgs {
+    count: Option<u32>,
     session_id: Option<String>,
 }
 
@@ -274,6 +283,26 @@ impl<T: ControlTransport> Tools<T> {
         ))
     }
 
+    fn recent_output(&mut self, args: Value) -> Result<String, ToolError> {
+        let args: RecentOutputArgs = parse_args("recent_output", args)?;
+        let session_id = self.resolve_session(args.session_id)?;
+        let params = RemoteOutputRecentParams {
+            count: Some(
+                args.count
+                    .unwrap_or(RECENT_DEFAULT_COUNT)
+                    .clamp(1, RECENT_MAX_COUNT),
+            ),
+            agent: Some(self.agent.clone()),
+        };
+        let result: RemoteOutputRecentResult = self.call(
+            ActionKind::RemoteOutputRecent,
+            params,
+            Some(&session_id),
+            SESSIONS_CLIENT_TIMEOUT,
+        )?;
+        Ok(render_recent(&result))
+    }
+
     /// The session a tool call acts on: the one asked for, or else the only attached one.
     fn resolve_session(&mut self, requested: Option<String>) -> Result<String, ToolError> {
         if let Some(session_id) = requested {
@@ -431,6 +460,7 @@ impl<T: ControlTransport> McpHandler for Tools<T> {
             "read_file" => self.read_file(arguments),
             "write_file" => self.write_file(arguments),
             "edit_file" => self.edit_file(arguments),
+            "recent_output" => self.recent_output(arguments),
             _ => return None,
         };
         Some(match outcome {
@@ -592,6 +622,26 @@ fn tool_definitions() -> Value {
                     "session_id": session_id_schema()
                 },
                 "required": ["path"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true, "openWorldHint": false }
+        },
+        {
+            "name": "recent_output",
+            "title": "Show the user's recent commands",
+            "description": "Show the latest commands the user ran in an attached Warp session, \
+                            with exit code, directory and output (long output is cut in the \
+                            middle). Reads what the terminal already shows; nothing runs on the \
+                            server.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer", "minimum": 1, "maximum": 10,
+                        "description": "How many of the latest commands to show (default 3)."
+                    },
+                    "session_id": session_id_schema()
+                },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true, "openWorldHint": false }

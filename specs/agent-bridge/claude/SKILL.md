@@ -1,6 +1,6 @@
 ---
 name: warp-remote-ops
-description: Operate on a remote server through a Warp terminal session with the warp-bridge MCP tools (list_sessions, exec, read_file, edit_file, write_file). Use when the user asks to inspect, diagnose, configure or fix something "on the server", "on prod-1", "in my Warp session", or names a host that is open in Warp.
+description: Operate on a remote server through a Warp terminal session with the warp-bridge MCP tools (list_sessions, exec, read_file, edit_file, write_file, recent_output). Use when the user asks to inspect, diagnose, configure or fix something "on the server", "on prod-1", "in my Warp session", or names a host that is open in Warp.
 ---
 
 # Remote operations through Warp
@@ -16,11 +16,13 @@ not your local shell: Bash, Read and Edit still act on this machine.
    the pane of that server, then stop.
 2. Say which `user@host` you are about to work on. If several sessions are attached, pass
    `session_id` on every call.
-3. Read-only attachments allow `read_file` only.
+3. Read-only attachments allow `read_file` and `recent_output` only.
 
 ## Workflow
 
-1. **Diagnose** with read-only commands: `systemctl status --no-pager <unit>`,
+1. **Diagnose**. When the user mentions something they just ran or an error they just saw, call
+   `recent_output` first: it returns their latest commands with exit code and output, without
+   running anything. Then use read-only commands: `systemctl status --no-pager <unit>`,
    `journalctl -u <unit> -n 100 --no-pager`, `ss -tlnp`, `df -h`, `free -m`, `read_file` on the
    config. Narrow long output with `grep`, `head`, `tail`; output is cut in the middle past a few
    dozen KiB.

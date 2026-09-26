@@ -217,21 +217,14 @@ fn direct_surface_actions_have_stable_names() {
     );
 }
 
-/// Actions declared in the catalog whose app-side handler has not landed yet.
-const STUB_ACTIONS: &[ActionKind] = &[ActionKind::RemoteOutputRecent];
-
 #[test]
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
-        let expected = if STUB_ACTIONS.contains(kind) {
-            ActionImplementationStatus::Stub
-        } else {
-            ActionImplementationStatus::Implemented
-        };
         assert_eq!(
-            metadata.implementation_status, expected,
-            "{} has an unexpected implementation status",
+            metadata.implementation_status,
+            ActionImplementationStatus::Implemented,
+            "{} should be implemented",
             metadata.name,
         );
     }
@@ -243,12 +236,7 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    let expected = ActionKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| !STUB_ACTIONS.contains(kind))
-        .collect::<Vec<_>>();
-    assert_eq!(actions, expected);
+    assert_eq!(actions, ActionKind::ALL);
 }
 
 #[test]
@@ -593,7 +581,10 @@ fn remote_params_roundtrip_and_omit_absent_options() {
 
     let recent = Action::with_params(
         ActionKind::RemoteOutputRecent,
-        RemoteOutputRecentParams { count: Some(3) },
+        RemoteOutputRecentParams {
+            count: Some(3),
+            agent: None,
+        },
     )
     .expect("serializes");
     assert_eq!(recent.params, serde_json::json!({ "count": 3 }));

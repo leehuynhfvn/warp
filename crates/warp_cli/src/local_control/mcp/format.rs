@@ -172,7 +172,7 @@ fn render_session(session: &RemoteSessionSummary) -> String {
         (RemoteSessionKind::Remote, Some(attached)) => {
             let access = match attached.access {
                 RemoteAccess::Full => "attached: exec, read and write",
-                RemoteAccess::ReadOnly => "attached read-only: read_file only",
+                RemoteAccess::ReadOnly => "attached read-only: read_file and recent_output only",
             };
             format!(
                 "{access}; expires after {} idle",

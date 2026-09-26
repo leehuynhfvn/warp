@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use clap_complete::aot::Shell;
 use local_control::protocol::{
-    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteExecResult,
-    RemoteFileWriteResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
+    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteExecResult,
+    RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
     RemoteStream, SyncChange, SyncConfirmation, SyncDifference,
     SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary, SyncSkippedEntry,
     SyncUploadSummary,
@@ -239,9 +239,6 @@ fn generated_bash_completions_include_readonly_commands() {
     assert!(!completions.contains("block"));
 }
 
-/// Actions that no `warpctrl` command runs yet.
-const REMOTE_ACTIONS_WITHOUT_CLI: &[ActionKind] = &[ActionKind::RemoteOutputRecent];
-
 #[test]
 fn every_retained_catalog_action_has_a_parseable_cli_example() {
     let mut covered = HashSet::new();
@@ -251,11 +248,7 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
         assert_eq!(parsed_action_kind(&args.command), Some(kind));
         covered.insert(kind);
     }
-    let expected = ActionKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| !REMOTE_ACTIONS_WITHOUT_CLI.contains(kind))
-        .collect::<HashSet<_>>();
+    let expected = ActionKind::ALL.iter().copied().collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)
         .map(|kind| kind.as_str())
@@ -613,6 +606,10 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
                 "--create",
             ],
         ),
+        (
+            ActionKind::RemoteOutputRecent,
+            vec!["warpctrl", "remote", "recent", "--session", "12", "--count", "5"],
+        ),
         (ActionKind::SyncStatus, vec!["warpctrl", "sync", "status"]),
         (
             ActionKind::SyncDownload,
@@ -802,6 +799,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             RemoteCommand::Exec(_) => Some(ActionKind::RemoteExec),
             RemoteCommand::Read(_) => Some(ActionKind::RemoteFileRead),
             RemoteCommand::Write(_) => Some(ActionKind::RemoteFileWrite),
+            RemoteCommand::Recent(_) => Some(ActionKind::RemoteOutputRecent),
         },
         ControlCommand::Sync(command) => match command {
             SyncCommand::Status(_) => Some(ActionKind::SyncStatus),
@@ -1258,6 +1256,57 @@ fn remote_write_needs_exactly_one_expectation() {
         panic!("expected remote write");
     };
     assert!(args.create && args.expected_sha256.is_none());
+}
+
+#[test]
+fn remote_recent_shows_three_commands_by_default_and_at_most_ten() {
+    let args = ControlArgs::try_parse_from(["warpctrl", "remote", "recent", "--session", "1"])
+        .expect("remote recent parses");
+    let ControlCommand::Remote(RemoteCommand::Recent(args)) = args.command else {
+        panic!("expected remote recent");
+    };
+    assert_eq!(args.count, 3);
+    for count in ["0", "11"] {
+        let parsed = ControlArgs::try_parse_from(["warpctrl", "remote", "recent", "--count", count]);
+        assert!(parsed.is_err(), "--count {count}");
+    }
+}
+
+#[test]
+fn recent_output_lists_each_command_with_its_exit_code_and_whether_it_was_cut() {
+    use remote::render_recent;
+    let session = RemoteSessionRef {
+        session_id: "12".to_owned(),
+        host: "prod-1".to_owned(),
+        user: "root".to_owned(),
+    };
+    let block = |command: &str, cwd: Option<&str>, truncated: bool| RemoteCommandBlock {
+        command: command.to_owned(),
+        exit_code: 1,
+        cwd: cwd.map(str::to_owned),
+        output: "failed\n".to_owned(),
+        output_rows: 900,
+        truncated,
+    };
+    let result = RemoteOutputRecentResult {
+        session: session.clone(),
+        blocks: vec![
+            block("nginx -t", Some("/etc/nginx"), false),
+            block("journalctl -u nginx", None, true),
+        ],
+    };
+    assert_eq!(
+        render_recent(&result),
+        "Latest commands the user ran in root@prod-1, oldest first:\n\n\
+         $ nginx -t\n[exit 1, in /etc/nginx]\nfailed\n\n\
+         $ journalctl -u nginx\n[exit 1]\nfailed\n[output cut; the whole output is 900 rows]"
+    );
+
+    let empty = RemoteOutputRecentResult {
+        session,
+        blocks: Vec::new(),
+    };
+    assert_eq!(render_recent(&empty), "No finished commands in root@prod-1 yet.");
 }
 
 fn exec_result(exit_code: i32) -> RemoteExecResult {

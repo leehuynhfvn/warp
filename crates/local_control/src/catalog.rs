@@ -317,7 +317,7 @@ define_action_catalog! {
         RemoteExec => { name: "remote.exec", status: Implemented, target: Session, params: RemoteExec, result: RemoteExecResult },
         RemoteFileRead => { name: "remote.file.read", status: Implemented, target: Session, params: RemoteFileRead, result: RemoteFileContent },
         RemoteFileWrite => { name: "remote.file.write", status: Implemented, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
-        RemoteOutputRecent => { name: "remote.output.recent", status: Stub, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },
+        RemoteOutputRecent => { name: "remote.output.recent", status: Implemented, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },
     }
 
     file {

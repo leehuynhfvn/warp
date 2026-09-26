@@ -211,13 +211,9 @@ impl LocalControlBridge {
             ActionKind::RemoteExec | ActionKind::RemoteFileRead | ActionKind::RemoteFileWrite => {
                 return pending(request.request_id, remote::start(&request, ctx));
             }
-            ActionKind::RemoteOutputRecent => Err(ControlError::new(
-                ErrorCode::UnsupportedAction,
-                format!(
-                    "{} is not implemented by this local-control bridge",
-                    request.action.kind.as_str()
-                ),
-            )),
+            ActionKind::RemoteOutputRecent => {
+                return pending(request.request_id, remote::output_recent(&request, ctx));
+            }
             ActionKind::SyncStatus => {
                 return pending(
                     request.request_id,
