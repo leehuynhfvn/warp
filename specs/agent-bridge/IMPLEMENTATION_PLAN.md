@@ -711,7 +711,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 1.1 Protocol · [x] 1.2 Visibility Warp Sync · [x] 1.3 mod/error · [x] 1.4 script · [x] 1.5 attachments · [x] 1.6 audit
 - [x] 2.1 Flag · [x] 2.2 ops · [x] 2.3 model · [x] 2.4 bridge async (bỏ qua, D13) · [x] 2.5 handlers · [x] 2.6 palette · [x] 2.7 CLI · [x] 2.8 review
 - [x] ⛔ CHECKPOINT A (user, 2026-09-25) — độ trễ đo được: `exec -- 'id -un; hostname'` 0,183 s tổng (CLI+HTTP+PTY), `duration_ms` 43; checklist 5.A bước 1–9 đều đúng kỳ vọng (root thật, `SessionBusy`, timeout 124, output 6,9 MB bị cắt, ghi file có backup giữ mode, read-only/revoke/exit, audit 0600, tắt Scripting)
-- [ ] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
+- [x] 3.1 deps · [ ] 3.2 jsonrpc · [ ] 3.3 edit/format/redact · [ ] 3.4 tools · [ ] 3.5 `warpctrl mcp` · [ ] 3.6 docs · [ ] 3.7 review
 - [ ] ⛔ CHECKPOINT B (user)
 - [ ] 4.1 recent_output · [ ] 4.2 indicator · [ ] 4.3 format
 - [ ] ⛔ CHECKPOINT C (user)
@@ -768,3 +768,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-25 — Việc còn lại: Phase 3 (3.1–3.7 + CHECKPOINT B), Phase 4 (4.1 `remote.output.recent`, 4.2 indicator, 4.3 `./script/format` một lần), CHECKPOINT C. Rủi ro chấp nhận ở D21 vẫn còn hiệu lực.
 - 2026-09-25 — Câu hỏi mở về backend MCP nay gắn với nhánh **G** của `specs/agent-ops/ROADMAP.md` (AO6–AO8): backend ssh trực tiếp chính là G3. Khuyến nghị cho Phase 3: vẫn làm MCP với backend bridge, nhưng tách phần chọn session/backend thành một chỗ (trait/enum) để G2/G3 thêm `host` alias và kênh exec trực tiếp mà không đổi tool của agent.
 - 2026-09-26 — Lưu server SSH (profile, mật khẩu, tag, quick connect, đồng bộ hai chiều với `~/.ssh/config`, nối mirror Warp Sync) **không thuộc O1**: ghi vào G1 của `specs/agent-ops/ROADMAP.md` (G1a–G1d, AO9–AO12). Kiểm code: Warp không có kho host SSH, chỉ `cat ~/.ssh/config`/`known_hosts` khi gợi ý lệnh `ssh`. Ảnh hưởng tới Phase 3: MCP nên có chỗ để thêm tool `list_hosts` sau này (cùng chỗ chọn backend ở trên).
+- 2026-09-26 — Bắt đầu Phase 3 theo khuyến nghị ở nhật ký 2026-09-25 (D22). Task 3.1: `regex`, `secret_redaction`, `sha2` cho `warp_cli` (`base64` đã có từ Task 2.7).

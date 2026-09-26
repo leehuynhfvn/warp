@@ -13,7 +13,10 @@ clap = { workspace = true, features = ["derive", "env"] }
 cfg-if = { workspace = true }
 humantime.workspace = true
 jaq-all.workspace = true
+regex.workspace = true
+secret_redaction.workspace = true
 serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
 serde_json.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
