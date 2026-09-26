@@ -18,10 +18,12 @@ use commands::{
     run_tab_command, run_theme_command, run_window_command,
 };
 use completions::generate_completions_to_stdout;
+use mcp::run_mcp;
 use output::write_control_error;
 use remote::run_remote_command;
 use sync::{parse_pending_id, run_sync_command};
 
+pub use mcp::McpArgs;
 pub use remote::{RemoteCommand, RemoteExecArgs, RemoteReadArgs, RemoteWriteArgs};
 
 use crate::agent::OutputFormat;
@@ -206,6 +208,9 @@ pub enum ControlCommand {
     /// Run commands and read and write files in a remote session that agents may use.
     #[command(subcommand)]
     Remote(RemoteCommand),
+
+    /// Serve the remote-session commands to an agent as MCP tools on stdin and stdout.
+    Mcp(McpArgs),
 
     /// Generate shell completions for your shell to stdout.
     ///
@@ -984,7 +989,12 @@ pub fn run_and_exit(args: ControlArgs) -> ! {
 }
 
 fn run_exit_code(args: ControlArgs) -> u8 {
-    let output_format = args.output_format;
+    // stdout of the MCP server belongs to the protocol, so its errors always go to stderr.
+    let output_format = if matches!(args.command, ControlCommand::Mcp(_)) {
+        OutputFormat::Text
+    } else {
+        args.output_format
+    };
     match run_inner(args) {
         Ok(exit_code) => exit_code,
         Err(error) => {
@@ -1004,6 +1014,7 @@ fn run_inner(args: ControlArgs) -> Result<u8, local_control::protocol::ControlEr
     let result = match args.command {
         ControlCommand::Sync(command) => return run_sync_command(command, output_format),
         ControlCommand::Remote(command) => return run_remote_command(command, output_format),
+        ControlCommand::Mcp(args) => return run_mcp(args),
         ControlCommand::Instance(command) => run_instance_command(command, output_format),
         ControlCommand::App(command) => run_app_command(command, output_format),
         ControlCommand::Capability(command) => run_capability_command(command, output_format),

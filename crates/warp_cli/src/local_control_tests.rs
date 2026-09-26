@@ -811,7 +811,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             SyncCommand::Cancel(_) => Some(ActionKind::SyncCancel),
             SyncCommand::Compare(_) => Some(ActionKind::SyncCompare),
         },
-        ControlCommand::Completions { .. } => None,
+        ControlCommand::Mcp(_) | ControlCommand::Completions { .. } => None,
     }
 }
 
@@ -1212,6 +1212,27 @@ fn remote_exec_needs_a_command_and_defaults_to_two_minutes() {
         panic!("expected remote exec");
     };
     assert_eq!(args.timeout_secs, 120);
+}
+
+#[test]
+fn mcp_is_reached_through_the_control_mode_flag() {
+    let args = ControlArgs::try_parse_control_mode_from(["warp", "--warpctrl", "mcp"])
+        .expect("control mode is detected")
+        .expect("mcp parses");
+    let ControlCommand::Mcp(args) = args.command else {
+        panic!("expected mcp");
+    };
+    assert_eq!(args.instance, None);
+    assert!(!args.no_redact);
+
+    let args =
+        ControlArgs::try_parse_from(["warpctrl", "mcp", "--instance", "abc", "--no-redact"])
+            .expect("mcp parses");
+    let ControlCommand::Mcp(args) = args.command else {
+        panic!("expected mcp");
+    };
+    assert_eq!(args.instance.as_deref(), Some("abc"));
+    assert!(args.no_redact);
 }
 
 #[test]
