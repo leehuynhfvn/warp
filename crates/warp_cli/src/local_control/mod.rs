@@ -1,6 +1,7 @@
 //! Command-line interface for controlling a running local Warp app.
 mod commands;
 mod completions;
+mod mcp;
 mod output;
 mod remote;
 mod selectors;
