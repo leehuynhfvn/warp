@@ -171,7 +171,7 @@ impl<T: ControlTransport> Tools<T> {
         self.remember(&file.session, &file.path, file.sha256);
         let visible = self.redactor.to_model_text(&content);
         let first_line = args.offset.map_or(1, to_usize);
-        let limit = args.limit.map_or(DEFAULT_READ_LIMIT, to_usize);
+        let limit = args.limit.map_or(DEFAULT_READ_LIMIT, to_usize).max(1);
         Ok(render_read(
             &file.session,
             &file.path,
@@ -188,6 +188,12 @@ impl<T: ControlTransport> Tools<T> {
         let (path, expectation) = match self.read_raw(&session_id, &args.path)? {
             None => (args.path, WriteExpectation::MustNotExist),
             Some(file) => {
+                if std::str::from_utf8(&file.bytes).is_err() {
+                    return Err(format!(
+                        "{} is a binary file; write_file only replaces text files.",
+                        place(&file.session, &file.path)
+                    ));
+                }
                 self.check_seen(&file)?;
                 if self
                     .redactor

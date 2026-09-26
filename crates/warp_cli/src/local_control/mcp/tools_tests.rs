@@ -16,7 +16,6 @@ struct FakeTransport {
 
 #[derive(Debug, Clone)]
 struct Call {
-    action: ActionKind,
     params: Value,
     session: Option<String>,
     timeout: Duration,
@@ -31,7 +30,6 @@ impl ControlTransport for FakeTransport {
         timeout: Duration,
     ) -> Result<Value, ControlError> {
         self.calls.push(Call {
-            action,
             params,
             session: session.map(str::to_owned),
             timeout,
@@ -276,6 +274,42 @@ fn read_file_reports_missing_and_binary_files() {
     );
     assert!(result.is_error);
     assert!(result.text.contains("binary file"), "{}", result.text);
+}
+
+#[test]
+fn read_file_shows_at_least_one_line() {
+    let mut tools = tools();
+    answer(&mut tools, ActionKind::RemoteFileRead, file("/etc/a", "x\ny\n"));
+
+    let result = call(
+        &mut tools,
+        "read_file",
+        json!({ "path": "/etc/a", "limit": 0, "session_id": "Pane 7" }),
+    );
+
+    assert!(result.text.contains("     1\tx\n"), "{}", result.text);
+    assert!(result.text.contains("offset=2"), "{}", result.text);
+}
+
+#[test]
+fn write_file_does_not_replace_binary_files() {
+    let mut tools = tools();
+    let mut binary = file("/bin/x", "");
+    if let RemoteFileReadResult::Ok { content_base64, .. } = &mut binary {
+        *content_base64 = BASE64.encode([0xff, 0xfe, 0x00]);
+    }
+    answer(&mut tools, ActionKind::RemoteFileRead, binary);
+
+    let result = call(
+        &mut tools,
+        "write_file",
+        json!({ "path": "/bin/x", "content": "text", "session_id": "Pane 7" }),
+    );
+
+    assert_eq!(
+        result,
+        ToolResult::error("root@prod-1:/bin/x is a binary file; write_file only replaces text files.")
+    );
 }
 
 #[test]
