@@ -20,10 +20,25 @@ fn the_messages_do_not_name_a_particular_agent() {
         revoked_message(true).to_owned(),
         revoked_message(false).to_owned(),
         revoked_all_message(2),
+        indicator_label(Access::Full, "root"),
+        revoke_tooltip("root", "h"),
     ];
     for text in texts {
         assert!(!text.to_lowercase().contains("claude"), "{text}");
     }
+}
+
+#[test]
+fn the_indicator_names_the_user_and_says_when_access_is_read_only() {
+    assert_eq!(indicator_label(Access::Full, "root"), "Agents · root");
+    assert_eq!(
+        indicator_label(Access::ReadOnly, "deploy"),
+        "Agents · deploy · read-only"
+    );
+    assert_eq!(
+        revoke_tooltip("root", "prod-1"),
+        "Revoke agent access to root@prod-1"
+    );
 }
 
 #[test]

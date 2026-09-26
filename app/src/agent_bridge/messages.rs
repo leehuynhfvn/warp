@@ -36,6 +36,18 @@ pub(crate) fn revoked_all_message(count: usize) -> String {
     }
 }
 
+/// Label next to the title of a pane whose session agents may use.
+pub(crate) fn indicator_label(access: Access, user: &str) -> String {
+    match access {
+        Access::Full => format!("Agents · {user}"),
+        Access::ReadOnly => format!("Agents · {user} · read-only"),
+    }
+}
+
+pub(crate) fn revoke_tooltip(user: &str, host: &str) -> String {
+    format!("Revoke agent access to {user}@{host}")
+}
+
 /// The command that adds the bridge's MCP server to Claude Code.
 pub(crate) fn setup_command(executable: &Path) -> String {
     let executable = posix_quote(&executable.to_string_lossy());

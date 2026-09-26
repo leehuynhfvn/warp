@@ -19,6 +19,9 @@ use warpui::{
 use super::ambient_agent::is_cloud_agent_pre_first_exchange;
 use super::shared_session::adapter::Kind as SharedSessionKind;
 use super::{Event, PaneConfiguration, TerminalAction, TerminalViewState, Viewer};
+use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
+use crate::agent_bridge::messages as agent_bridge_messages;
+use crate::agent_bridge::model::AgentBridgeModel;
 use crate::ai::agent::conversation::{
     AIConversation, ConversationStatus, ServerAIConversationMetadata,
 };
@@ -52,6 +55,7 @@ use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
 use crate::ui_components::{blended_colors, icons};
 use crate::util::bindings::keybinding_name_to_display_string;
+use crate::warp_sync::printable;
 use crate::workspace::tab_settings::TabSettings;
 #[cfg(target_arch = "wasm32")]
 use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
@@ -330,6 +334,8 @@ impl TerminalView {
                     .finish(),
                 )
             }
+        } else if let Some(indicator) = self.render_agent_bridge_indicator(app) {
+            Some(indicator)
         } else if self.is_using_conversation_for_pane_header_title
             || (self.is_long_running()
                 && self
@@ -440,6 +446,14 @@ impl TerminalView {
         } else {
             None
         };
+
+        if let Some(button) = self.render_agent_bridge_revoke_button(app) {
+            icon_button_count += 1;
+            left_of_overflow = Some(match left_of_overflow {
+                Some(existing) => Flex::row().with_child(existing).with_child(button).finish(),
+                None => button,
+            });
+        }
 
         if let Some(button) = button_element {
             icon_button_count += 1;
@@ -703,6 +717,17 @@ impl BackingView for TerminalView {
             );
         }
 
+        if self.agent_bridge_access(ctx).is_some() {
+            if !items.is_empty() {
+                items.push(MenuItem::Separator);
+            }
+            items.push(
+                MenuItemFields::new("Revoke agent access")
+                    .with_on_select_action(TerminalAction::RevokeAgentBridgeAccess)
+                    .into_item(),
+            );
+        }
+
         // Split-pane related items.
         if self.split_pane_state(ctx).is_in_split_pane() {
             if !items.is_empty() {
@@ -734,6 +759,7 @@ impl BackingView for TerminalView {
             && self.agent_view_controller.as_ref(app).is_fullscreen();
         is_shared
             || is_fullscreen_agent_view
+            || self.agent_bridge_access(app).is_some()
             || FeatureFlag::ContextWindowUsageV2.is_enabled()
                 && self.split_pane_state(app).is_in_split_pane()
     }
@@ -975,6 +1001,93 @@ impl TerminalView {
             hide_role_change_button,
             app,
         ))
+    }
+
+    /// What the user allowed agents to do in the active session, if anything.
+    fn agent_bridge_access(&self, app: &AppContext) -> Option<AgentBridgeAccess> {
+        if !FeatureFlag::AgentBridge.is_enabled() {
+            return None;
+        }
+        let session = self.active_session().as_ref(app).session(app)?;
+        AgentBridgeModel::as_ref(app)
+            .status(session.id())
+            .map(|status| status.access)
+    }
+
+    /// An icon and the session's user, so that the user can tell at a glance that agents may act
+    /// in this pane and as whom.
+    fn render_agent_bridge_indicator(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let access = self.agent_bridge_access(app)?;
+        let session = self.active_session().as_ref(app).session(app)?;
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        // Full access can change the server, so it is shown in the warning color.
+        let color = match access {
+            AgentBridgeAccess::Full => theme.terminal_colors().normal.yellow.into(),
+            AgentBridgeAccess::ReadOnly => theme.sub_text_color(theme.background()).into_solid(),
+        };
+        let icon_size = appearance.ui_font_size();
+        let label =
+            agent_bridge_messages::indicator_label(access, &printable(session.user()));
+        Some(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(
+                    ConstrainedBox::new(icons::Icon::Agent.to_warpui_icon(color.into()).finish())
+                        .with_height(icon_size)
+                        .with_width(icon_size)
+                        .finish(),
+                )
+                .with_child(
+                    Container::new(render_pane_header_title_text(
+                        label,
+                        appearance,
+                        ClipConfig::end(),
+                    ))
+                    .with_margin_left(4.)
+                    .with_margin_right(4.)
+                    .finish(),
+                )
+                .finish(),
+        )
+    }
+
+    fn render_agent_bridge_revoke_button(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        self.agent_bridge_access(app)?;
+        let session = self.active_session().as_ref(app).session(app)?;
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let ui_builder = appearance.ui_builder().clone();
+        let tooltip = agent_bridge_messages::revoke_tooltip(
+            &printable(session.user()),
+            &printable(session.hostname()),
+        );
+        Some(
+            icon_button_with_color(
+                appearance,
+                icons::Icon::SlashCircle,
+                false,
+                self.agent_bridge_revoke_mouse_state.clone(),
+                blended_colors::text_sub(theme, theme.background()).into(),
+            )
+            .with_tooltip(move || ui_builder.tool_tip(tooltip.clone()).build().finish())
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action::<PaneHeaderAction<TerminalAction, TerminalAction>>(
+                    PaneHeaderAction::CustomAction(TerminalAction::RevokeAgentBridgeAccess),
+                );
+            })
+            .finish(),
+        )
+    }
+
+    pub(super) fn revoke_agent_bridge_access(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(session) = self.active_session().as_ref(ctx).session(ctx) else {
+            return;
+        };
+        AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| {
+            model.detach(session.id(), ctx);
+        });
     }
 
     pub fn is_ambient_agent_session(&self, ctx: &AppContext) -> bool {

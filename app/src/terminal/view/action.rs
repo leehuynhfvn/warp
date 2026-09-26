@@ -298,6 +298,8 @@ pub enum TerminalAction {
     StopSharingCurrentSession {
         source: SharedSessionActionSource,
     },
+    /// Withdraws the permission the user gave agents to use the active session.
+    RevokeAgentBridgeAccess,
     OpenSharedSessionOnDesktop {
         source: SharedSessionActionSource,
     },
@@ -630,6 +632,7 @@ impl fmt::Debug for TerminalAction {
             StopSharingCurrentSession { source } => {
                 write!(f, "StopSharingCurrentSession({source:?})")
             }
+            RevokeAgentBridgeAccess => f.write_str("RevokeAgentBridgeAccess"),
             OpenSharedSessionOnDesktop { source } => {
                 write!(f, "OpenSharedSessionOnDesktop({source:?})")
             }

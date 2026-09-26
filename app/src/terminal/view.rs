@@ -28,6 +28,7 @@ use repo_metadata::CanonicalizedPath;
 use warp_util::remote_path::RemotePath;
 use warp_util::standardized_path::StandardizedPath;
 
+use crate::agent_bridge::model::AgentBridgeModel;
 use crate::ai::block_context::BlockContext;
 use crate::global_resource_handles::GlobalResourceHandlesProvider;
 pub(crate) mod docker_sandbox;
@@ -2815,6 +2816,8 @@ pub struct TerminalView {
     /// can decide whether to auto-copy the link vs open the sharing dialog.
     pending_share_source: Option<SharedSessionActionSource>,
 
+    agent_bridge_revoke_mouse_state: MouseStateHandle,
+
     /// When true, automatically stop the shared session when the CLI agent session ends.
     /// Set when sharing is started from the remote control entrypoint.
     auto_stop_sharing_on_cli_end: bool,
@@ -4220,6 +4223,14 @@ impl TerminalView {
                 me.set_active_session_state(state, ctx);
             },
         );
+        if FeatureFlag::AgentBridge.is_enabled() {
+            ctx.observe(&AgentBridgeModel::handle(ctx), |me, _, ctx| {
+                me.refresh_pane_header(ctx);
+                me.pane_configuration.update(ctx, |config, ctx| {
+                    config.notify_header_content_changed(ctx);
+                });
+            });
+        }
         ctx.subscribe_to_model(&KeybindingChangedNotifier::handle(ctx), |me, _, _, ctx| {
             me.cancel_command_keystroke =
                 keybinding_name_to_keystroke(CANCEL_COMMAND_KEYBINDING, ctx);
@@ -4491,6 +4502,7 @@ impl TerminalView {
             ai_render_context,
             get_relevant_files_controller,
             shared_session: None,
+            agent_bridge_revoke_mouse_state: Default::default(),
             pending_share_source: None,
             auto_stop_sharing_on_cli_end: false,
             conversation_ended_tombstone_view_id: None,
@@ -27516,6 +27528,7 @@ impl TypedActionView for TerminalView {
             | VimModeBanner(_)
             | InsertMostRecentCommandCorrection
             | StopSharingCurrentSession { .. }
+            | RevokeAgentBridgeAccess
             | RequestSharedSessionRole(_)
             | OnboardingFlow(_)
             | ImportSettings
@@ -28061,6 +28074,7 @@ impl TypedActionView for TerminalView {
             }
             OpenShareSessionModal { source } => self.open_share_session_modal(*source, ctx),
             StopSharingCurrentSession { source } => self.stop_sharing_session(*source, ctx),
+            RevokeAgentBridgeAccess => self.revoke_agent_bridge_access(ctx),
             ToggleBlockFilterOnSelectedOrLastBlock(source) => {
                 self.toggle_block_filter_on_selected_or_last_block(*source, ctx);
             }
