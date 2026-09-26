@@ -131,17 +131,59 @@ qua **mirror Warp Sync** (có lịch sử Git ở local), mọi thao tác nằm 
 | Local control `tab.create` + Warpify SSH + Agent Bridge `remote.*` | Mở session và điều khiển nó |
 | Warp Sync: mirror + Git baseline + upload có backup/kiểm xung đột + hộp thoại xác nhận | Sửa file có lịch sử, diff, rollback |
 | Audit của Bridge (`request_id`, `agent`) | Dòng thời gian thao tác theo server |
-| Host picker (host đã kết nối, `known_hosts`), `remote_server` | Nhập danh sách host |
+| Generator autocompletion `ssh` của `warp-command-signatures` (`SSH_CONFIG_CMD` đọc `~/.ssh/config` + `Include`, `known_hosts_file`) | Mẫu đọc ssh config. **Không phải kho host**: chỉ chạy `cat` trong shell lúc gợi ý lệnh `ssh`, không lưu gì (kiểm 2026-09-26) → danh bạ phải làm mới (G1) |
 | `crates/warp_tui` (front-end headless) | Tuỳ chọn về sau: chạy cổng này trên máy trung gian 24/7 |
 
 **Thứ tự bắt buộc:** G2 trở đi làm **sau O2**. Agent tự mở session root nghĩa là bỏ bước "người
 bấm Attach" — lớp an toàn chính của O1 — nên phải có policy + hộp thoại duyệt và pairing token trước.
 
-- **G1 — Danh bạ server.** `~/.warp/agent-ops/hosts.toml` (không chứa bí mật): alias, host, port,
-  user, jump host, tag (`prod`/`lab`…), cách xác thực (`key` / `agent` / `password`), cách lên root
-  (`root_login` / `sudo_nopasswd` / `sudo_password` / `none`), `requiretty`, transport ưu tiên. Bí mật
-  nằm trong secure storage theo khoá `host:<alias>:ssh_password` / `…:sudo_password`. Nhập từ
-  `~/.ssh/config`. UI: trang Settings + palette "Agent Ops: Add server".
+- **G1 — Danh bạ server** (mở rộng 2026-09-26). Do **người dùng** thao tác nên không cần O2 — làm
+  được ngay sau O1, trước G2. UI: trang Settings + palette "Agent Ops: Add server".
+  - **G1a — Kho host.** `~/.warp/agent-ops/hosts.toml` (`0600`, không chứa bí mật). Mỗi host:
+    `alias`, `source` (`ssh_config` | `warp`), `tags`, cách xác thực (`key` / `agent` / `password`),
+    cách lên root (`root_login` / `sudo_nopasswd` / `sudo_password` / `none`), `requiretty`,
+    transport ưu tiên, `mirror_key` + `machine_id` (G1d). Host `source = ssh_config` **không chép**
+    HostName/User/Port/ProxyJump/IdentityFile: khi dùng thì hỏi `ssh -G <alias>` (OpenSSH tự giải
+    `Include`/`Match`/wildcard), nên không bao giờ lệch với file gốc. Bí mật (mật khẩu SSH, mật khẩu
+    sudo, passphrase) chỉ lưu khi user nhập, trong secure storage theo khoá `host:<alias>:ssh_password`
+    / `…:sudo_password`.
+  - **G1b — Tự nhập từ `~/.ssh/config`.** Đọc `~/.ssh/config` + các file `Include` lúc khởi động, khi
+    file đổi và khi mở picker. Alias cụ thể mới (bỏ `Host *`, pattern có `*`/`?`/`!`, khối `Match`) →
+    thêm với `source = ssh_config`, chưa có tag; toast "Found N new SSH hosts" để user gắn tag / thêm
+    mật khẩu. Alias biến mất khỏi file → đánh dấu `missing`, giữ metadata (tag, mật khẩu) tới khi user
+    xoá.
+  - **G1c — Ghi ngược ra ssh config chuẩn + tag.** Host tạo trong Warp (`source = warp`) ghi vào **file
+    riêng của Warp** `~/.ssh/config.d/warp.conf` (`0600`, ghi atomic, backup bản trước, kiểm lại bằng
+    `ssh -G` sau khi ghi, lỗi thì khôi phục). Warp thêm **một lần** dòng `Include config.d/warp.conf`
+    vào đầu `~/.ssh/config` (hỏi user, có backup). Warp **không sửa** khối user tự viết: giữ nguyên
+    comment/thứ tự/`Match`, và mỗi host chỉ có **một nơi sở hữu** nên không có vòng lặp đồng bộ hai
+    chiều. Sửa host `ssh_config` trong Warp chỉ đổi metadata của Warp; muốn Warp quản lý luôn thì
+    "Move to Warp" (chuyển khối sang `warp.conf`, có xác nhận). Nhờ vậy `ssh <alias>`, `scp`, VS Code
+    Remote-SSH, Ansible và agent dùng Bash vẫn chạy khi không có Warp. **Mật khẩu không ghi ra** (ssh
+    config không có trường mật khẩu, và không để process khác đọc được) → ngoài Warp, host chỉ có mật
+    khẩu vẫn phải gõ tay. Tag: trong `warp.conf` là comment máy đọc được ngay trên khối
+    (`# warp:tags=prod,project-x`; ssh bỏ qua, người/agent `grep` được); host `ssh_config` giữ tag
+    trong `hosts.toml`. Không dùng từ khoá `Tag` của OpenSSH ≥ 9.4: nó chỉ nhận một giá trị và dùng
+    cho `Match tagged` (đổi cách kết nối), không phải để phân loại.
+  - **Quick connect.** Palette "Connect to server…" (tìm theo alias/tag): mở tab, `ssh <alias>` (mật
+    khẩu qua `SSH_ASKPASS` như G2, không gõ qua PTY), lên root theo cấu hình, Warpify, tuỳ chọn Attach
+    luôn (user tự bấm nên vẫn đúng mô hình O1). "Reconnect" cho tab SSH bị rớt.
+  - **G1d — Nối với Warp Sync.** Mirror không đặt theo alias ssh mà theo **máy**: Warp Sync
+    (`transfer.rs::resolve_host_key`) dùng thư mục `host_key(hostname)` (hostname server tự báo, vd
+    `draff3`); nếu thư mục đó đã thuộc máy khác (manifest lưu `/etc/machine-id`) thì dùng
+    `<host_key>-<sha256(machine_id) rút gọn>`. Vì vậy kho **không** suy mirror từ hostname: sau lần
+    Sync/kết nối đầu, kho ghi `mirror_key` (tên thư mục mirror đã giải) + `machine_id` của host. Hệ quả:
+    hai server trùng hostname → hai mirror riêng; hai alias cùng trỏ một máy (IP công khai và qua jump
+    host) → dùng chung một mirror (đúng ý). Lần kết nối sau, machine-id khác bản đã lưu → cảnh báo
+    (server cài lại, hoặc alias giờ trỏ tới máy khác) và **không** dùng mirror cũ cho tới khi user xác
+    nhận. Giới hạn đang có của Warp Sync, G1 không sửa: (a) chỉ có 2 ứng viên, máy thứ ba cùng hostname
+    bị từ chối; (b) máy không có machine-id (BusyBox, một số container) chỉ dùng được thư mục trần;
+    (c) VM clone từ cùng template mà không reset `/etc/machine-id` thì Warp không phân biệt được — có
+    thể thêm vân tay host key SSH làm tín hiệu phụ (cũng hay bị clone). MCP tool chỉ-đọc `list_hosts` (không
+    cần attach): alias, tag, `user@host`, transport, session đang mở/attach, thư mục mirror và các path
+    đã sync → agent biết sửa file của server đó qua mirror (G4) thay vì ghi thẳng. Không trả bí mật.
+    Lưu ý: agent đọc mirror bằng Read tool local thì **không** qua redaction/audit của Bridge → policy
+    của G4 phải loại path bí mật khỏi mirror.
 - **G2 — Agent tự mở session.** MCP tool `open_session {host, access, purpose}` → policy (O2) quyết
   định: tự mở (lab), hỏi (prod), từ chối. Warp mở tab trong nhóm "Agents" (luôn **hiển thị**, user
   nhìn và giành lại quyền được), ssh bằng credential trong kho, lên root theo cấu hình, Warpify, tự
@@ -177,7 +219,9 @@ in-band — D21 của Bridge). (3) Mirror tích luỹ bản sao file nhạy cả
 sudo phía server) đơn giản và dễ kiểm toán hơn lưu mật khẩu; kho mật khẩu của G1 dành cho server
 không đổi được cấu hình.
 
-**Gate G:** G1 dùng được cho ≥ 3 server thật; G2 chỉ bật sau gate O2; kênh exec trực tiếp (G3) đo
+**Gate G:** G1 dùng được cho ≥ 3 server thật (host tạo trong Warp `ssh <alias>` được từ terminal
+thường; tag còn nguyên sau khi sửa ở cả hai phía; `~/.ssh/config` do user viết không bị đổi byte nào
+ngoài dòng `Include`); G2 chỉ bật sau gate O2; kênh exec trực tiếp (G3) đo
 được song song trên host `sudo NOPASSWD`; G4 có lịch sử + rollback thử trên host lab.
 
 ### O3 — Bộ công cụ quan sát + runbook (hầu như không sửa Warp)
@@ -278,7 +322,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [ ] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12) · [ ] gate O1
 - [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, chưa viết)
-- [ ] G1 danh bạ server · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
+- [ ] G1 danh bạ server (G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
 - [ ] O5a MCP incident tools · [ ] O5b panel GUI
@@ -296,3 +340,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 | AO6 | 2026-09-25 | Thêm nhánh G: Warp làm cổng SSH cho agent (danh bạ server + kho credential, agent tự mở session, transport theo host, sửa file qua mirror Warp Sync có lịch sử) | Người dùng muốn đơn giản hoá quản lý server; giải quyết giới hạn một-lệnh-một-lúc của in-band mà vẫn giữ credential, policy, audit ở một chỗ |
 | AO7 | 2026-09-25 | G2 (agent tự mở session) chỉ làm sau O2 và pairing token | Bỏ bước Attach thủ công là bỏ lớp an toàn chính của O1 |
 | AO8 | 2026-09-25 | Bí mật không bao giờ tới agent: mật khẩu SSH qua `SSH_ASKPASS` local, mật khẩu sudo chỉ tự điền ngay sau `sudo -i` do Warp gửi | Chống lộ qua MCP/log/lịch sử shell và chống prompt giả |
+| AO9 | 2026-09-26 | Danh bạ đồng bộ hai chiều với ssh config theo **quyền sở hữu từng host**: host của user nằm trong `~/.ssh/config` (Warp chỉ đọc), host của Warp nằm trong `~/.ssh/config.d/warp.conf` (Warp ghi), nối bằng một dòng `Include` | Không phá file user tự viết; không vòng lặp đồng bộ; công cụ ngoài Warp vẫn dùng được host |
+| AO10 | 2026-09-26 | Host nhập từ ssh config chỉ lưu alias + metadata của Warp; giá trị kết nối luôn lấy từ `ssh -G` | OpenSSH giải `Include`/`Match`/wildcard đúng hơn parser tự viết; không lệch dữ liệu |
+| AO11 | 2026-09-26 | Tag lưu bằng comment `# warp:tags=…` (trong `warp.conf`) hoặc `hosts.toml` (host của user); không dùng `Tag` của OpenSSH | `Tag` chỉ một giá trị và đổi hành vi `Match tagged` |
+| AO12 | 2026-09-26 | Host nối với mirror Warp Sync bằng `mirror_key` + `machine_id` ghi lại sau lần Sync đầu (không suy từ hostname); machine-id đổi → cảnh báo, không dùng mirror cũ; MCP `list_hosts` trả thư mục mirror, không trả bí mật | Warp Sync đặt mirror theo máy (hostname, thêm hậu tố hash machine-id khi trùng tên), không theo alias ssh |
