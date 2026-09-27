@@ -47,6 +47,7 @@ pub enum ActionParameterSpec {
     PageQuery,
     Query,
     RemoteExec,
+    RemoteExecVisible,
     RemoteFileRead,
     RemoteFileWrite,
     RemoteOutputRecent,
@@ -76,6 +77,7 @@ pub enum ActionResultSpec {
     KeybindingList,
     KeybindingMetadata,
     RemoteExecResult,
+    RemoteExecVisibleResult,
     RemoteFileContent,
     RemoteFileWriteResult,
     RemoteOutputRecent,
@@ -315,6 +317,7 @@ define_action_catalog! {
     remote {
         RemoteSessionList => { name: "remote.session.list", status: Implemented, target: Instance, params: None, result: RemoteSessionList },
         RemoteExec => { name: "remote.exec", status: Implemented, target: Session, params: RemoteExec, result: RemoteExecResult },
+        RemoteExecVisible => { name: "remote.exec.visible", status: Stub, target: Session, params: RemoteExecVisible, result: RemoteExecVisibleResult },
         RemoteFileRead => { name: "remote.file.read", status: Implemented, target: Session, params: RemoteFileRead, result: RemoteFileContent },
         RemoteFileWrite => { name: "remote.file.write", status: Implemented, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
         RemoteOutputRecent => { name: "remote.output.recent", status: Implemented, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },

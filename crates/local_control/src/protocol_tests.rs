@@ -166,7 +166,7 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 fn catalog_has_exactly_the_retained_and_sync_actions() {
     const RETAINED_ACTIONS: usize = 84;
     const SYNC_ACTIONS: usize = 6;
-    const REMOTE_ACTIONS: usize = 5;
+    const REMOTE_ACTIONS: usize = 6;
     assert_eq!(
         ActionKind::ALL.len(),
         RETAINED_ACTIONS + SYNC_ACTIONS + REMOTE_ACTIONS
@@ -217,14 +217,21 @@ fn direct_surface_actions_have_stable_names() {
     );
 }
 
+/// Actions declared ahead of their app-side implementation.
+const STUB_ACTIONS: [ActionKind; 1] = [ActionKind::RemoteExecVisible];
+
 #[test]
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
+        let expected = if STUB_ACTIONS.contains(&kind) {
+            ActionImplementationStatus::Stub
+        } else {
+            ActionImplementationStatus::Implemented
+        };
         assert_eq!(
-            metadata.implementation_status,
-            ActionImplementationStatus::Implemented,
-            "{} should be implemented",
+            metadata.implementation_status, expected,
+            "{} has the wrong status",
             metadata.name,
         );
     }
@@ -236,7 +243,12 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    assert_eq!(actions, ActionKind::ALL);
+    let expected = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !STUB_ACTIONS.contains(kind))
+        .collect::<Vec<_>>();
+    assert_eq!(actions, expected);
 }
 
 #[test]
@@ -495,6 +507,11 @@ fn remote_actions_have_stable_names_and_session_targets() {
         ),
         (ActionKind::RemoteExec, "remote.exec", TargetScope::Session),
         (
+            ActionKind::RemoteExecVisible,
+            "remote.exec.visible",
+            TargetScope::Session,
+        ),
+        (
             ActionKind::RemoteFileRead,
             "remote.file.read",
             TargetScope::Session,
@@ -583,6 +600,33 @@ fn remote_params_roundtrip_and_omit_absent_options() {
         full
     );
 
+    let visible = Action::with_params(
+        ActionKind::RemoteExecVisible,
+        RemoteExecVisibleParams {
+            command: "systemctl status nginx".to_owned(),
+            timeout_secs: None,
+            agent: None,
+        },
+    )
+    .expect("remote.exec.visible params serialize");
+    assert_eq!(
+        visible.params,
+        serde_json::json!({ "command": "systemctl status nginx" })
+    );
+    let full_visible = RemoteExecVisibleParams {
+        command: "ls".to_owned(),
+        timeout_secs: Some(30),
+        agent: Some("claude-code".to_owned()),
+    };
+    let action =
+        Action::with_params(ActionKind::RemoteExecVisible, full_visible.clone()).expect("serializes");
+    assert_eq!(
+        action
+            .params_as::<RemoteExecVisibleParams>()
+            .expect("decodes"),
+        full_visible
+    );
+
     let read = RemoteFileReadParams {
         path: "/etc/hosts".to_owned(),
         agent: Some("codex".to_owned()),
@@ -651,6 +695,14 @@ fn remote_params_deny_unknown_fields_and_missing_required_ones() {
             ActionKind::RemoteOutputRecent,
             serde_json::json!({ "count": 1, "session": "x" }),
         ),
+        (
+            ActionKind::RemoteExecVisible,
+            serde_json::json!({ "command": "pwd", "cwd": "/etc" }),
+        ),
+        (
+            ActionKind::RemoteExecVisible,
+            serde_json::json!({ "timeout_secs": 5 }),
+        ),
     ] {
         let action = Action { kind, params };
         let error = match kind {
@@ -658,6 +710,7 @@ fn remote_params_deny_unknown_fields_and_missing_required_ones() {
             ActionKind::RemoteFileRead => action.params_as::<RemoteFileReadParams>().err(),
             ActionKind::RemoteFileWrite => action.params_as::<RemoteFileWriteParams>().err(),
             ActionKind::RemoteOutputRecent => action.params_as::<RemoteOutputRecentParams>().err(),
+            ActionKind::RemoteExecVisible => action.params_as::<RemoteExecVisibleParams>().err(),
             _ => None,
         };
         let error = error.unwrap_or_else(|| panic!("{} params should be rejected", kind.as_str()));
@@ -679,4 +732,31 @@ fn remote_error_codes_serialize_as_machine_codes() {
         );
         assert_eq!(code.to_string(), name);
     }
+}
+
+#[test]
+fn visible_exec_result_has_no_exit_code_while_running() {
+    let result = RemoteExecVisibleResult {
+        session: RemoteSessionRef {
+            session_id: "12".to_owned(),
+            host: "prod-1".to_owned(),
+            user: "root".to_owned(),
+        },
+        command: "sleep 30".to_owned(),
+        cwd: None,
+        exit_code: None,
+        still_running: true,
+        alt_screen: false,
+        duration_ms: 5000,
+        output: String::new(),
+        output_rows: 0,
+        truncated: false,
+    };
+    let value = serde_json::to_value(&result).expect("serializes");
+    assert_eq!(value["exit_code"], serde_json::Value::Null);
+    assert_eq!(value["still_running"], true);
+    assert_eq!(value["host"], "prod-1");
+    assert!(value.get("cwd").is_none());
+    let parsed: RemoteExecVisibleResult = serde_json::from_value(value).expect("round trips");
+    assert_eq!(parsed, result);
 }

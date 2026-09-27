@@ -248,7 +248,12 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
         assert_eq!(parsed_action_kind(&args.command), Some(kind));
         covered.insert(kind);
     }
-    let expected = ActionKind::ALL.iter().copied().collect::<HashSet<_>>();
+    // `remote.exec.visible` gets its CLI with Agent Bridge Task 5.6.
+    let expected = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| *kind != ActionKind::RemoteExecVisible)
+        .collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)
         .map(|kind| kind.as_str())

@@ -929,7 +929,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 4.1 recent_output · [x] 4.2 indicator · [x] 4.3 format
 - [x] ⛔ CHECKPOINT C (user, 2026-09-27) — người dùng báo test tay `recent_output` + indicator đạt
 - [x] Plan Phase 5 (D27–D32) · [x] người dùng duyệt (2026-09-27)
-- [ ] 5.1 protocol · [ ] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
+- [x] 5.1 protocol · [ ] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
 - [ ] ⛔ CHECKPOINT D (user, checklist 5.C)
 
 ### Quyết định
@@ -1010,3 +1010,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-27 — Lập plan Phase 5 (chưa code): đối chiếu roadmap, phân loại 7 hạng mục (D27); khảo sát `Input::try_execute_command*`, `TerminalView::execute_command_or_set_pending`, driver agent SDK, `ShellCommandExecutor`, `script/linux/bundle --artifact warpctrl`; viết Task 5.1–5.10, bảng lock, checklist 5.C, CHECKPOINT D (D28–D32). CHECKPOINT C **chưa tick**: prompt của phiên này còn để placeholder kết quả checklist C. Chờ người dùng báo kết quả C và duyệt bảng phân loại.
 - 2026-09-27 — Checkpoint C hoàn tất (người dùng xác nhận test tay `recent_output` + indicator đạt). Người dùng duyệt plan Phase 5 và yêu cầu làm luôn.
 - 2026-09-27 — D29 chỉnh theo trao đổi với người dùng: poll giãn 200 ms → 1 s sau 10 s, nhớ `BlockId` sau lần tìm thấy đầu; Task 5.5 cập nhật.
+- 2026-09-27 — Task 5.1: action `remote.exec.visible` (`Stub`), `RemoteExecVisibleParams`/`RemoteExecVisibleResult`, spec trong catalog, resolver, arm `UnsupportedAction` trong `bridge.rs`. Test: round-trip, từ chối `cwd`/thiếu `command`, `exit_code: null` khi còn chạy; `STUB_ACTIONS` tạm trong `protocol_tests.rs` và tạm loại action khỏi test ví dụ CLI (gỡ ở 5.4 / 5.6). Compile không cần sửa match nào khác (không có match exhaustive trên `ActionParameterSpec`/`ActionKind` ngoài resolver và bridge).

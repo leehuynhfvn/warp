@@ -193,6 +193,20 @@ pub struct RemoteExecParams {
     pub agent: Option<String>,
 }
 
+/// Parameters for `remote.exec.visible`. The command runs in the session's own shell, in its
+/// current directory, so there is no `cwd`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteExecVisibleParams {
+    pub command: String,
+    /// How long to wait for the command before answering with what it has printed so far.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u32>,
+    /// Name of the calling client. Recorded in the audit log only; it never grants access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
 /// Parameters for `remote.file.read`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -561,6 +575,30 @@ pub struct RemoteExecResult {
     pub duration_ms: u64,
     pub stdout: RemoteStream,
     pub stderr: RemoteStream,
+}
+
+/// Result of `remote.exec.visible`, read from the block the command ran in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteExecVisibleResult {
+    #[serde(flatten)]
+    pub session: RemoteSessionRef,
+    pub command: String,
+    /// Directory the command ran in, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// `None` while the command is still running.
+    pub exit_code: Option<i32>,
+    /// The wait ended before the command did; it keeps running in the terminal.
+    pub still_running: bool,
+    /// A full-screen program (pager, editor) had the terminal when the wait ended.
+    pub alt_screen: bool,
+    pub duration_ms: u64,
+    /// Standard output and error as shown in the terminal. When `truncated`, the middle is
+    /// replaced by a note.
+    pub output: String,
+    /// Terminal rows the whole output takes up, counting wrapped lines.
+    pub output_rows: u64,
+    pub truncated: bool,
 }
 
 /// Result of `remote.file.read`; a missing file is a result, not an error.

@@ -214,6 +214,10 @@ impl LocalControlBridge {
             ActionKind::RemoteOutputRecent => {
                 return pending(request.request_id, remote::output_recent(&request, ctx));
             }
+            ActionKind::RemoteExecVisible => Err(ControlError::new(
+                ErrorCode::UnsupportedAction,
+                format!("{} is not implemented yet", request.action.kind.as_str()),
+            )),
             ActionKind::SyncStatus => {
                 return pending(
                     request.request_id,
