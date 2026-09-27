@@ -727,8 +727,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 
 - [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
 - [x] 0.1 flag + hằng số
-- [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [x] 1.3 `authorize` Allow/Deny · [x] 1.4 timeout client · [ ] clippy + format
-- [ ] ⛔ CHECKPOINT P1
+- [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [x] 1.3 `authorize` Allow/Deny · [x] 1.4 timeout client · [x] clippy + format
+- [x] ⛔ CHECKPOINT P1
 - [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
 - [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P2
@@ -829,3 +829,11 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   test -p warp -p warp_cli --lib -- mcp::tools`: 24 passed (chạy riêng `-p warp_cli` build lỗi
   `yeslogic-fontconfig-sys`/`pkg-config` thiếu `fontconfig.pc` — không liên quan thay đổi này; né
   bằng cách build kèm `-p warp`).
+- 2026-09-28 — Cuối Phase 1 (Claude Sonnet 5): gắn `#[allow(dead_code)]` (kèm task sẽ dùng, theo
+  P22) cho `APPROVAL_PREVIEW_LINES`/`AGENTS_FILE`/`MAX_PENDING_APPROVALS_PER_SESSION`. `cargo
+  clippy -p warp -p local_control -p warp_cli --all-targets --tests -- -D warnings`: sạch (exit 0).
+  `./script/format` một lần — format lại `policy.rs`, `policy_tests.rs`, `handlers/remote.rs`,
+  `mcp/tools.rs`, `warp_cli/local_control/remote.rs` (chủ yếu bọc dòng `wait = ... +
+  APPROVAL_CLIENT_MARGIN` quá 100 cột); không chạy lại test/lint sau format theo mục 0.8. **⛔
+  CHECKPOINT P1 đạt** — checklist 5.P1 sẵn sàng cho người dùng test tay (cần build với feature
+  `agent_ops_policy`, xem mục 0.12).
