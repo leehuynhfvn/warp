@@ -1,6 +1,6 @@
 ---
 name: warp-remote-ops
-description: Operate on a remote server through a Warp terminal session with the warp-bridge MCP tools (list_sessions, exec, read_file, edit_file, write_file, recent_output). Use when the user asks to inspect, diagnose, configure or fix something "on the server", "on prod-1", "in my Warp session", or names a host that is open in Warp.
+description: Operate on a remote server through a Warp terminal session with the warp-bridge MCP tools (list_sessions, exec, exec_visible, read_file, edit_file, write_file, recent_output). Use when the user asks to inspect, diagnose, configure or fix something "on the server", "on prod-1", "in my Warp session", or names a host that is open in Warp.
 ---
 
 # Remote operations through Warp
@@ -49,6 +49,22 @@ not your local shell: Bash, Read and Edit still act on this machine.
 6. **Verify**: service status, a request against it (`curl -sS -o /dev/null -w '%{http_code}'
    …`), recent logs. If it got worse, restore the backup and reload again, then report.
 
+## Running a command the user can see
+
+`exec` runs out of sight, in a subshell. `exec_visible` types the command into the user's own
+shell instead, where it runs as a block they watch. Use it only when:
+
+- the user asks to see the command run, or to follow along;
+- a `cd` or `export` has to stay in effect for the user afterwards;
+- the command may ask something the user should answer in the terminal (a confirmation, a
+  passphrase).
+
+It enters the shell history on the server, and its output is what the terminal shows (stdout and
+stderr together, secrets hidden per the user's settings). Never send `exit`, `logout`, `exec …`,
+`su` or `sudo -i` with it: leaving the shell ends your access to the session. If the result says
+the command is **still running**, it keeps running in the terminal: tell the user, and read the
+result later with `recent_output` instead of running it again.
+
 ## Ask again before running
 
 Confirm with the user in plain words, even if they approved the overall task:
@@ -70,7 +86,8 @@ Confirm with the user in plain words, even if they approved the overall task:
   `less`, password prompts) fail or hang until the timeout.
 - `exec` times out after 120 s by default (`timeout_secs` up to 600). The user's shell must be
   idle; if the user is running something, you get `session_busy` — wait and retry.
-- Commands run in a subshell: `cd` and `export` do not persist between calls; use `cwd`.
+- `exec` commands run in a subshell: `cd` and `export` do not persist between calls; use `cwd`
+  (or `exec_visible`, see above).
 - Text that looks like a secret is shown as `****`. `edit_file` cannot match it and `write_file`
   refuses to overwrite a file that contains it: edit around the secret lines.
 - Files larger than 512 KiB cannot be read or written; use `exec` with `grep`, `sed -n`, `tail`.

@@ -687,6 +687,7 @@ fn every_tool_has_a_schema_and_the_list_matches_the_dispatch() {
         [
             "list_sessions",
             "exec",
+            "exec_visible",
             "read_file",
             "recent_output",
             "write_file",
@@ -753,5 +754,108 @@ fn recent_output_defaults_to_three_commands_of_the_attached_session() {
     assert_eq!(
         result,
         ToolResult::ok("No finished commands in root@prod-1 yet.")
+    );
+}
+
+fn visible_result(exit_code: Option<i32>, alt_screen: bool, output: &str) -> RemoteExecVisibleResult {
+    RemoteExecVisibleResult {
+        session: session_ref(),
+        command: "systemctl status nginx".to_owned(),
+        cwd: Some("/root".to_owned()),
+        exit_code,
+        still_running: exit_code.is_none(),
+        alt_screen,
+        duration_ms: 1200,
+        output: output.to_owned(),
+        output_rows: 1,
+        truncated: false,
+    }
+}
+
+#[test]
+fn exec_visible_sends_the_command_without_a_directory_and_renders_the_block() {
+    let mut tools = tools();
+    tools.set_client_name("claude code");
+    answer(
+        &mut tools,
+        ActionKind::RemoteExecVisible,
+        visible_result(Some(3), false, "inactive (dead)\n"),
+    );
+
+    let result = call(
+        &mut tools,
+        "exec_visible",
+        json!({ "command": "systemctl status nginx", "timeout_secs": 30, "session_id": "Pane 7" }),
+    );
+
+    assert_eq!(
+        result,
+        ToolResult::ok("exit_code: 3 (1.2s) root@prod-1:/root\n--- output ---\ninactive (dead)\n")
+    );
+    let sent = &tools.transport.calls[0];
+    assert_eq!(
+        sent.params,
+        json!({ "command": "systemctl status nginx", "timeout_secs": 30, "agent": "claude-code" })
+    );
+    assert_eq!(sent.session.as_deref(), Some("Pane 7"));
+    assert_eq!(sent.timeout, Duration::from_secs(30) + EXEC_CLIENT_MARGIN);
+}
+
+#[test]
+fn exec_visible_reports_a_command_that_is_still_running() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteExecVisible,
+        visible_result(None, true, "root:x:0:0\n"),
+    );
+
+    let result = call(
+        &mut tools,
+        "exec_visible",
+        json!({ "command": "less /etc/passwd", "session_id": "Pane 7" }),
+    );
+
+    assert!(!result.is_error);
+    assert!(result.text.starts_with("still running after 1.2s"), "{}", result.text);
+    assert!(result.text.contains("full-screen program"), "{}", result.text);
+    assert!(result.text.contains("recent_output"), "{}", result.text);
+    assert!(result.text.contains("--- output so far ---\nroot:x:0:0\n"), "{}", result.text);
+    assert_eq!(
+        tools.transport.calls[0].timeout,
+        Duration::from_secs(EXEC_DEFAULT_TIMEOUT_SECS.into()) + EXEC_CLIENT_MARGIN
+    );
+}
+
+#[test]
+fn exec_visible_passes_a_busy_shell_through_as_an_error() {
+    let mut tools = tools();
+    fail(
+        &mut tools,
+        ActionKind::RemoteExecVisible,
+        ControlError::new(ErrorCode::SessionBusy, "The session's shell is busy."),
+    );
+
+    let result = call(
+        &mut tools,
+        "exec_visible",
+        json!({ "command": "uptime", "session_id": "Pane 7" }),
+    );
+
+    assert_eq!(
+        result,
+        ToolResult::error("Error (session_busy): The session's shell is busy.")
+    );
+
+    let result = call(
+        &mut tools,
+        "exec_visible",
+        json!({ "command": "pwd", "cwd": "/etc", "session_id": "Pane 7" }),
+    );
+    assert!(result.is_error);
+    assert!(
+        result.text.starts_with("Invalid arguments for exec_visible"),
+        "{}",
+        result.text
     );
 }

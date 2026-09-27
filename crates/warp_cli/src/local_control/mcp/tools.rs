@@ -5,7 +5,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
-    ActionKind, ControlError, RemoteExecParams, RemoteExecResult, RemoteFileReadParams,
+    ActionKind, ControlError, RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams,
+    RemoteExecVisibleResult, RemoteFileReadParams,
     RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
     RemoteOutputRecentResult, RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
 };
@@ -15,7 +16,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::edit::{EditError, apply_edit};
-use super::format::{edit_snippet, place, render_exec, render_read, render_sessions};
+use super::format::{
+    edit_snippet, place, render_exec, render_exec_visible, render_read, render_sessions,
+};
 use super::jsonrpc::{McpHandler, ToolResult};
 use super::redact::Redactor;
 use crate::local_control::remote::{
@@ -50,6 +53,10 @@ mistake can lock everyone out of the server.
 programs fail.
 - exec times out after 120 s by default (timeout_secs, at most 600). Long output is cut in the \
 middle: narrow it with grep, head or tail.
+- exec runs out of sight. Use exec_visible only when the user wants to watch a command, when a \
+`cd` or `export` must stay in effect, or when a command may ask a question the user will answer \
+in the terminal. It runs in the user's own shell and history; never send exit, logout, exec, su \
+or sudo -i with it (leaving the shell ends the agent's access).
 - Text that looks like a secret is shown as ****. Such text cannot be matched by edit_file, and \
 write_file refuses to overwrite files that contain it.";
 
@@ -86,6 +93,14 @@ struct ListSessionsArgs {}
 struct ExecArgs {
     command: String,
     cwd: Option<String>,
+    timeout_secs: Option<u32>,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecVisibleArgs {
+    command: String,
     timeout_secs: Option<u32>,
     session_id: Option<String>,
 }
@@ -163,6 +178,21 @@ impl<T: ControlTransport> Tools<T> {
         let result: RemoteExecResult =
             self.call(ActionKind::RemoteExec, params, Some(&session_id), wait)?;
         Ok(render_exec(&result))
+    }
+
+    fn exec_visible(&mut self, args: Value) -> Result<String, ToolError> {
+        let args: ExecVisibleArgs = parse_args("exec_visible", args)?;
+        let session_id = self.resolve_session(args.session_id)?;
+        let timeout_secs = args.timeout_secs.unwrap_or(EXEC_DEFAULT_TIMEOUT_SECS);
+        let params = RemoteExecVisibleParams {
+            command: args.command,
+            timeout_secs: Some(timeout_secs),
+            agent: Some(self.agent.clone()),
+        };
+        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+        let result: RemoteExecVisibleResult =
+            self.call(ActionKind::RemoteExecVisible, params, Some(&session_id), wait)?;
+        Ok(render_exec_visible(&result))
     }
 
     fn read_file(&mut self, args: Value) -> Result<String, ToolError> {
@@ -454,6 +484,7 @@ impl<T: ControlTransport> McpHandler for Tools<T> {
         let outcome = match name {
             "list_sessions" => self.list_sessions(arguments),
             "exec" => self.exec(arguments),
+            "exec_visible" => self.exec_visible(arguments),
             "read_file" => self.read_file(arguments),
             "write_file" => self.write_file(arguments),
             "edit_file" => self.edit_file(arguments),
@@ -588,6 +619,32 @@ fn tool_definitions() -> Value {
                     "timeout_secs": {
                         "type": "integer", "minimum": 1, "maximum": 600,
                         "description": "Seconds before the command is stopped (default 120)."
+                    },
+                    "session_id": session_id_schema()
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": true }
+        },
+        {
+            "name": "exec_visible",
+            "title": "Run a command in the user's terminal",
+            "description": "Type a shell command into the user's own shell in an attached Warp \
+                            session, where it runs as a block the user watches. Unlike exec, \
+                            cd and export stay in effect, the command enters the shell history, \
+                            the user can answer prompts in the terminal, and the output is what \
+                            the terminal shows (stdout and stderr together). A command still \
+                            running after timeout_secs keeps running and is reported as still \
+                            running. Prefer exec unless the user should see the command.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell command to type." },
+                    "timeout_secs": {
+                        "type": "integer", "minimum": 1, "maximum": 600,
+                        "description": "Seconds to wait for the command before answering with \
+                                        its output so far (default 120)."
                     },
                     "session_id": session_id_schema()
                 },

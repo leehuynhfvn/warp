@@ -1,6 +1,6 @@
 //! Text of the tool results, shaped like the output of Claude Code's own tools.
 use local_control::protocol::{
-    RemoteAccess, RemoteExecResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
+    RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
     RemoteStream,
 };
 
@@ -128,6 +128,49 @@ pub(super) fn render_exec(result: &RemoteExecResult) -> String {
     }
     for (name, stream) in streams {
         push_stream(&mut text, name, stream);
+    }
+    text
+}
+
+/// `exec_visible` result.
+pub(super) fn render_exec_visible(result: &RemoteExecVisibleResult) -> String {
+    let cwd = result.cwd.as_deref().unwrap_or("");
+    let duration = human_duration(result.duration_ms);
+    let place = place(&result.session, cwd);
+    let mut text = match result.exit_code {
+        Some(exit_code) => format!("exit_code: {exit_code} ({duration}) {place}\n"),
+        None => {
+            let waiting_program = if result.alt_screen {
+                " in a full-screen program (pager or editor) that waits for the user"
+            } else {
+                ""
+            };
+            format!(
+                "still running after {duration} {place}\n[The command keeps running in the \
+                 user's terminal{waiting_program}. Tell the user, and read its result later with \
+                 recent_output.]\n"
+            )
+        }
+    };
+    if result.output.is_empty() {
+        text.push_str("(no output)\n");
+        return text;
+    }
+    let heading = if result.still_running {
+        "output so far"
+    } else {
+        "output"
+    };
+    text.push_str(&format!("--- {heading} ---\n{}", result.output));
+    if !result.output.ends_with('\n') {
+        text.push('\n');
+    }
+    if result.truncated {
+        text.push_str(&format!(
+            "[output was cut: the whole output is {} terminal rows; filter it with grep, head or \
+             tail]\n",
+            result.output_rows
+        ));
     }
     text
 }

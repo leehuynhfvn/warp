@@ -412,6 +412,7 @@ output dài bị cắt head/tail — dùng `grep`/`tail`/`head`.
 | `read_file` | `path`, `offset?` (dòng, từ 1), `limit?` (mặc định 2000), `session_id?` | `remote.file.read`; UTF-8 bắt buộc (không → lỗi "binary file"); định dạng `cat -n` như Read tool của Claude Code, mỗi dòng cắt 2000 ký tự, text trả về ≤ 80 KiB; ghi nhớ `(session, path) → sha256` | `readOnlyHint: true` |
 | `write_file` | `path`, `content`, `session_id?` | Đọc thô trước: `not_found` → `MustNotExist`; tồn tại → bắt buộc đã `read_file` và sha khớp bản đã nhớ (không khớp → "Read the file first / it changed"), **và** nội dung thô không chứa secret (nếu redaction làm thay đổi nội dung thô → từ chối, bảo dùng `edit_file`) → `MustMatch` | `destructiveHint: true` |
 | `edit_file` | `path`, `old_string`, `new_string`, `replace_all?`, `session_id?` | Đọc thô → `apply_edit` (0 match → lỗi, thêm gợi ý nếu `old_string` chứa `********`; > 1 match và `!replace_all` → lỗi nêu số match; `old == new` → lỗi) → `MustMatch{sha của bản đọc}`; trả số lần thay, backup path, đoạn ±3 dòng quanh thay đổi đầu tiên (đã redact) | `destructiveHint: true` |
+| `exec_visible` (Phase 5) | `command`, `timeout_secs?`, `session_id?` | `remote.exec.visible`: gõ lệnh vào shell của user thành block thật; text `exit_code: N (1.2s) root@host:/cwd` + `--- output ---`, hoặc `still running after …` + `--- output so far ---` (+ ghi chú chương trình full-screen, cắt output) | `destructiveHint: true` |
 | `recent_output` (Phase 4) | `count?` (mặc định 3, tối đa 10), `session_id?` | `remote.output.recent`: lệnh + exit code + output (cắt 16 KiB/block) các block gần nhất — để Claude "nhìn thấy" lỗi user vừa gặp | `readOnlyHint: true` |
 
 **Redaction**: lúc khởi động (trừ `--no-redact`) compile `secret_redaction::regexes::DEFAULT_REGEXES_WITH_NAMES`
@@ -439,8 +440,8 @@ cp specs/agent-bridge/claude/SKILL.md ~/.claude/skills/warp-remote-ops/SKILL.md
 Warp phải đang chạy, bật Settings > Scripting, có flag `AgentBridge` (bản Local/Dev, hoặc
 `./script/run --features warp_control_cli,warp_sync,agent_bridge`).
 
-`~/.claude/settings.json` — chỉ tự động cho phép tool chỉ-đọc; `exec`/`write_file`/`edit_file`
-luôn hỏi:
+`~/.claude/settings.json` — chỉ tự động cho phép tool chỉ-đọc; `exec`/`exec_visible`/`write_file`/
+`edit_file` luôn hỏi:
 
 ```json
 { "permissions": { "allow": [
@@ -929,7 +930,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 4.1 recent_output · [x] 4.2 indicator · [x] 4.3 format
 - [x] ⛔ CHECKPOINT C (user, 2026-09-27) — người dùng báo test tay `recent_output` + indicator đạt
 - [x] Plan Phase 5 (D27–D32) · [x] người dùng duyệt (2026-09-27)
-- [x] 5.1 protocol · [x] 5.2 chống chạy chồng · [x] 5.3 `visible.rs` · [x] 5.4 gửi lệnh · [x] 5.5 chờ block · [x] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
+- [x] 5.1 protocol · [x] 5.2 chống chạy chồng · [x] 5.3 `visible.rs` · [x] 5.4 gửi lệnh · [x] 5.5 chờ block · [x] 5.6 CLI · [x] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
 - [ ] ⛔ CHECKPOINT D (user, checklist 5.C)
 
 ### Quyết định
@@ -1016,3 +1017,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-27 — Task 5.5 (làm trước 5.4 vì handler cần nó): `visible::wait` (mỗi nhịp lock một lần, gọi `step`, nhả lock rồi `Timer::after(poll_interval)`), `visible::step` thuần (xong → `Outcome`; chưa thấy block sau `min(VISIBLE_START_TIMEOUT, timeout)` → `Executor`; còn chạy khi hết `timeout` → ảnh chụp `still_running` + `is_alt_screen_active`), `Outcome` đưa vào `result`. +4 test (16 test `visible`).
 - 2026-09-27 — Task 5.4: `Input::try_execute_command_preserving_input`; `handlers/remote.rs::exec_visible` (validate → resolve → `ensure_supported` → `Full` → `begin(Visible)` → audit `started` fail-closed trong `ctx.spawn` → trên main thread `send_visible_command`: kiểm session active còn đúng, lock một lần để kiểm bận + lấy `active_block_index()`, nhả lock, gõ lệnh qua `Input` → `visible::wait` + audit kết thúc trong `ctx.spawn` → `finish_visible` `end`/`record_use`); `SessionSnapshot` giữ thêm `ViewHandle<TerminalView>`; `Audit` sở hữu bản sao `Target` (không mượn) để `VisibleAudit` đi qua các callback; `AuditRecord.still_running`. Lệch plan: session active đổi giữa chừng trả `Executor` (thông báo bảo liệt kê lại session) thay vì `StaleTarget`, vì lỗi ở bước này phải qua `AgentBridgeError` để ghi audit. Action đổi sang `Implemented` (`capabilities` = 96), gỡ `STUB_ACTIONS`. Test handler: action mới trong mọi test `SESSION_ACTIONS` + 1 test params sai trước khi tìm session.
 - 2026-09-27 — Task 5.6: `warpctrl remote exec --visible` (`conflicts_with = "cwd"`) gửi `remote.exec.visible`; in output ra stdout, dòng trạng thái ra stderr (`render_visible_status`: `exit N` / `still running in the terminal` / `(full-screen program)` / output bị cắt); exit code = exit code lệnh, còn chạy → 124 (`visible_exit_code`). Gỡ ngoại lệ khỏi test ví dụ CLI. +3 test.
+- 2026-09-27 — Task 5.7: tool MCP `exec_visible` (`ExecVisibleArgs` không có `cwd`, annotation như `exec`, chọn session qua `resolve_session`, text qua `Redactor` ở `call_tool`), `format::render_exec_visible` (xong: `exit_code` + `--- output ---`; còn chạy: `still running after …` + hướng dẫn báo user/dùng `recent_output` + `--- output so far ---`; full-screen; cắt); `INSTRUCTIONS` + skill `warp-remote-ops` thêm mục khi nào dùng, khác `exec`, cấm `exit`/`su`/`sudo -i`; mục 3.10 thêm dòng tool, 3.11 allowlist không đổi. +3 test (60 test `mcp`).
