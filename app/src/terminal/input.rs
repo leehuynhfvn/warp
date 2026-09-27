@@ -7789,7 +7789,14 @@ impl Input {
         command: &str,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        self.try_execute_command_with_options(command, true, ctx)
+        let current_input = self.buffer_text(ctx);
+        let executed = self.try_execute_command_with_options(command, true, ctx);
+        // The buffer is reinitialized when the command's block completes, so the draft is
+        // restored then, the same way as around a prompt chip command.
+        if executed && !current_input.is_empty() {
+            self.input_contents_before_prompt_chip_command = Some(current_input);
+        }
+        executed
     }
 
     /// Applies `selection` only if `session_id` matches the in-flight handoff.

@@ -2083,6 +2083,48 @@ fn queued_command_completion_preserves_draft() {
     });
 }
 
+#[test]
+fn a_command_run_preserving_input_restores_the_draft_after_it_completes() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(session_id, &terminal, &mut app, "~");
+        let input = terminal.read(&app, |view, _| view.input().clone());
+
+        let executed = input.update(&mut app, |input, ctx| {
+            input.replace_buffer_content("draft in progress", ctx);
+            input.try_execute_command_preserving_input("id -un", ctx)
+        });
+        assert!(executed);
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "draft in progress");
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.deferred_remote_operations.latest_block_id = BlockId::new();
+            input.handle_block_completed_event(
+                BlockCompletedEvent {
+                    block_type: user_block_completed_for_test("id -un"),
+                    num_secrets_obfuscated: 0,
+                    block_index: BlockIndex::zero(),
+                    block_id: BlockId::new(),
+                    session_id: None,
+                    restored_block_was_local: None,
+                },
+                ctx,
+            );
+        });
+
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "draft in progress");
+        });
+    });
+}
+
 fn user_block_completed_for_test(command: &str) -> BlockType {
     BlockType::User(UserBlockCompleted::new_for_test(
         BlockIndex::zero(),
