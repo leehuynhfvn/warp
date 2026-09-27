@@ -1009,6 +1009,11 @@ pub enum FeatureFlag {
     /// Gates the Agent Bridge, which lets an external agent run commands and read and write files
     /// in a remote session the user attached, through local control.
     AgentBridge,
+
+    /// Gates the Agent Ops policy layer: a policy file plus an in-Warp approval dialog that gates
+    /// every write an agent makes through the Agent Bridge, independent of the agent's own
+    /// permission prompt.
+    AgentOpsPolicy,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

@@ -14,6 +14,11 @@ pub use crate::selectors::{
     TargetSelector, WindowSelector, WindowTarget,
 };
 
+/// How long Warp's agent-ops policy lets an approval request wait for the user to decide before
+/// it is denied automatically. The app uses this to time out a pending request; clients add it to
+/// their own request timeout so they don't give up before the user has a chance to answer.
+pub const APPROVAL_TIMEOUT_SECS: u64 = 300;
+
 /// Common layout direction values accepted by pane and tab mutations.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

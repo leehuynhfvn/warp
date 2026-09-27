@@ -65,3 +65,19 @@ pub(crate) const ATTACH_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Size at which the audit log is rotated.
 pub(crate) const AUDIT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// A command longer than this cannot be reviewed by a person, so the agent-ops policy denies it
+/// outright instead of asking for approval.
+pub(crate) const APPROVAL_MAX_COMMAND_BYTES: usize = 2 * 1024;
+pub(crate) const APPROVAL_MAX_COMMAND_LINES: usize = 20;
+
+/// How many lines of a file's contents are shown in an approval dialog.
+pub(crate) const APPROVAL_PREVIEW_LINES: usize = 40;
+
+/// Relative to the user's home directory.
+pub(crate) const POLICY_FILE: &str = ".warp/agent-ops/policy.toml";
+pub(crate) const AGENTS_FILE: &str = ".warp/agent-ops/agents.toml";
+
+/// Upper bound on how many approval requests a single session may have waiting at once, so a
+/// misbehaving agent cannot flood the queue.
+pub(crate) const MAX_PENDING_APPROVALS_PER_SESSION: usize = 8;

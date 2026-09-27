@@ -726,7 +726,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 ### Tiến độ
 
 - [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
-- [ ] 0.1 flag + hằng số
+- [x] 0.1 flag + hằng số
 - [ ] 1.1 `policy.rs` · [ ] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P1
 - [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
@@ -772,3 +772,12 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `AgentBridgeModel`. Chốt P1–P20, viết đầy đủ Phase 0–4 (pairing là Phase 4) và checklist 5.P1–5.P3.
   Sửa v1: đường dẫn `crates/warp_cli/src/local_control/mcp/jsonrpc.rs`; bỏ phương án banner-có-nút trên
   header (không đủ chỗ hiện lệnh). Chưa bắt đầu Phase 0.
+- 2026-09-27 — Task 0.1 (Claude Sonnet 5): `FeatureFlag::AgentOpsPolicy` cạnh `AgentBridge`
+  (`crates/warp_features/src/lib.rs`), cargo feature `agent_ops_policy` (`app/Cargo.toml`, không thêm
+  vào `default`), ánh xạ `#[cfg(feature = "agent_ops_policy")]` (`app/src/features.rs`, cạnh
+  `agent_bridge`); không thêm vào `DOGFOOD_FLAGS`. `APPROVAL_TIMEOUT_SECS = 300` trong
+  `crates/local_control/src/protocol.rs`. Hằng số Phase 1+ trong `app/src/agent_bridge/mod.rs`:
+  `APPROVAL_MAX_COMMAND_BYTES`, `APPROVAL_MAX_COMMAND_LINES`, `APPROVAL_PREVIEW_LINES`, `POLICY_FILE`,
+  `AGENTS_FILE`, `MAX_PENDING_APPROVALS_PER_SESSION` (chưa dùng tới Task 1.x nên `cargo check` báo
+  dead-code warning — không phải lỗi). `cargo check -p warp -p local_control -p warp_cli` và
+  `cargo check -p warp --features agent_ops_policy` đều qua.
