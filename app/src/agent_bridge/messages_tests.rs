@@ -69,3 +69,24 @@ fn the_setup_command_quotes_the_executable_path() {
     let tricky = setup_command(Path::new("/opt/My Apps/it's/warp"));
     assert!(tricky.contains(r"'/opt/My Apps/it'\''s/warp'"), "{tricky}");
 }
+
+#[test]
+fn an_appimage_is_set_up_by_its_file_not_its_mount_point() {
+    let mounted = || Ok(PathBuf::from("/tmp/.mount_WarpAbc123/warp-oss"));
+    assert_eq!(
+        setup_executable(Some(PathBuf::from("/home/me/Apps/Warp.AppImage")), mounted)
+            .expect("the AppImage path is used"),
+        PathBuf::from("/home/me/Apps/Warp.AppImage")
+    );
+    assert_eq!(
+        setup_executable(None, mounted).expect("the executable is used"),
+        PathBuf::from("/tmp/.mount_WarpAbc123/warp-oss")
+    );
+    assert_eq!(
+        setup_executable(Some(PathBuf::new()), mounted).expect("an empty variable is ignored"),
+        PathBuf::from("/tmp/.mount_WarpAbc123/warp-oss")
+    );
+    assert!(
+        setup_executable(None, || Err(io::Error::other("no executable"))).is_err()
+    );
+}

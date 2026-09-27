@@ -440,6 +440,20 @@ cp specs/agent-bridge/claude/SKILL.md ~/.claude/skills/warp-remote-ops/SKILL.md
 Warp phải đang chạy, bật Settings > Scripting, có flag `AgentBridge` (bản Local/Dev, hoặc
 `./script/run --features warp_control_cli,warp_sync,agent_bridge`).
 
+**Bản release (Phase 5, D32).** Bản dùng hằng ngày thay cho build debug:
+
+```bash
+# App (mặc định gói AppImage; đổi bằng --packages). Cargo feature agent_bridge bật flag
+# AgentBridge qua app/src/features.rs bất kể channel; Settings > Scripting vẫn phải bật tay.
+./script/linux/bundle --channel oss --features warp_control_cli,warp_sync,agent_bridge
+# warpctrl độc lập (binary musl tĩnh + wrapper `warpctrl`), có sẵn `remote` và `mcp`:
+./script/linux/bundle --channel oss --artifact warpctrl
+claude mcp add --scope user warp-bridge -- <thư mục artifact>/warpctrl mcp
+```
+
+Với AppImage, lệnh chép từ palette dùng đường dẫn file `.AppImage` (biến `APPIMAGE`), không phải
+thư mục mount tạm `/tmp/.mount_*` đổi mỗi lần mở.
+
 `~/.claude/settings.json` — chỉ tự động cho phép tool chỉ-đọc; `exec`/`exec_visible`/`write_file`/
 `edit_file` luôn hỏi:
 
@@ -907,12 +921,14 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 
 1. Một lần: palette "Agent Bridge: Copy Claude Code setup command" → dán vào terminal → thêm
    allowlist chỉ-đọc và (tuỳ chọn) skill `warp-remote-ops` (mục 3.11). `claude mcp list` phải báo
-   `warp-bridge` connected.
+   `warp-bridge` connected. Dùng bản release thì build theo mục 3.11 trước.
 2. Warp: `ssh user@host` → `sudo -i` → Warpify → palette "Agent Bridge: Allow agents to control
    this session" (hoặc bản read-only).
 3. Mở Claude Code (VSCode hoặc một pane Warp local bên cạnh): "trên server prod-1, …".
    Agent khác (D11) dùng cùng MCP server — kiểm cú pháp bằng `--help` của bản đang cài:
    `codex mcp add warp-bridge -- <warp> --warpctrl mcp`, `gemini mcp add warp-bridge <warp> --warpctrl mcp`.
+   Muốn thấy lệnh chạy ngay trong pane thì nói rõ ("chạy … cho tôi xem"): agent dùng
+   `exec_visible` (Phase 5), còn mặc định là `exec` chạy ngầm.
 4. Xong việc: palette "Agent Bridge: Revoke …" (hoặc `exit` khỏi `sudo -i` / để hết hạn 30 phút).
 
 ---

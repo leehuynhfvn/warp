@@ -1,6 +1,7 @@
 //! The text the Command Palette actions show to the user and put on the clipboard.
 
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use super::ATTACH_IDLE_TTL;
 use super::attachments::Access;
@@ -46,6 +47,19 @@ pub(crate) fn indicator_label(access: Access, user: &str) -> String {
 
 pub(crate) fn revoke_tooltip(user: &str, host: &str) -> String {
     format!("Revoke agent access to {user}@{host}")
+}
+
+/// The executable the MCP client should start. Inside an AppImage, `current_exe` is under a mount
+/// point that changes every time the app starts, so the AppImage file itself (which the AppImage
+/// runtime puts in `APPIMAGE`) is used instead.
+pub(crate) fn setup_executable(
+    appimage: Option<PathBuf>,
+    current_exe: impl FnOnce() -> io::Result<PathBuf>,
+) -> io::Result<PathBuf> {
+    match appimage {
+        Some(appimage) if !appimage.as_os_str().is_empty() => Ok(appimage),
+        Some(_) | None => current_exe(),
+    }
 }
 
 /// The command that adds the bridge's MCP server to Claude Code.

@@ -168,6 +168,7 @@ use crate::agent_bridge::{
     attached_message as agent_bridge_attached_message,
     revoked_all_message as agent_bridge_revoked_all_message,
     revoked_message as agent_bridge_revoked_message, setup_command as agent_bridge_setup_command,
+    setup_executable as agent_bridge_setup_executable,
 };
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
@@ -18925,7 +18926,11 @@ impl Workspace {
     }
 
     fn agent_bridge_copy_setup_command(&mut self, ctx: &mut ViewContext<Self>) {
-        let toast = match std::env::current_exe() {
+        let executable = agent_bridge_setup_executable(
+            std::env::var_os("APPIMAGE").map(PathBuf::from),
+            std::env::current_exe,
+        );
+        let toast = match executable {
             Ok(executable) => {
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(agent_bridge_setup_command(

@@ -15,7 +15,9 @@ pub(crate) mod visible;
 
 use std::time::Duration;
 
-pub(crate) use messages::{attached_message, revoked_all_message, revoked_message, setup_command};
+pub(crate) use messages::{
+    attached_message, revoked_all_message, revoked_message, setup_command, setup_executable,
+};
 
 /// Upper bound on the length of a command. The wrapped script is typed through the remote
 /// shell's line editor.
