@@ -131,6 +131,9 @@ pub(crate) struct Target {
     pub request_id: Uuid,
     /// Where to write the audit record; `None` skips auditing.
     pub audit_dir: Option<PathBuf>,
+    /// Set once `authorize` has decided to let the request run, so the "started" audit record
+    /// says why. `None` when the `AgentOpsPolicy` flag is off, matching O1's audit shape exactly.
+    pub policy_decision: Option<&'static str>,
 }
 
 pub(crate) async fn exec(
@@ -616,6 +619,8 @@ impl Audit {
             exit_code: None,
             result: AuditOutcome::Ok,
             error_code: None,
+            policy_decision: target.policy_decision,
+            policy_reason: None,
             duration_ms: 0,
             bytes: None,
             still_running: false,
@@ -668,6 +673,25 @@ impl Audit {
             log::warn!("[Agent Bridge] could not write the audit log: {err}");
         }
     }
+}
+
+/// Writes the single audit line for a request the agent-ops policy denied before it ran. There is
+/// no "started" line for a denied request (P13 of the plan): the policy decides before anything
+/// touches the server.
+pub(crate) fn audit_policy_denied(
+    target: &Target,
+    action: ActionKind,
+    agent: Option<&str>,
+    command: Option<&str>,
+    path: Option<&str>,
+    reason: &str,
+) {
+    let mut audit = Audit::begin(target, action, agent);
+    audit.record.command = command.map(str::to_owned);
+    audit.record.path = path.map(str::to_owned);
+    audit.record.policy_decision = Some("deny");
+    audit.record.policy_reason = Some(reason.to_owned());
+    audit.finish(Err(AgentBridgeError::PolicyDenied(reason.to_owned())));
 }
 
 #[cfg(all(test, unix))]

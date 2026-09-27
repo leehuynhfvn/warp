@@ -49,6 +49,11 @@ pub(crate) struct AuditRecord {
     pub result: AuditOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// What the agent-ops policy decided, when the `AgentOpsPolicy` flag is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_decision: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_reason: Option<String>,
     pub duration_ms: u64,
     /// Bytes read or written.
     #[serde(skip_serializing_if = "Option::is_none")]

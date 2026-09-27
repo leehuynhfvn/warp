@@ -1,6 +1,7 @@
 use ::local_control::auth::CredentialRequest;
 use ::local_control::protocol::{
-    Action, ActionKind, SessionSelector, SessionTarget, TargetSelector, WriteExpectation,
+    Action, ActionKind, RemoteExecParams, RemoteFileReadParams, RemoteFileWriteParams,
+    SessionSelector, SessionTarget, TargetSelector, WriteExpectation,
 };
 use ::local_control::{
     ControlError, ControlResponse, ErrorCode, InstanceId, RequestEnvelope, ResponseEnvelope,
@@ -13,6 +14,7 @@ use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warpui::SingletonEntity as _;
 
+use super::{Decision, Operation, PolicyRequest, PolicySubject, evaluate_policy};
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::local_control::{
     ControlServerState, LocalControlBridge, handle_control_request, issue_credential,
@@ -257,6 +259,102 @@ fn output_recent_rejects_a_count_out_of_range_and_a_bad_agent_name() {
                 )
                 .await;
             assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
+        }
+    });
+}
+
+// --- Agent-ops policy wiring ------------------------------------------------------------------
+//
+// `remote_tests.rs`'s HTTP harness never attaches a real `WarpifiedRemote` session (every test
+// above stops at `StaleTarget`/`InvalidParams`/before `resolve` even runs), so `authorize` cannot
+// be exercised end to end here. `Policy::evaluate` itself has full coverage in
+// `agent_bridge::policy_tests`; these tests cover the two things that live in this module: which
+// operations the policy applies to, and that `evaluate_policy` resolves the real policy file
+// under `$HOME`.
+
+#[test]
+fn only_exec_and_write_operations_are_subject_to_the_agent_ops_policy() {
+    let exec = Operation::Exec(RemoteExecParams {
+        command: "id -un".to_owned(),
+        cwd: None,
+        timeout_secs: None,
+        agent: None,
+    });
+    match exec.policy_subject() {
+        Some(PolicySubject::Exec(command)) => assert_eq!(command, "id -un"),
+        other => panic!("expected Some(Exec), got {other:?}"),
+    }
+
+    let read = Operation::Read(RemoteFileReadParams {
+        path: "/etc/hosts".to_owned(),
+        agent: None,
+    });
+    assert!(
+        read.policy_subject().is_none(),
+        "a read must not be subject to the agent-ops policy (L0 in mục 1.1 of the plan)"
+    );
+
+    let write = Operation::Write(RemoteFileWriteParams {
+        path: "/etc/hosts".to_owned(),
+        content_base64: String::new(),
+        expectation: WriteExpectation::MustNotExist,
+        agent: None,
+    });
+    match write.policy_subject() {
+        Some(PolicySubject::Write { path }) => assert_eq!(path, "/etc/hosts"),
+        other => panic!("expected Some(Write), got {other:?}"),
+    }
+}
+
+/// Points `$HOME` at a temporary directory holding `.warp/agent-ops/policy.toml`, runs `body`,
+/// then restores `$HOME`. `#[serial]` on the caller keeps this from racing another test's `$HOME`.
+fn with_temp_home_policy(text: &str, body: impl FnOnce()) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join(".warp").join("agent-ops");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("policy.toml");
+    std::fs::write(&path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let previous_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", home.path());
+    }
+    body();
+    unsafe {
+        match &previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn evaluate_policy_reads_the_real_policy_file_under_home() {
+    with_temp_home_policy("[defaults]\nmode = \"read_only\"\n", || {
+        let decision = evaluate_policy("prod-1", PolicyRequest::Exec("id"));
+        match decision {
+            Decision::Deny(reason) => assert!(reason.contains("read-only"), "{reason}"),
+            other => panic!("expected Deny, got {other:?}"),
+        }
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn evaluate_policy_denies_everything_when_the_policy_file_is_invalid() {
+    with_temp_home_policy("[defaults]\nmode = \"sometimes\"\n", || {
+        let decision = evaluate_policy("prod-1", PolicyRequest::Exec("id"));
+        match decision {
+            Decision::Deny(reason) => {
+                assert!(reason.contains("policy file"), "{reason}");
+            }
+            other => panic!("expected Deny, got {other:?}"),
         }
     });
 }

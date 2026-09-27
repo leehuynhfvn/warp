@@ -15,6 +15,8 @@ fn record(command: &str) -> AuditRecord {
         exit_code: Some(0),
         result: AuditOutcome::Ok,
         error_code: None,
+        policy_decision: None,
+        policy_reason: None,
         duration_ms: 42,
         bytes: None,
         still_running: false,

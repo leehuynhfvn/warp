@@ -26,6 +26,7 @@ use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::operations::OperationKind;
 use crate::agent_bridge::ops::{self, SessionRunner, Target, VisibleAudit};
+use crate::agent_bridge::policy::{self, Decision, PolicyRequest};
 use crate::agent_bridge::recent;
 use crate::agent_bridge::visible::{self, CommandWatch};
 use crate::features::FeatureFlag;
@@ -79,6 +80,26 @@ impl Operation {
         matches!(self, Self::Exec(_))
     }
 
+    fn agent(&self) -> Option<&str> {
+        match self {
+            Self::Exec(params) => params.agent.as_deref(),
+            Self::Read(params) => params.agent.as_deref(),
+            Self::Write(params) => params.agent.as_deref(),
+        }
+    }
+
+    /// What the agent-ops policy evaluates for this operation; `None` for a read, which the
+    /// policy does not gate (mục 3.1 of the O2 plan: L0 actions run unchanged from O1).
+    fn policy_subject(&self) -> Option<PolicySubject> {
+        match self {
+            Self::Exec(params) => Some(PolicySubject::Exec(params.command.clone())),
+            Self::Write(params) => Some(PolicySubject::Write {
+                path: params.path.clone(),
+            }),
+            Self::Read(_) => None,
+        }
+    }
+
     async fn run(self, runner: &SessionRunner, target: &Target) -> Result<Value, AgentBridgeError> {
         match self {
             Self::Exec(params) => ops::exec(runner, target, params).await,
@@ -111,7 +132,8 @@ pub(crate) fn session_list(
 }
 
 /// Starts an operation in an attached session. The answer arrives on the returned receiver so
-/// that the main thread is not held up while the server works.
+/// that the main thread is not held up while the server works. A write (`Exec`/`Write`) is gated
+/// on the agent-ops policy first; a read runs unchanged from O1.
 pub(crate) fn start(
     request: &RequestEnvelope,
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -124,15 +146,66 @@ pub(crate) fn start(
     let runner = SessionRunner::new(session.clone()).map_err(ControlError::from)?;
     check_access(&session, operation.needed_access(), ctx)?;
     let id = session.id();
-    AgentBridgeModel::handle(ctx)
-        .update(ctx, |model, _| {
-            model.begin_operation(id, OperationKind::Hidden)
-        })
-        .map_err(ControlError::from)?;
-
     let target = target(snapshot.session_id, &session, snapshot.cwd, request);
     let is_exec = operation.is_exec();
     let (sender, receiver) = oneshot::channel();
+
+    let Some(subject) = operation.policy_subject() else {
+        run_hidden_operation(id, operation, runner, target, is_exec, sender, ctx);
+        return Ok(receiver);
+    };
+    let input = AuthorizeInput {
+        hostname: session.hostname().to_owned(),
+        subject,
+        action: kind,
+        agent: operation.agent().map(str::to_owned),
+        target: target.clone(),
+    };
+    authorize(
+        input,
+        move |result, ctx| match result {
+            Ok(policy_decision) => {
+                let target = Target {
+                    policy_decision,
+                    ..target
+                };
+                run_hidden_operation(id, operation, runner, target, is_exec, sender, ctx);
+            }
+            Err(error) => {
+                if sender.send(Err(error.into())).is_err() {
+                    log::debug!("A local-control client stopped waiting for a remote result");
+                }
+            }
+        },
+        ctx,
+    );
+    Ok(receiver)
+}
+
+/// Takes the session's Hidden operation slot and runs `operation`, delivering every outcome
+/// (including a failure to take the slot) through `sender`. Split out of `start` so the slot is
+/// only held for the run itself, never for an agent-ops approval wait (mục 2.1 P3 of the plan).
+fn run_hidden_operation(
+    id: SessionId,
+    operation: Operation,
+    runner: SessionRunner,
+    target: Target,
+    is_exec: bool,
+    sender: oneshot::Sender<Result<Value, ControlError>>,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    let begun = AgentBridgeModel::handle(ctx)
+        .update(ctx, |model, _| {
+            model.begin_operation(id, OperationKind::Hidden)
+        })
+        .map_err(ControlError::from);
+    if let Err(error) = begun {
+        if sender.send(Err(error)).is_err() {
+            log::debug!("A local-control client stopped waiting for a remote result");
+        }
+        return;
+    }
+
     ctx.spawn(
         async move { operation.run(&runner, &target).await },
         move |_, result, ctx| {
@@ -145,7 +218,6 @@ pub(crate) fn start(
             }
         },
     );
-    Ok(receiver)
 }
 
 /// Copies the latest commands of an attached session out of its blocks. The answer arrives on the
@@ -184,7 +256,9 @@ pub(crate) fn output_recent(
 }
 
 /// Types a command into an attached session's shell, where it runs as a block the user watches.
-/// The answer is read from that block once the command finishes or the wait times out.
+/// The answer is read from that block once the command finishes or the wait times out. Gated on
+/// the agent-ops policy first: the command is only ever typed into the shell after it is allowed
+/// (mục 2.4 P14 of the plan).
 pub(crate) fn exec_visible(
     request: &RequestEnvelope,
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -198,20 +272,66 @@ pub(crate) fn exec_visible(
     ops::ensure_supported(&session).map_err(ControlError::from)?;
     check_access(&session, Access::Full, ctx)?;
     let id = session.id();
-    AgentBridgeModel::handle(ctx)
-        .update(ctx, |model, _| {
-            model.begin_operation(id, OperationKind::Visible)
-        })
-        .map_err(ControlError::from)?;
-
     let target = target(
         snapshot.session_id.clone(),
         &session,
         snapshot.cwd.clone(),
         request,
     );
-    let mut audit = VisibleAudit::begin(&target, &params);
     let (sender, receiver) = oneshot::channel();
+
+    let input = AuthorizeInput {
+        hostname: session.hostname().to_owned(),
+        subject: PolicySubject::ExecVisible(params.command.clone()),
+        action: kind,
+        agent: params.agent.clone(),
+        target: target.clone(),
+    };
+    authorize(
+        input,
+        move |result, ctx| match result {
+            Ok(policy_decision) => {
+                let target = Target {
+                    policy_decision,
+                    ..target
+                };
+                run_visible_operation(id, snapshot, params, target, sender, ctx);
+            }
+            Err(error) => {
+                if sender.send(Err(error.into())).is_err() {
+                    log::debug!("A local-control client stopped waiting for a remote result");
+                }
+            }
+        },
+        ctx,
+    );
+    Ok(receiver)
+}
+
+/// Takes the session's Visible operation slot and types `params.command` into its shell,
+/// delivering every outcome through `sender`. Split out of `exec_visible` so the slot, and the
+/// shell itself, are only touched once the request is allowed (mục 2.1 P3/P14 of the plan).
+fn run_visible_operation(
+    id: SessionId,
+    snapshot: SessionSnapshot,
+    params: RemoteExecVisibleParams,
+    target: Target,
+    sender: oneshot::Sender<Result<Value, ControlError>>,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    let begun = AgentBridgeModel::handle(ctx)
+        .update(ctx, |model, _| {
+            model.begin_operation(id, OperationKind::Visible)
+        })
+        .map_err(ControlError::from);
+    if let Err(error) = begun {
+        if sender.send(Err(error)).is_err() {
+            log::debug!("A local-control client stopped waiting for a remote result");
+        }
+        return;
+    }
+
+    let mut audit = VisibleAudit::begin(&target, &params);
     ctx.spawn(
         async move { audit.record_start().map(|()| audit) },
         move |_, started, ctx| {
@@ -253,7 +373,6 @@ pub(crate) fn exec_visible(
             );
         },
     );
-    Ok(receiver)
 }
 
 /// Types `command` into the session's shell unless the shell is busy or is no longer the one the
@@ -341,6 +460,123 @@ fn target(
         cwd,
         request_id: request.request_id,
         audit_dir: audit_dir(),
+        policy_decision: None,
+    }
+}
+
+/// Enough about a write request to evaluate the agent-ops policy on a background thread and, if
+/// it is denied, to audit it. Owned (not the borrowing `PolicyRequest`) so it can cross into the
+/// spawned future.
+#[derive(Debug)]
+enum PolicySubject {
+    Exec(String),
+    ExecVisible(String),
+    Write { path: String },
+}
+
+impl PolicySubject {
+    fn as_policy_request(&self) -> PolicyRequest<'_> {
+        match self {
+            Self::Exec(command) => PolicyRequest::Exec(command),
+            Self::ExecVisible(command) => PolicyRequest::ExecVisible(command),
+            Self::Write { path } => PolicyRequest::Write { path },
+        }
+    }
+
+    fn command(&self) -> Option<&str> {
+        match self {
+            Self::Exec(command) | Self::ExecVisible(command) => Some(command),
+            Self::Write { .. } => None,
+        }
+    }
+
+    fn path(&self) -> Option<&str> {
+        match self {
+            Self::Write { path } => Some(path),
+            Self::Exec(_) | Self::ExecVisible(_) => None,
+        }
+    }
+}
+
+/// What `authorize` needs to evaluate the agent-ops policy and, if it denies the request, to
+/// audit that denial. `target`/`action`/`agent` mirror what the operation would itself audit as
+/// its "started" record, since a denied request never reaches it.
+struct AuthorizeInput {
+    hostname: String,
+    subject: PolicySubject,
+    action: ActionKind,
+    agent: Option<String>,
+    target: Target,
+}
+
+/// Decides whether an agent may perform `input.subject`, per the fixed rule order in mục 2.2 of
+/// the O2 plan (pairing, host selection, `[deny]`, then the rule's mode), then runs
+/// `continue_with` on the main thread: `Ok(policy_decision)` (the label to audit; `None` when the
+/// `AgentOpsPolicy` flag is off, so O1's audit shape is unchanged) once the request is allowed, or
+/// `Err(reason)` once it is denied. A single continuation, rather than separate `proceed`/`fail`
+/// closures, because both would otherwise need to independently own the caller's `oneshot::Sender`
+/// (mục 3.6 of the plan allows restructuring the closure shape when `'static` makes it awkward).
+///
+/// Phase 1 of the plan only wires up Allow/Deny: `Decision::Ask` is a placeholder Deny until
+/// Task 2.3 adds the approval queue.
+fn authorize(
+    input: AuthorizeInput,
+    continue_with: impl FnOnce(Result<Option<&'static str>, AgentBridgeError>, &mut ModelContext<LocalControlBridge>)
+        + 'static,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    if !FeatureFlag::AgentOpsPolicy.is_enabled() {
+        continue_with(Ok(None), ctx);
+        return;
+    }
+    ctx.spawn(
+        async move {
+            let decision = evaluate_policy(&input.hostname, input.subject.as_policy_request());
+            (input, decision)
+        },
+        move |_, (input, decision), ctx| match decision {
+            Decision::Allow => continue_with(Ok(Some("allow")), ctx),
+            Decision::Ask => deny_authorization(
+                input,
+                "approval is not available yet".to_owned(),
+                continue_with,
+                ctx,
+            ),
+            Decision::Deny(reason) => deny_authorization(input, reason, continue_with, ctx),
+        },
+    );
+}
+
+fn deny_authorization(
+    input: AuthorizeInput,
+    reason: String,
+    continue_with: impl FnOnce(Result<Option<&'static str>, AgentBridgeError>, &mut ModelContext<LocalControlBridge>),
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    ops::audit_policy_denied(
+        &input.target,
+        input.action,
+        input.agent.as_deref(),
+        input.subject.command(),
+        input.subject.path(),
+        &reason,
+    );
+    continue_with(Err(AgentBridgeError::PolicyDenied(reason)), ctx);
+}
+
+/// Loads `~/.warp/agent-ops/policy.toml` and evaluates `request` against it. A policy that cannot
+/// be loaded, or a home directory that cannot be found, denies every write (fail-closed, mục 2.3
+/// of the plan).
+fn evaluate_policy(hostname: &str, request: PolicyRequest<'_>) -> Decision {
+    let Some(home) = dirs::home_dir() else {
+        return Decision::Deny("the user's home directory could not be found.".to_owned());
+    };
+    match policy::load(&home) {
+        Ok(policy) => policy.evaluate(hostname, request, false),
+        Err(error) => Decision::Deny(format!(
+            "the policy file ~/.warp/agent-ops/policy.toml is invalid ({error}). Ask the user to \
+             fix it."
+        )),
     }
 }
 
