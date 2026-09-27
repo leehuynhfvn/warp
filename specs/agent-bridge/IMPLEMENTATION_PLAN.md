@@ -929,7 +929,7 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 4.1 recent_output · [x] 4.2 indicator · [x] 4.3 format
 - [x] ⛔ CHECKPOINT C (user, 2026-09-27) — người dùng báo test tay `recent_output` + indicator đạt
 - [x] Plan Phase 5 (D27–D32) · [x] người dùng duyệt (2026-09-27)
-- [x] 5.1 protocol · [ ] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
+- [x] 5.1 protocol · [x] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
 - [ ] ⛔ CHECKPOINT D (user, checklist 5.C)
 
 ### Quyết định
@@ -1011,3 +1011,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-27 — Checkpoint C hoàn tất (người dùng xác nhận test tay `recent_output` + indicator đạt). Người dùng duyệt plan Phase 5 và yêu cầu làm luôn.
 - 2026-09-27 — D29 chỉnh theo trao đổi với người dùng: poll giãn 200 ms → 1 s sau 10 s, nhớ `BlockId` sau lần tìm thấy đầu; Task 5.5 cập nhật.
 - 2026-09-27 — Task 5.1: action `remote.exec.visible` (`Stub`), `RemoteExecVisibleParams`/`RemoteExecVisibleResult`, spec trong catalog, resolver, arm `UnsupportedAction` trong `bridge.rs`. Test: round-trip, từ chối `cwd`/thiếu `command`, `exit_code: null` khi còn chạy; `STUB_ACTIONS` tạm trong `protocol_tests.rs` và tạm loại action khỏi test ví dụ CLI (gỡ ở 5.4 / 5.6). Compile không cần sửa match nào khác (không có match exhaustive trên `ActionParameterSpec`/`ActionKind` ngoài resolver và bridge).
+- 2026-09-27 — Task 5.2: `agent_bridge/operations.rs` (`Operations`, `OperationKind::{Hidden, Visible}`) giữ trong `AgentBridgeModel` (`begin_operation`/`end_operation`), tách khỏi `Attachments`; lỗi mới `AgentBridgeError::OperationRunning` (mã `session_busy`, thông báo nói rõ đang có request khác của agent, khác `SessionBusy` là user đang chạy lệnh). `handlers/remote.rs::start` gọi `begin(Hidden)` sau `check_access`, `end` trong callback. 6 test `operations`.

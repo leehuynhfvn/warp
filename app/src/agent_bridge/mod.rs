@@ -6,6 +6,7 @@ pub(crate) mod audit;
 pub(crate) mod error;
 pub(crate) mod messages;
 pub(crate) mod model;
+pub(crate) mod operations;
 pub(crate) mod ops;
 pub(crate) mod path;
 pub(crate) mod recent;

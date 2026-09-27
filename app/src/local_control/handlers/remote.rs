@@ -23,6 +23,7 @@ use crate::agent_bridge::attachments::{Access, AttachmentStatus};
 use crate::agent_bridge::audit::audit_dir;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
+use crate::agent_bridge::operations::OperationKind;
 use crate::agent_bridge::ops::{self, SessionRunner, Target};
 use crate::agent_bridge::recent;
 use crate::features::FeatureFlag;
@@ -118,15 +119,21 @@ pub(crate) fn start(
     let operation = Operation::parse(&request.action)?;
     let runner = SessionRunner::new(session.clone()).map_err(ControlError::from)?;
     check_access(&session, operation.needed_access(), ctx)?;
-
     let id = session.id();
+    AgentBridgeModel::handle(ctx)
+        .update(ctx, |model, _| model.begin_operation(id, OperationKind::Hidden))
+        .map_err(ControlError::from)?;
+
     let target = target(snapshot.session_id, &session, snapshot.cwd, request);
     let is_exec = operation.is_exec();
     let (sender, receiver) = oneshot::channel();
     ctx.spawn(
         async move { operation.run(&runner, &target).await },
         move |_, result, ctx| {
-            AgentBridgeModel::handle(ctx).update(ctx, |model, _| model.record_use(id, is_exec));
+            AgentBridgeModel::handle(ctx).update(ctx, |model, _| {
+                model.end_operation(id, OperationKind::Hidden);
+                model.record_use(id, is_exec);
+            });
             if sender.send(result.map_err(ControlError::from)).is_err() {
                 log::debug!("A local-control client stopped waiting for a remote result");
             }

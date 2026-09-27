@@ -481,6 +481,7 @@ async fn commit_upload(
             | AgentBridgeError::AttachmentExpired
             | AgentBridgeError::ReadOnlyAttachment
             | AgentBridgeError::SessionBusy
+            | AgentBridgeError::OperationRunning
             | AgentBridgeError::Timeout { .. }
             | AgentBridgeError::InvalidParams(_)
             | AgentBridgeError::Conflict(_)

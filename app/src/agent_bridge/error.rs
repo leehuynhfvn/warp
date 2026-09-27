@@ -31,6 +31,11 @@ pub(crate) enum AgentBridgeError {
          cancelled. Try again shortly."
     )]
     SessionBusy,
+    #[error(
+        "Another agent request is still running in this session, and a visible command cannot \
+         run alongside it. Wait for it to finish, then try again."
+    )]
+    OperationRunning,
     #[error("The operation did not finish within {secs} seconds")]
     Timeout { secs: u64 },
     #[error("Invalid parameters: {0}")]
@@ -59,7 +64,9 @@ impl From<AgentBridgeError> for ControlError {
                 ErrorCode::SessionNotAttached
             }
             AgentBridgeError::ReadOnlyAttachment => ErrorCode::InsufficientPermissions,
-            AgentBridgeError::SessionBusy => ErrorCode::SessionBusy,
+            AgentBridgeError::SessionBusy | AgentBridgeError::OperationRunning => {
+                ErrorCode::SessionBusy
+            }
             AgentBridgeError::Timeout { .. } => ErrorCode::Timeout,
             AgentBridgeError::InvalidParams(_) => ErrorCode::InvalidParams,
             AgentBridgeError::Conflict(_) => ErrorCode::TargetStateConflict,

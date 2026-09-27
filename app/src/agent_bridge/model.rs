@@ -3,6 +3,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use super::attachments::{Access, AttachmentStatus, Attachments};
 use super::error::AgentBridgeError;
+use super::operations::{OperationKind, Operations};
 use crate::terminal::model::session::SessionId;
 
 /// Which sessions the user has allowed agents to control. Lives only in memory, so restarting
@@ -10,6 +11,7 @@ use crate::terminal::model::session::SessionId;
 #[derive(Default)]
 pub struct AgentBridgeModel {
     attachments: Attachments,
+    operations: Operations,
 }
 
 impl Entity for AgentBridgeModel {
@@ -55,6 +57,18 @@ impl AgentBridgeModel {
 
     pub(crate) fn record_use(&mut self, id: SessionId, is_exec: bool) {
         self.attachments.record_use(id, is_exec, Instant::now());
+    }
+
+    pub(crate) fn begin_operation(
+        &mut self,
+        id: SessionId,
+        kind: OperationKind,
+    ) -> Result<(), AgentBridgeError> {
+        self.operations.begin(id, kind)
+    }
+
+    pub(crate) fn end_operation(&mut self, id: SessionId, kind: OperationKind) {
+        self.operations.end(id, kind);
     }
 
     pub(crate) fn status(&self, id: SessionId) -> Option<AttachmentStatus> {

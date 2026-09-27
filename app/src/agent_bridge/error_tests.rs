@@ -31,6 +31,10 @@ fn every_error_maps_to_the_documented_code() {
             ErrorCode::InsufficientPermissions,
         ),
         (AgentBridgeError::SessionBusy, ErrorCode::SessionBusy),
+        (
+            AgentBridgeError::OperationRunning,
+            ErrorCode::SessionBusy,
+        ),
         (AgentBridgeError::Timeout { secs: 5 }, ErrorCode::Timeout),
         (
             AgentBridgeError::InvalidParams("x".to_owned()),
