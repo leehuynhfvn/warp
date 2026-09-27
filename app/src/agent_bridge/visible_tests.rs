@@ -189,6 +189,20 @@ fn captured(output: String, output_rows: usize) -> CapturedBlock {
     }
 }
 
+fn outcome(
+    captured: CapturedBlock,
+    still_running: bool,
+    alt_screen: bool,
+    duration: Duration,
+) -> Outcome {
+    Outcome {
+        captured,
+        still_running,
+        alt_screen,
+        duration,
+    }
+}
+
 fn session_ref() -> RemoteSessionRef {
     RemoteSessionRef {
         session_id: "12".to_owned(),
@@ -201,10 +215,7 @@ fn session_ref() -> RemoteSessionRef {
 fn a_finished_result_carries_the_exit_code() {
     let result = result(
         session_ref(),
-        captured("error: oops".to_owned(), 1),
-        false,
-        false,
-        Duration::from_millis(1500),
+        outcome(captured("error: oops".to_owned(), 1), false, false, Duration::from_millis(1500)),
     );
     assert_eq!(result.exit_code, Some(2));
     assert!(!result.still_running);
@@ -218,10 +229,7 @@ fn a_finished_result_carries_the_exit_code() {
 fn a_running_result_has_no_exit_code() {
     let result = result(
         session_ref(),
-        captured("waiting".to_owned(), 1),
-        true,
-        true,
-        Duration::from_secs(5),
+        outcome(captured("waiting".to_owned(), 1), true, true, Duration::from_secs(5)),
     );
     assert_eq!(result.exit_code, None);
     assert!(result.still_running);
@@ -231,10 +239,82 @@ fn a_running_result_has_no_exit_code() {
 #[test]
 fn a_large_output_is_cut_to_the_visible_limit() {
     let output = format!("START{}END", "x".repeat(VISIBLE_OUTPUT_MAX_BYTES * 2));
-    let result = result(session_ref(), captured(output, 1), false, false, Duration::ZERO);
+    let result = result(
+        session_ref(),
+        outcome(captured(output, 1), false, false, Duration::ZERO),
+    );
     assert!(result.truncated);
     assert!(result.output.starts_with("START"));
     assert!(result.output.ends_with("END"));
     let note_allowance = 64;
     assert!(result.output.len() <= VISIBLE_OUTPUT_MAX_BYTES + note_allowance);
+}
+
+fn running_watch() -> (TerminalModel, CommandWatch) {
+    let mut model = model_with_blocks(&[("ls", "a")]);
+    let start = model.block_list().active_block_index();
+    let watch = CommandWatch::new(session(), "tail -f log".to_owned(), start);
+    model.simulate_long_running_block("tail -f log", "waiting");
+    assign_sessions(&mut model);
+    (model, watch)
+}
+
+#[test]
+fn a_step_keeps_waiting_while_the_command_runs_within_the_timeout() {
+    let (model, mut watch) = running_watch();
+    let timeout = Duration::from_secs(30);
+    assert_eq!(
+        step(&mut watch, &model, Duration::from_secs(29), timeout),
+        Ok(None)
+    );
+}
+
+#[test]
+fn a_step_answers_with_a_snapshot_once_the_timeout_passes() {
+    let (model, mut watch) = running_watch();
+    let timeout = Duration::from_secs(30);
+    let outcome = step(&mut watch, &model, timeout, timeout)
+        .expect("no error")
+        .expect("the wait is over");
+    assert!(outcome.still_running);
+    assert!(!outcome.alt_screen);
+    assert_eq!(outcome.duration, timeout);
+    assert!(outcome.captured.output.contains("waiting"), "{outcome:?}");
+}
+
+#[test]
+fn a_step_answers_as_soon_as_the_command_finishes() {
+    let model = model_with_blocks(&[("ls", "a"), ("hostname", "prod-1")]);
+    let mut watch = CommandWatch::new(session(), "hostname".to_owned(), BlockIndex(0));
+    let outcome = step(
+        &mut watch,
+        &model,
+        Duration::from_millis(400),
+        Duration::from_secs(30),
+    )
+    .expect("no error")
+    .expect("the command finished");
+    assert!(!outcome.still_running);
+    assert_eq!(outcome.duration, Duration::from_millis(400));
+}
+
+#[test]
+fn a_command_that_never_starts_fails_after_the_start_timeout() {
+    let model = model_with_blocks(&[("ls", "a")]);
+    let start = model.block_list().active_block_index();
+    let mut watch = CommandWatch::new(session(), "uptime".to_owned(), start);
+    let timeout = Duration::from_secs(120);
+    assert_eq!(
+        step(&mut watch, &model, Duration::from_secs(9), timeout),
+        Ok(None)
+    );
+    assert!(matches!(
+        step(&mut watch, &model, VISIBLE_START_TIMEOUT, timeout),
+        Err(AgentBridgeError::Executor(_))
+    ));
+    let short = Duration::from_secs(3);
+    assert!(matches!(
+        step(&mut watch, &model, short, short),
+        Err(AgentBridgeError::Executor(_))
+    ));
 }

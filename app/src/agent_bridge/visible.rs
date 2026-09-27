@@ -1,18 +1,24 @@
 //! `remote.exec.visible`: a command typed into the attached session's own shell, so that it runs
 //! as a block the user watches. The request is answered from that block.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use ::local_control::protocol::{RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteSessionRef};
 
+
+use instant::Instant;
+use parking_lot::FairMutex;
+use warpui::r#async::Timer;
 
 use super::error::AgentBridgeError;
 use super::ops::validate_command;
 use super::recent::{CapturedBlock, capture_block, limit_output};
 use super::{
     EXEC_DEFAULT_TIMEOUT_SECS, VISIBLE_FAST_POLL_WINDOW, VISIBLE_OUTPUT_MAX_BYTES,
-    VISIBLE_POLL_INTERVAL, VISIBLE_SLOW_POLL_INTERVAL,
+    VISIBLE_POLL_INTERVAL, VISIBLE_SLOW_POLL_INTERVAL, VISIBLE_START_TIMEOUT,
 };
+use crate::terminal::model::TerminalModel;
 use crate::terminal::model::block::{Block, BlockId};
 use crate::terminal::model::blocks::BlockList;
 use crate::terminal::model::session::SessionId;
@@ -114,14 +120,86 @@ impl CommandWatch {
     }
 }
 
+/// How a visible command stood when the wait for it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Outcome {
+    pub captured: CapturedBlock,
+    pub still_running: bool,
+    /// A full-screen program had the terminal when the wait ended.
+    pub alt_screen: bool,
+    pub duration: Duration,
+}
+
+/// Waits for the command `watch` follows, at most `timeout`. The terminal model is locked once
+/// per look and released before sleeping; see [`poll_interval`] for how often it looks.
+pub(crate) async fn wait(
+    terminal_model: Arc<FairMutex<TerminalModel>>,
+    mut watch: CommandWatch,
+    timeout: Duration,
+) -> Result<Outcome, AgentBridgeError> {
+    let started = Instant::now();
+    loop {
+        let elapsed = started.elapsed();
+        let outcome = {
+            let model = terminal_model.lock();
+            step(&mut watch, &model, elapsed, timeout)?
+        };
+        if let Some(outcome) = outcome {
+            return Ok(outcome);
+        }
+        Timer::after(poll_interval(elapsed)).await;
+    }
+}
+
+/// One look at the terminal, `elapsed` into a wait of at most `timeout`: the outcome if the wait
+/// is over, `None` to look again later.
+pub(crate) fn step(
+    watch: &mut CommandWatch,
+    model: &TerminalModel,
+    elapsed: Duration,
+    timeout: Duration,
+) -> Result<Option<Outcome>, AgentBridgeError> {
+    let block_list = model.block_list();
+    match watch.poll(block_list)? {
+        Progress::Finished(captured) => Ok(Some(Outcome {
+            captured,
+            still_running: false,
+            alt_screen: false,
+            duration: elapsed,
+        })),
+        Progress::NotStarted if elapsed >= VISIBLE_START_TIMEOUT.min(timeout) => {
+            Err(AgentBridgeError::Executor(format!(
+                "the command did not start within {} seconds; the terminal may be busy or \
+                 waiting for input",
+                elapsed.as_secs()
+            )))
+        }
+        Progress::Running if elapsed >= timeout => {
+            let captured = watch.snapshot(block_list).ok_or_else(|| {
+                AgentBridgeError::Executor(
+                    "the command's block was removed from the terminal before it finished"
+                        .to_owned(),
+                )
+            })?;
+            Ok(Some(Outcome {
+                captured,
+                still_running: true,
+                alt_screen: model.is_alt_screen_active(),
+                duration: elapsed,
+            }))
+        }
+        Progress::NotStarted | Progress::Running => Ok(None),
+    }
+}
+
 /// The answer for a command that finished, or that was still running when the wait ended.
-pub(crate) fn result(
-    session: RemoteSessionRef,
-    captured: CapturedBlock,
-    still_running: bool,
-    alt_screen: bool,
-    duration: Duration,
-) -> RemoteExecVisibleResult {
+pub(crate) fn result(session: RemoteSessionRef, outcome: Outcome) -> RemoteExecVisibleResult {
+    let Outcome {
+        captured,
+        still_running,
+        alt_screen,
+        duration,
+    } = outcome;
     let (output, truncated) =
         limit_output(captured.output, captured.output_rows, VISIBLE_OUTPUT_MAX_BYTES);
     RemoteExecVisibleResult {
