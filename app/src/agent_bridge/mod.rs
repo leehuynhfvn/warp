@@ -73,12 +73,18 @@ pub(crate) const APPROVAL_MAX_COMMAND_BYTES: usize = 2 * 1024;
 pub(crate) const APPROVAL_MAX_COMMAND_LINES: usize = 20;
 
 /// How many lines of a file's contents are shown in an approval dialog.
+// Used starting Task 3.7 (the approval dialog); remove this `allow` there.
+#[allow(dead_code)]
 pub(crate) const APPROVAL_PREVIEW_LINES: usize = 40;
 
 /// Relative to the user's home directory.
 pub(crate) const POLICY_FILE: &str = ".warp/agent-ops/policy.toml";
+// Used starting Task 4.2 (the paired-agents store); remove this `allow` there.
+#[allow(dead_code)]
 pub(crate) const AGENTS_FILE: &str = ".warp/agent-ops/agents.toml";
 
 /// Upper bound on how many approval requests a single session may have waiting at once, so a
 /// misbehaving agent cannot flood the queue.
+// Used starting Task 2.1 (the approval queue); remove this `allow` there.
+#[allow(dead_code)]
 pub(crate) const MAX_PENDING_APPROVALS_PER_SESSION: usize = 8;
