@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use clap_complete::aot::Shell;
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock,
-    RemoteExecResult, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind,
+    RemoteExecResult, RemoteExecVisibleResult, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind,
     RemoteSessionRef, RemoteSessionSummary, RemoteStream, SyncChange, SyncConfirmation,
     SyncDifference, SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary,
     SyncSkippedEntry, SyncUploadSummary,
@@ -248,12 +248,7 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
         assert_eq!(parsed_action_kind(&args.command), Some(kind));
         covered.insert(kind);
     }
-    // `remote.exec.visible` gets its CLI with Agent Bridge Task 5.6.
-    let expected = ActionKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| *kind != ActionKind::RemoteExecVisible)
-        .collect::<HashSet<_>>();
+    let expected = ActionKind::ALL.iter().copied().collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)
         .map(|kind| kind.as_str())
@@ -626,6 +621,21 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             ],
         ),
         (
+            ActionKind::RemoteExecVisible,
+            vec![
+                "warpctrl",
+                "remote",
+                "exec",
+                "--visible",
+                "--session",
+                "12",
+                "--",
+                "systemctl",
+                "status",
+                "nginx",
+            ],
+        ),
+        (
             ActionKind::RemoteOutputRecent,
             vec![
                 "warpctrl",
@@ -823,6 +833,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
         },
         ControlCommand::Remote(command) => match command {
             RemoteCommand::Sessions(_) => Some(ActionKind::RemoteSessionList),
+            RemoteCommand::Exec(args) if args.visible => Some(ActionKind::RemoteExecVisible),
             RemoteCommand::Exec(_) => Some(ActionKind::RemoteExec),
             RemoteCommand::Read(_) => Some(ActionKind::RemoteFileRead),
             RemoteCommand::Write(_) => Some(ActionKind::RemoteFileWrite),
@@ -1251,6 +1262,27 @@ fn remote_exec_needs_a_command_and_defaults_to_two_minutes() {
 }
 
 #[test]
+fn remote_exec_visible_cannot_be_given_a_directory() {
+    let args = ControlArgs::try_parse_from([
+        "warpctrl", "remote", "exec", "--visible", "--timeout", "5", "--", "cd", "/etc",
+    ])
+    .expect("remote exec --visible parses");
+    let ControlCommand::Remote(RemoteCommand::Exec(args)) = args.command else {
+        panic!("expected remote exec");
+    };
+    assert!(args.visible);
+    assert_eq!(args.timeout_secs, 5);
+    assert_eq!(args.command, ["cd", "/etc"]);
+
+    assert!(
+        ControlArgs::try_parse_from([
+            "warpctrl", "remote", "exec", "--visible", "--cwd", "/etc", "--", "pwd",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn mcp_is_reached_through_the_control_mode_flag() {
     let args = ControlArgs::try_parse_control_mode_from(["warp", "--warpctrl", "mcp"])
         .expect("control mode is detected")
@@ -1390,6 +1422,52 @@ fn the_exec_exit_code_is_the_remote_one_kept_in_range() {
     assert_eq!(exec_exit_code(&exec_result(255)), 255);
     assert_eq!(exec_exit_code(&exec_result(-1)), 0);
     assert_eq!(exec_exit_code(&exec_result(1000)), 255);
+}
+
+fn visible_result(exit_code: Option<i32>, alt_screen: bool, truncated: bool) -> RemoteExecVisibleResult {
+    RemoteExecVisibleResult {
+        session: RemoteSessionRef {
+            session_id: "12".to_owned(),
+            host: "prod-1".to_owned(),
+            user: "root".to_owned(),
+        },
+        command: "sleep 30".to_owned(),
+        cwd: None,
+        exit_code,
+        still_running: exit_code.is_none(),
+        alt_screen,
+        duration_ms: 5000,
+        output: "out".to_owned(),
+        output_rows: 900,
+        truncated,
+    }
+}
+
+#[test]
+fn a_visible_command_exits_with_its_code_or_124_while_it_runs() {
+    use remote::visible_exit_code;
+    assert_eq!(visible_exit_code(&visible_result(Some(0), false, false)), 0);
+    assert_eq!(visible_exit_code(&visible_result(Some(3), false, false)), 3);
+    assert_eq!(visible_exit_code(&visible_result(Some(-1), false, false)), 0);
+    assert_eq!(visible_exit_code(&visible_result(None, false, false)), 124);
+}
+
+#[test]
+fn a_visible_command_status_says_how_it_ended() {
+    use remote::render_visible_status;
+    assert_eq!(
+        render_visible_status(&visible_result(Some(2), false, false)),
+        "warpctrl: exit 2"
+    );
+    assert_eq!(
+        render_visible_status(&visible_result(None, false, false)),
+        "warpctrl: still running in the terminal"
+    );
+    assert_eq!(
+        render_visible_status(&visible_result(None, true, true)),
+        "warpctrl: still running in the terminal (full-screen program)\n\
+         warpctrl: output was cut; the whole output is 900 rows"
+    );
 }
 
 #[test]

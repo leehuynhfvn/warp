@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams, RemoteExecResult,
-    RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
+    RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
     RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult,
     RemoteSessionSummary, WriteExpectation,
 };
@@ -43,6 +43,10 @@ pub(super) const RECENT_MAX_COUNT: u32 = 10;
 /// Exit code of `read` for a file that does not exist.
 const EXIT_NOT_FOUND: u8 = 1;
 
+/// Exit code of `exec --visible` for a command still running when the wait ended, like the exit
+/// code of a command stopped by `timeout`.
+const EXIT_STILL_RUNNING: u8 = 124;
+
 /// Seconds a command may run when the caller gives no timeout.
 pub(super) const EXEC_DEFAULT_TIMEOUT_SECS: u32 = 120;
 
@@ -57,8 +61,8 @@ pub enum RemoteCommand {
 
     /// Run a command on the server and print its output.
     ///
-    /// Exits with the exit code of the command (124 when it timed out). The command has no
-    /// terminal and no stdin.
+    /// Exits with the exit code of the command (124 when it timed out, or with `--visible` when it
+    /// is still running). Without `--visible` the command has no terminal and no stdin.
     Exec(RemoteExecArgs),
 
     /// Print a file from the server.
@@ -87,7 +91,16 @@ pub struct RemoteExecArgs {
     #[arg(long = "cwd")]
     pub cwd: Option<String>,
 
-    /// Seconds before the command is stopped (1-600).
+    /// Type the command into the session's shell, where it runs as a block the user sees.
+    ///
+    /// `cd` and `export` stay in effect, the user can answer prompts in the terminal, and the
+    /// output is what the terminal shows (stdout and stderr together). A command still running
+    /// after `--timeout` keeps running in the terminal.
+    #[arg(long = "visible", conflicts_with = "cwd")]
+    pub visible: bool,
+
+    /// Seconds before the command is stopped, or with `--visible` before warpctrl stops waiting
+    /// for it (1-600).
     #[arg(long = "timeout", default_value_t = EXEC_DEFAULT_TIMEOUT_SECS)]
     pub timeout_secs: u32,
 
@@ -180,6 +193,9 @@ fn run_sessions(args: &TargetArgs, output_format: OutputFormat) -> Result<u8, Co
 }
 
 fn run_exec(args: RemoteExecArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
+    if args.visible {
+        return run_exec_visible(args, output_format);
+    }
     let params = RemoteExecParams {
         command: args.command.join(" "),
         cwd: args.cwd,
@@ -194,6 +210,23 @@ fn run_exec(args: RemoteExecArgs, output_format: OutputFormat) -> Result<u8, Con
         Ok(())
     })?;
     Ok(exec_exit_code(&result))
+}
+
+fn run_exec_visible(args: RemoteExecArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
+    let params = RemoteExecVisibleParams {
+        command: args.command.join(" "),
+        timeout_secs: Some(args.timeout_secs),
+        agent: Some(AGENT_NAME.to_owned()),
+    };
+    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+    let data = send_action(&args.target, ActionKind::RemoteExecVisible, params, wait)?;
+    let result: RemoteExecVisibleResult = decode(data.clone(), "command result")?;
+    print_result(&data, output_format, || {
+        print!("{}", terminal_safe(&result.output));
+        eprintln!("{}", render_visible_status(&result));
+        Ok(())
+    })?;
+    Ok(visible_exit_code(&result))
 }
 
 fn run_read(args: &RemoteReadArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
@@ -365,6 +398,31 @@ pub(super) fn terminal_safe(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
         .collect()
+}
+
+/// How a visible command ended, for stderr after its output.
+pub(super) fn render_visible_status(result: &RemoteExecVisibleResult) -> String {
+    let mut status = match (result.exit_code, result.alt_screen) {
+        (Some(exit_code), _) => format!("warpctrl: exit {exit_code}"),
+        (None, true) => {
+            "warpctrl: still running in the terminal (full-screen program)".to_owned()
+        }
+        (None, false) => "warpctrl: still running in the terminal".to_owned(),
+    };
+    if result.truncated {
+        status.push_str(&format!(
+            "\nwarpctrl: output was cut; the whole output is {} rows",
+            result.output_rows
+        ));
+    }
+    status
+}
+
+pub(super) fn visible_exit_code(result: &RemoteExecVisibleResult) -> u8 {
+    match result.exit_code {
+        Some(exit_code) => u8::try_from(exit_code.clamp(0, MAX_EXIT_CODE)).unwrap_or(u8::MAX),
+        None => EXIT_STILL_RUNNING,
+    }
 }
 
 /// The exit code of the command, so that scripts can use `warpctrl remote exec` like `ssh`.
