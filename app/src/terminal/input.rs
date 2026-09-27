@@ -7783,6 +7783,15 @@ impl Input {
         self.try_execute_command_with_options(command, false, ctx)
     }
 
+    /// Like [`Self::try_execute_command`], but leaves whatever the user is typing in the editor.
+    pub(crate) fn try_execute_command_preserving_input(
+        &mut self,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        self.try_execute_command_with_options(command, true, ctx)
+    }
+
     /// Applies `selection` only if `session_id` matches the in-flight handoff.
     pub fn set_external_shell_widget_selection(&mut self, session_id: SessionId, selection: &str) {
         let Some(handoff) = self.pending_shell_widget_handoff.as_mut() else {

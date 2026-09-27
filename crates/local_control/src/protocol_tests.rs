@@ -217,21 +217,14 @@ fn direct_surface_actions_have_stable_names() {
     );
 }
 
-/// Actions declared ahead of their app-side implementation.
-const STUB_ACTIONS: [ActionKind; 1] = [ActionKind::RemoteExecVisible];
-
 #[test]
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
-        let expected = if STUB_ACTIONS.contains(&kind) {
-            ActionImplementationStatus::Stub
-        } else {
-            ActionImplementationStatus::Implemented
-        };
         assert_eq!(
-            metadata.implementation_status, expected,
-            "{} has the wrong status",
+            metadata.implementation_status,
+            ActionImplementationStatus::Implemented,
+            "{} should be implemented",
             metadata.name,
         );
     }
@@ -243,12 +236,7 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    let expected = ActionKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| !STUB_ACTIONS.contains(kind))
-        .collect::<Vec<_>>();
-    assert_eq!(actions, expected);
+    assert_eq!(actions, ActionKind::ALL);
 }
 
 #[test]

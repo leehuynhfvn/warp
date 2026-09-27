@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use ::local_control::protocol::{
-    Action, RemoteAccess, RemoteAttachment, RemoteExecParams, RemoteFileReadParams,
+    Action, RemoteAccess, RemoteAttachment, RemoteExecParams, RemoteExecVisibleParams,
+    RemoteFileReadParams,
     RemoteFileWriteParams, RemoteOutputRecentParams, RemoteSessionKind, RemoteSessionListResult,
     RemoteSessionRef, RemoteSessionSummary, RequestEnvelope, SessionTarget, TargetSelector,
 };
@@ -16,7 +17,7 @@ use ::local_control::{ActionKind, ControlError, ErrorCode};
 use futures::channel::oneshot;
 use parking_lot::FairMutex;
 use serde_json::Value;
-use warpui::{ModelContext, SingletonEntity};
+use warpui::{ModelContext, SingletonEntity, ViewHandle};
 
 use super::metadata::{SessionEntry, session_entries};
 use crate::agent_bridge::attachments::{Access, AttachmentStatus};
@@ -24,12 +25,14 @@ use crate::agent_bridge::audit::audit_dir;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::operations::OperationKind;
-use crate::agent_bridge::ops::{self, SessionRunner, Target};
+use crate::agent_bridge::ops::{self, SessionRunner, Target, VisibleAudit};
 use crate::agent_bridge::recent;
+use crate::agent_bridge::visible::{self, CommandWatch};
 use crate::features::FeatureFlag;
 use crate::local_control::LocalControlBridge;
 use crate::terminal::model::TerminalModel;
-use crate::terminal::model::session::Session;
+use crate::terminal::model::session::{Session, SessionId};
+use crate::terminal::view::TerminalView;
 use crate::warp_sync::printable;
 
 pub(crate) type RemoteReceiver = oneshot::Receiver<Result<Value, ControlError>>;
@@ -41,6 +44,7 @@ struct SessionSnapshot {
     session: Arc<Session>,
     cwd: Option<String>,
     terminal_model: Arc<FairMutex<TerminalModel>>,
+    terminal_view: ViewHandle<TerminalView>,
 }
 
 /// One of the operations that run on the server.
@@ -177,6 +181,130 @@ pub(crate) fn output_recent(
     Ok(receiver)
 }
 
+/// Types a command into an attached session's shell, where it runs as a block the user watches.
+/// The answer is read from that block once the command finishes or the wait times out.
+pub(crate) fn exec_visible(
+    request: &RequestEnvelope,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<RemoteReceiver, ControlError> {
+    let kind = request.action.kind;
+    ensure_enabled(kind)?;
+    let params = request.action.params_as::<RemoteExecVisibleParams>()?;
+    visible::validate(&params).map_err(ControlError::from)?;
+    let snapshot = resolve(&request.target, kind, ctx)?;
+    let session = snapshot.session.clone();
+    ops::ensure_supported(&session).map_err(ControlError::from)?;
+    check_access(&session, Access::Full, ctx)?;
+    let id = session.id();
+    AgentBridgeModel::handle(ctx)
+        .update(ctx, |model, _| model.begin_operation(id, OperationKind::Visible))
+        .map_err(ControlError::from)?;
+
+    let target = target(
+        snapshot.session_id.clone(),
+        &session,
+        snapshot.cwd.clone(),
+        request,
+    );
+    let mut audit = VisibleAudit::begin(&target, &params);
+    let (sender, receiver) = oneshot::channel();
+    ctx.spawn(
+        async move { audit.record_start().map(|()| audit) },
+        move |_, started, ctx| {
+            let audit = match started {
+                Ok(audit) => audit,
+                Err(error) => return finish_visible(id, Err(error), sender, ctx),
+            };
+            let watch = match send_visible_command(&snapshot, id, &params.command, ctx) {
+                Ok(watch) => watch,
+                Err(error) => {
+                    ctx.spawn(
+                        async move {
+                            audit.finish(Err(&error));
+                            error
+                        },
+                        move |_, error, ctx| finish_visible(id, Err(error), sender, ctx),
+                    );
+                    return;
+                }
+            };
+            let session = target.session;
+            let timeout = visible::timeout(&params);
+            ctx.spawn(
+                async move {
+                    let result = visible::wait(snapshot.terminal_model, watch, timeout)
+                        .await
+                        .map(|outcome| visible::result(session, outcome));
+                    audit.finish(result.as_ref());
+                    result
+                },
+                move |_, result, ctx| {
+                    let value = result.and_then(|result| {
+                        serde_json::to_value(result).map_err(|err| {
+                            AgentBridgeError::Io(format!("could not encode the result: {err}"))
+                        })
+                    });
+                    finish_visible(id, value, sender, ctx);
+                },
+            );
+        },
+    );
+    Ok(receiver)
+}
+
+/// Types `command` into the session's shell unless the shell is busy or is no longer the one the
+/// user attached. The terminal model is released before the input is touched, which locks it
+/// again.
+fn send_visible_command(
+    snapshot: &SessionSnapshot,
+    id: SessionId,
+    command: &str,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<CommandWatch, AgentBridgeError> {
+    let active = snapshot.terminal_view.read(ctx, |view, ctx| {
+        view.active_session().as_ref(ctx).session(ctx).map(|session| session.id())
+    });
+    if active != Some(id) {
+        return Err(AgentBridgeError::Executor(
+            "the session's shell changed before the command was sent (for example after an \
+             exit from sudo -i); list the sessions again"
+                .to_owned(),
+        ));
+    }
+    let start = {
+        let model = snapshot.terminal_model.lock();
+        let active_block = model.block_list().active_block();
+        if active_block.is_active_and_long_running() && !active_block.is_in_band_command_block() {
+            return Err(AgentBridgeError::SessionBusy);
+        }
+        model.block_list().active_block_index()
+    };
+    let sent = snapshot.terminal_view.update(ctx, |view, ctx| {
+        view.input().update(ctx, |input, ctx| {
+            input.try_execute_command_preserving_input(command, ctx)
+        })
+    });
+    if !sent {
+        return Err(AgentBridgeError::SessionBusy);
+    }
+    Ok(CommandWatch::new(id, command.to_owned(), start))
+}
+
+fn finish_visible(
+    id: SessionId,
+    result: Result<Value, AgentBridgeError>,
+    sender: oneshot::Sender<Result<Value, ControlError>>,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    AgentBridgeModel::handle(ctx).update(ctx, |model, _| {
+        model.end_operation(id, OperationKind::Visible);
+        model.record_use(id, true);
+    });
+    if sender.send(result.map_err(ControlError::from)).is_err() {
+        log::debug!("A local-control client stopped waiting for a remote result");
+    }
+}
+
 /// Fails unless the user attached `session` with at least `needed` access.
 fn check_access(
     session: &Session,
@@ -266,6 +394,7 @@ fn read_session(
                 session: active.session(ctx)?,
                 cwd: active.current_working_directory().cloned(),
                 terminal_model: view.model.clone(),
+                terminal_view: terminal.clone(),
             })
         })
     })

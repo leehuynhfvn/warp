@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use ::local_control::ActionKind;
 use ::local_control::protocol::{
-    RemoteExecParams, RemoteExecResult, RemoteFileReadParams, RemoteFileReadResult,
+    RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult,
+    RemoteFileReadParams, RemoteFileReadResult,
     RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionRef,
     RemoteStream, WriteExpectation,
 };
@@ -530,35 +531,66 @@ fn ensure_success(output: &RawOutput) -> Result<(), AgentBridgeError> {
 // ---------------------------------------------------------------------------------------------
 
 /// What a finished request adds to its audit record.
+#[derive(Default)]
 struct Details {
     exit_code: Option<i32>,
     bytes: Option<u64>,
+    still_running: bool,
 }
 
 impl Details {
     fn exec(exit_code: i32) -> Self {
         Self {
             exit_code: Some(exit_code),
-            bytes: None,
+            ..Self::default()
         }
     }
 
     fn bytes(bytes: u64) -> Self {
         Self {
-            exit_code: None,
             bytes: Some(bytes),
+            ..Self::default()
         }
     }
 }
 
-struct Audit<'a> {
-    target: &'a Target,
+/// Audit of `remote.exec.visible`, whose start and end are recorded from different callbacks.
+pub(crate) struct VisibleAudit(Audit);
+
+impl VisibleAudit {
+    pub(crate) fn begin(target: &Target, params: &RemoteExecVisibleParams) -> Self {
+        let mut audit = Audit::begin(target, ActionKind::RemoteExecVisible, params.agent.as_deref());
+        audit.record.command = Some(params.command.clone());
+        audit.record.cwd = target.cwd.clone();
+        Self(audit)
+    }
+
+    /// Fails, and the command must not be sent, when the log cannot be written.
+    pub(crate) fn record_start(&mut self) -> Result<(), AgentBridgeError> {
+        self.0.record_start()
+    }
+
+    pub(crate) fn finish(self, outcome: Result<&RemoteExecVisibleResult, &AgentBridgeError>) {
+        self.0.finish(
+            outcome
+                .map(|result| Details {
+                    exit_code: result.exit_code,
+                    still_running: result.still_running,
+                    bytes: None,
+                })
+                .map_err(Clone::clone),
+        );
+    }
+}
+
+struct Audit {
+    target: Target,
     record: AuditRecord,
     started: Instant,
 }
 
-impl<'a> Audit<'a> {
-    fn begin(target: &'a Target, action: ActionKind, agent: Option<&str>) -> Self {
+impl Audit {
+    fn begin(target: &Target, action: ActionKind, agent: Option<&str>) -> Self {
         let agent = agent
             .filter(|agent| validate_agent(Some(agent)).is_ok())
             .map(str::to_owned);
@@ -578,9 +610,10 @@ impl<'a> Audit<'a> {
             error_code: None,
             duration_ms: 0,
             bytes: None,
+            still_running: false,
         };
         Self {
-            target,
+            target: target.clone(),
             record,
             started: Instant::now(),
         }
@@ -612,6 +645,7 @@ impl<'a> Audit<'a> {
             Ok(details) => {
                 self.record.exit_code = details.exit_code;
                 self.record.bytes = details.bytes;
+                self.record.still_running = details.still_running;
             }
             Err(error) => {
                 self.record.result = AuditOutcome::Error;

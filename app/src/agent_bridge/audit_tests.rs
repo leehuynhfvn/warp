@@ -17,6 +17,7 @@ fn record(command: &str) -> AuditRecord {
         error_code: None,
         duration_ms: 42,
         bytes: None,
+        still_running: false,
     }
 }
 

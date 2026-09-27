@@ -53,6 +53,9 @@ pub(crate) struct AuditRecord {
     /// Bytes read or written.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+    /// A visible command was still running in the terminal when the request was answered.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub still_running: bool,
 }
 
 /// Directory of the audit log, or `None` when the user's home directory is unknown.

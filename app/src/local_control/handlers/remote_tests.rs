@@ -116,8 +116,9 @@ fn error_code(result: Result<serde_json::Value, ControlError>) -> ErrorCode {
     result.expect_err("the action should fail").code
 }
 
-const SESSION_ACTIONS: [ActionKind; 4] = [
+const SESSION_ACTIONS: [ActionKind; 5] = [
     ActionKind::RemoteExec,
+    ActionKind::RemoteExecVisible,
     ActionKind::RemoteFileRead,
     ActionKind::RemoteFileWrite,
     ActionKind::RemoteOutputRecent,
@@ -125,7 +126,7 @@ const SESSION_ACTIONS: [ActionKind; 4] = [
 
 fn params_for(kind: ActionKind) -> serde_json::Value {
     match kind {
-        ActionKind::RemoteExec => exec_params(),
+        ActionKind::RemoteExec | ActionKind::RemoteExecVisible => exec_params(),
         ActionKind::RemoteFileRead => read_params(),
         ActionKind::RemoteOutputRecent => serde_json::json!({ "count": 2 }),
         _ => write_params(),
@@ -254,6 +255,29 @@ fn output_recent_rejects_a_count_out_of_range_and_a_bad_agent_name() {
                     params.clone(),
                     session_id("1"),
                 )
+                .await;
+            assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
+        }
+    });
+}
+
+#[test]
+fn a_visible_command_is_validated_before_any_session_is_looked_up() {
+    let _flags = (
+        FeatureFlag::WarpControlCli.override_enabled(true),
+        FeatureFlag::AgentBridge.override_enabled(true),
+    );
+    warpui::App::test((), |mut app| async move {
+        let harness = Harness::new(&mut app).await;
+
+        for params in [
+            serde_json::json!({ "command": "pwd", "cwd": "/etc" }),
+            serde_json::json!({ "command": "  " }),
+            serde_json::json!({ "command": "sleep 1", "timeout_secs": 0 }),
+            serde_json::json!({ "command": "id", "agent": "Gemini CLI" }),
+        ] {
+            let result = harness
+                .call(ActionKind::RemoteExecVisible, params.clone(), session_id("999"))
                 .await;
             assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
         }
