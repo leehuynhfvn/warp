@@ -727,7 +727,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 
 - [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
 - [x] 0.1 flag + hằng số
-- [ ] 1.1 `policy.rs` · [ ] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
+- [x] 1.1 `policy.rs` · [ ] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P1
 - [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
 - [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
@@ -760,6 +760,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P19 | 2026-09-27 | Flag riêng `AgentOpsPolicy` (cargo feature `agent_ops_policy`); tắt = y hệt O1 | Patch sau feature flag (P6 của roadmap); không đổi hành vi người đang dùng O1 |
 | P20 | 2026-09-27 | Ba checkpoint: P1 (CLI, Allow/Deny) → P2 (UI duyệt) → P3 (pairing) | Bắt lỗi wiring trước khi làm UI; pairing tách riêng để O2 lõi dùng được sớm |
 | P21 | 2026-09-27 | Phase 0 (chỉ Task 0.1) không chạy clippy 3 package cuối phase, chỉ `cargo check` như mục 4 (Phase 0) đã nêu; clippy+format thật sự chạy ở cuối Phase 1 | Hằng số `APPROVAL_*`/`POLICY_FILE`/`AGENTS_FILE`/`MAX_PENDING_APPROVALS_PER_SESSION` thêm ở 0.1 chưa được dùng tới Task 1.1 → `cargo clippy -D warnings` báo `dead_code` là lỗi thật, không phải lỗi code; mục 0.8 ("cuối mỗi Phase") là quy tắc chung, còn văn bản riêng của Phase 0 chỉ yêu cầu `cargo check` — theo văn bản riêng, cụ thể hơn |
+| P22 | 2026-09-27 | `AGENTS_FILE` (Phase 4), `MAX_PENDING_APPROVALS_PER_SESSION` (Task 2.1), `APPROVAL_PREVIEW_LINES` (Task 3.7) thêm sẵn ở 0.1 nhưng chưa có chỗ dùng trong Phase 1 → gắn `#[allow(dead_code)]` (kèm comment nêu task nào sẽ dùng) ngay trước khi chạy clippy cuối Phase 1; xoá từng `allow` khi task tương ứng dùng tới hằng số đó | Đúng ý Task 0.1 của plan (thêm hằng số cả 4 phase một lần, tên `mod.rs` chung); `cargo check` không báo lỗi (chỉ warning) nên không chặn task 0.1–1.4, chỉ chặn ở bước clippy `-D warnings` cuối phase — vá đúng chỗ chặn, không đổi thiết kế hằng số |
 
 ### Nhật ký
 
@@ -782,3 +783,11 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `AGENTS_FILE`, `MAX_PENDING_APPROVALS_PER_SESSION` (chưa dùng tới Task 1.x nên `cargo check` báo
   dead-code warning — không phải lỗi). `cargo check -p warp -p local_control -p warp_cli` và
   `cargo check -p warp --features agent_ops_policy` đều qua.
+- 2026-09-27 — Task 1.1 (Claude Sonnet 5): `app/src/agent_bridge/policy.rs` (+ `policy_tests.rs`,
+  44 test) đúng thiết kế mục 3.2: `Mode`/`Rule`/`HostRule`/`Policy`/`PolicyRequest`/`Decision`/
+  `PolicyError` (thiserror), `Policy::parse`/`evaluate`, `load(home)`, glob `*`/`?` tự viết
+  (thuật toán wildcard-matching kinh điển, so theo `char` chứ không theo byte). Xác nhận
+  `app/Cargo.toml` đã có `toml`, `regex`, `sha2`, `thiserror`, `tempfile`, `uuid` — không cần thêm
+  dependency. `cargo test -p warp --lib agent_bridge::policy`: 44 passed. `AGENTS_FILE`,
+  `MAX_PENDING_APPROVALS_PER_SESSION`, `APPROVAL_PREVIEW_LINES` vẫn chưa dùng (Phase 2–4) — sẽ cần
+  `#[allow(dead_code)]` tạm thời trước khi chạy clippy cuối Phase 1 (xem P22).

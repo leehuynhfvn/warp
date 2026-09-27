@@ -9,6 +9,7 @@ pub(crate) mod model;
 pub(crate) mod operations;
 pub(crate) mod ops;
 pub(crate) mod path;
+pub(crate) mod policy;
 pub(crate) mod recent;
 pub(crate) mod script;
 pub(crate) mod visible;
