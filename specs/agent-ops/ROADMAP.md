@@ -328,7 +328,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [x] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12; xong 2026-09-27, CHECKPOINT A–D, thêm Phase 5: `exec_visible` + bản release) · [x] gate O1 (CHECKPOINT B đạt gồm 5.B.8 client MCP thứ hai; độ trễ 0,183 s/lệnh ở CHECKPOINT A)
-- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, viết xong 2026-09-27, chờ duyệt)
+- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, v2 đã chốt quyết định P1–P20 ngày 2026-09-27, chưa code)
 - [ ] G1 danh bạ server (G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần

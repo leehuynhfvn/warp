@@ -1,612 +1,723 @@
-# Policy + duyệt phía Warp — O2 — Implementation Plan (v1)
+# Policy + duyệt phía Warp — O2 — Implementation Plan (v2)
 
-> Người thực thi: một coding agent (Claude Sonnet). Làm **tuần tự từng Phase**, dừng ở mọi
-> **CHECKPOINT** để người dùng xác nhận. Không tự ý mở rộng phạm vi. Plan viết ngày 2026-09-27
-> (Claude Sonnet 5) sau khi khảo sát code thật của `feature/agent-bridge` (O1, xong cùng ngày —
-> xem mục 8 của `specs/agent-bridge/IMPLEMENTATION_PLAN.md`, D1–D32).
+> Người thực thi: một coding agent (Claude Sonnet 5). Làm **tuần tự từng Phase**, dừng ở mọi
+> **CHECKPOINT** để người dùng test tay. Không tự ý mở rộng phạm vi.
 >
-> Plan này là phase **O2** của `specs/agent-ops/ROADMAP.md` (mục "O2 — Policy + duyệt phía Warp"),
-> cộng phần **pairing token** mà roadmap ghi chú "chuyển từ Phase 5 của plan Bridge, D27 ở đó, làm
-> cùng O2" (mục "G", Phase 5 §"Pairing token"). Phạm vi **không** gồm G (Warp làm cổng SSH cho
-> agent) — roadmap yêu cầu G2 chỉ bắt đầu **sau** O2 (AO7).
+> v1 viết 2026-09-27 (Claude Sonnet 5) sau khảo sát code. **v2** (cùng ngày, Claude Opus 5.5): người
+> dùng giao quyền chốt mọi mục "⚠ Cần duyệt" của v1; đã kiểm lại khảo sát, sửa chỗ sai (đường dẫn
+> `mcp/jsonrpc.rs`, số dòng), và chốt thiết kế — xem bảng Quyết định P1–P20 ở mục 8. **Không còn mục
+> nào chờ duyệt**; gặp chỗ plan sai với code thật thì theo quy tắc 0.10.
 >
-> **File này có một số quyết định thiết kế chưa chốt** vì roadmap mô tả ở mức mục tiêu, không phải
-> API — mục 1.3 và 3.x đánh dấu rõ bằng **⚠ Cần duyệt**. Không code phần nào có đánh dấu đó cho tới
-> khi người dùng chọn phương án.
+> Plan là phase **O2** của `specs/agent-ops/ROADMAP.md`, gồm cả **pairing token** (chuyển từ Phase 5
+> của plan Bridge, D27). Code nền: O1 xong 2026-09-27 — mục 8 của
+> `specs/agent-bridge/IMPLEMENTATION_PLAN.md` (D1–D32). Không gồm nhánh G (AO7: G2 chỉ sau O2).
 
 ---
 
 ## 0. Quy tắc bắt buộc cho agent thực thi
 
-1. Đọc `AGENTS.md` trước. Skill liên quan trong `.agents/skills/`: `gui-ui-guidelines` (mọi việc
-   đụng UI — đọc **trước** khi viết dialog/banner ở Phase 3), `add-feature-flag` (Phase 0),
-   `rust-unit-tests`, `logging-and-error-reporting`. Đọc `SKILL.md` tương ứng trước khi dùng.
-2. Làm tiếp trong worktree hiện có `/projects/github/warp-agent-bridge`, nhánh `feature/agent-bridge`
-   (đã có O1 xong, không tạo worktree mới). Trước khi bắt đầu Phase 0: `git status` sạch, kiểm
-   `git log -3` đúng là các commit Phase 5 của O1 (`884d30bd7` trở về trước).
-3. Mọi lệnh cargo chạy với `export CARGO_TARGET_DIR=/projects/github/warp/target`, kèm `-p warp`
-   (D14 của plan Bridge — thiếu nó `-p warp_cli`/`-p local_control` đứng riêng build fail vì
-   `fontconfig-devel`). Ví dụ: `cargo test -p warp -p local_control -p warp_cli --lib -- agent_bridge`.
-4. Build để test tay: `./script/run --features warp_control_cli,warp_sync,agent_bridge` (thêm feature
-   mới của phase này nếu Task 0.1 quyết định thêm, vd `agent_ops_policy`) từ
-   `/projects/github/warp-agent-bridge`. Binary MCP dùng để test:
-   `/projects/github/warp-agent-bridge/target/debug/warp-oss` (không theo `CARGO_TARGET_DIR`, xem
-   nhật ký Checkpoint B của plan Bridge).
-5. Test `agent_bridge` (dùng `sh` thật) và `terminal::view` nhạy với tải khi chạy song song — trước
-   khi kết luận là lỗi thật, chạy lại riêng `cargo test ... -- --test-threads=1`.
-6. Sau MỖI task: `cargo check` cho package đã sửa. Không commit code không compile. Không
-   `unwrap()`/`expect()` trên dữ liệu từ file policy, request local-control, hoặc input UI. Match
-   exhaustive, không `_` nếu tránh được. `ctx` là tham số cuối. Comment chỉ giải thích "why". Format
-   args inline. Không prefix `_` cho tham số thừa — xoá hẳn.
-7. Unit test trong `<name>_tests.rs`, include bằng `#[cfg(test)] #[path = "<name>_tests.rs"] mod tests;`.
-8. Cuối mỗi Phase: `cargo clippy -p warp -p local_control -p warp_cli --all-targets --tests -- -D warnings`.
-   `./script/format` chỉ chạy **một lần**, ở task cuối cùng của cả plan (như Task 5.10 của Bridge).
-   Không chạy `./script/presubmit`.
-9. Commit theo conventional commits (`feat(agent-ops): ...`), mỗi task một commit nhỏ.
-10. Gặp API không tồn tại / chữ ký khác plan, hoặc gặp một mục đánh dấu **⚠ Cần duyệt** chưa có
-    quyết định ghi ở mục 8 → **dừng và hỏi**, không bịa API, không tự chọn phương án.
-11. File này là **nguồn sự thật duy nhất** của phase O2. Bắt đầu phiên: đọc mục 8. Sau mỗi task đã
-    commit: tick checkbox + thêm 1 dòng "Nhật ký" ở mục 8 (commit cùng task). Lệch plan → ghi vào
-    "Quyết định" kèm lý do. Không tạo `.context/`.
-12. Sau khi Phase chính (0–4) xong và CHECKPOINT tương ứng đạt, **dừng lại hỏi người dùng** trước khi
-    làm Phase 5 (pairing token) — mục "G" của roadmap và bảng 1.3(d) coi đây là phần có thể lùi.
+1. Đọc `AGENTS.md` trước. Skill trong `.agents/skills/`: `add-feature-flag` (Task 0.1),
+   `rust-unit-tests`, `logging-and-error-reporting`, `gui-ui-guidelines` (**đọc trước Phase 3**).
+   Đọc `SKILL.md` tương ứng trước task dùng tới nó.
+2. Làm trong worktree `/projects/github/warp-agent-bridge`, nhánh `feature/agent-bridge`. Không đụng
+   checkout `/projects/github/warp`.
+3. Lệnh cargo: `export CARGO_TARGET_DIR=/projects/github/warp/target`, **luôn kèm `-p warp`** (D14 của
+   Bridge). Ví dụ: `cargo test -p warp -p warp_cli --lib -- agent_bridge local_control`,
+   `cargo test -p warp -p local_control --lib`. Cargo báo "Blocking waiting for file lock" thì chờ.
+4. Sau MỖI task: `cargo check -p warp -p local_control -p warp_cli`, sửa hết lỗi. Không commit code
+   không compile.
+5. Test `agent_bridge` (chạy `sh` thật) và `terminal::view` hay fail khi chạy song song: chạy lại riêng
+   với `-- --test-threads=1` trước khi kết luận là lỗi.
+6. Không `unwrap()`/`expect()` trên dữ liệu từ file (policy, danh sách agent), request local-control,
+   input UI. Không `let _ =` nuốt lỗi IO. Match exhaustive, không `_` nếu tránh được. `ctx` là tham số
+   cuối (trừ khi có closure). Không prefix `_` — xoá hẳn tham số thừa. Comment chỉ nói "why". Format
+   args inline. Không truyền `Itertools::format` vào macro log.
+7. Unit test trong `<name>_tests.rs`, include cuối module:
+   `#[cfg(test)] #[path = "<name>_tests.rs"] mod tests;`.
+8. **Cuối mỗi Phase:** `cargo clippy -p warp -p local_control -p warp_cli --all-targets --tests -- -D warnings`,
+   sửa hết, rồi `./script/format` **đúng một lần**, commit riêng `chore(agent-ops): run the formatter`.
+   Không chạy lại test/lint sau format. Không chạy `./script/presubmit`.
+9. Commit conventional (`feat(agent-ops): …`, `fix(agent-ops): …`), mỗi task một commit, message kết
+   thúc bằng dòng `Co-Authored-By` theo hướng dẫn attribution của phiên.
+10. API không tồn tại / chữ ký khác plan → tìm pattern tương tự trong code; vẫn mơ hồ → **dừng và hỏi**,
+    không bịa. Số dòng trong plan là gần đúng — tìm theo tên hàm. Khác plan → ghi dòng mới vào bảng
+    "Quyết định" (mục 8, tiếp số P21…) kèm lý do.
+11. File này là **nguồn sự thật duy nhất** của O2. Đầu phiên: đọc mục 8. Sau mỗi task: tick checkbox +
+    1 dòng "Nhật ký" (commit cùng task). Không tạo `.context/` hay file memory khác.
+12. Build để test tay: `./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy`
+    (thêm ở Task 0.1). Binary MCP: `/projects/github/warp-agent-bridge/target/debug/warp-oss`
+    (`./script/run` build vào `target/` của worktree, không theo `CARGO_TARGET_DIR`).
 
 ---
 
-## 1. Bài toán và kết quả khảo sát
+## 1. Bài toán và khảo sát
 
 ### 1.1 Mục tiêu
 
-O1 (Agent Bridge) để việc "duyệt từng thao tác" hoàn toàn cho **Claude Code** (permission prompt của
-MCP client) — mục 2.3 của plan Bridge ghi rõ: "Do Claude Code đảm nhiệm". Điều đó có ba lỗ hổng mà
-roadmap (P4, AO3) muốn đóng:
+O1 để việc duyệt từng thao tác cho **permission prompt của agent** (mục 2.3 plan Bridge). Ba lỗ hổng
+roadmap muốn đóng (P4, AO3):
 
-1. Agent khác (Codex, Gemini CLI, hay CLI chạy `--dangerously-skip-permissions`/tương đương) có thể
-   bỏ qua permission prompt của chính nó — Warp không có lớp chặn nào độc lập.
-2. Không có nơi nào để người dùng nhìn thấy **đúng lệnh sẽ chạy trên server, dưới quyền root** trước
-   khi nó chạy — permission prompt của agent chỉ hiện tên tool, không phải nội dung đã redact/thật.
-3. Không phân biệt được "lệnh đã biết là an toàn, cho chạy thẳng" (vd `systemctl reload nginx`) với
-   "lệnh lạ, phải hỏi" — mọi `remote.exec`/`remote.file.write` đều chạy ngay khi agent gọi (miễn đã
-   `Full` access).
+1. Agent chạy với cờ bỏ qua permission (hoặc agent khác, script bất kỳ gọi `warpctrl`) chạy lệnh ghi
+   dưới root mà Warp không chặn gì.
+2. Người dùng không thấy **đúng lệnh sẽ chạy trên server** trước khi nó chạy.
+3. Không phân biệt "lệnh đã tin" (chạy thẳng) với "lệnh lạ" (phải hỏi) và "lệnh cấm" (luôn chặn).
 
-O2 thêm một lớp **chính sách + hộp thoại duyệt phía Warp**, độc lập với agent gọi nó, cho các hành
-động **ghi** (`remote.exec`, `remote.file.write`, `remote.exec.visible`). Theo mục 3 của roadmap:
+O2 thêm lớp **chính sách + hộp thoại duyệt phía Warp**, độc lập với agent, cho mọi hành động **ghi**:
 
 | Mức | Hành động | O2 làm gì |
 |---|---|---|
-| L0 | Đọc (`remote.file.read`, `remote.output.recent`, `remote.session.list`) | Không đổi — vẫn tự chạy như O1, chỉ cần đã attach |
-| L1 | Runbook đã duyệt trước, khớp **nguyên văn** | Tự chạy nếu khớp allowlist của host, có ghi audit |
-| L2 | Mọi lệnh ghi khác | Hộp thoại duyệt trong Warp, timeout 5 phút → Deny |
-| L3 | Denylist (`rm -rf /`, `mkfs`, `dd if=`, shutdown/reboot, flush firewall, `DROP DATABASE`, …) | Luôn từ chối, kể cả nếu khớp allowlist |
+| L0 | `remote.session.list`, `remote.file.read`, `remote.output.recent` | Không đổi — chỉ cần attach như O1 |
+| L1 | `remote.exec`/`remote.exec.visible` khớp **nguyên văn** allowlist của host | Tự chạy, ghi audit |
+| L2 | Mọi lệnh ghi khác (gồm mọi `remote.file.write`) | Hộp thoại duyệt trong Warp; 5 phút không trả lời → Deny |
+| L3 | Khớp `[deny]` | Luôn Deny, kể cả khi khớp allowlist hoặc đã "cho phép trong session" |
 
-Cộng thêm (theo mục "G" của roadmap, chuyển sang đây theo D27 của plan Bridge):
-
-- **Pairing token**: MCP client ghép cặp một lần với Warp, để trường `agent` trong hộp thoại/audit
-  là danh tính đã xác minh thay vì tên tự khai (D12 của Bridge). Đánh dấu **⚠ Cần duyệt** — xem 1.3(d).
-- Hộp thoại duyệt dùng lại `remote.exec.visible` (Phase 5 của Bridge): lệnh đã duyệt chạy thành
-  **block thật** trong pane, người dùng thấy đúng những gì chạy.
+Cộng **pairing token**: MCP client ghép cặp với Warp một lần; hộp thoại + audit hiện danh tính đã xác
+minh thay cho tên tự khai (D12 của Bridge); `require_pairing` trong policy chặn ghi từ client chưa
+ghép cặp. Không chặn được process cùng UID (đọc được token) — giá trị là **danh tính**, là điều kiện
+của G2 (AO7).
 
 **Gate → O3/O4** (roadmap): dùng hằng ngày ≥ 1 tuần trên host lab không sự cố; mọi lệnh ghi đều qua
-hộp thoại hoặc allowlist; audit log đủ.
+hộp thoại hoặc allowlist; audit đủ.
 
-### 1.2 Hiện trạng code (đã kiểm chứng)
+### 1.2 Hiện trạng code (đã kiểm chứng 2026-09-27)
 
-| Thành phần có sẵn | Ý nghĩa với O2 | Bằng chứng |
+| Thành phần | Ý nghĩa với O2 | Bằng chứng |
 |---|---|---|
-| `handlers/remote.rs::check_access` là **hàm duy nhất** kiểm quyền attach, gọi từ `start` (Exec/Read/Write), `output_recent`, `exec_visible` | Không có "một chỗ gọi policy duy nhất" theo nghĩa đen (3 hàm gọi vào). Nhưng chỉ **`start`** (khi `Operation::Exec`/`Operation::Write`) và **`exec_visible`** làm việc ghi — `output_recent`/`Operation::Read` là L0, không cần qua policy. Thiết kế: thêm `authorize()` bọc `check_access` + `policy::evaluate`, gọi từ đúng 2 chỗ đó (mục 3.5). | `app/src/local_control/handlers/remote.rs:96` (`Operation::needed_access`), `:296` (`check_access`), gọi từ `:116` (`start`), `:154` (`output_recent`, `Access::ReadOnly` — không đổi), `:184` (`exec_visible`) |
-| `Operation::run`/`send_visible_command` là nơi lệnh **thật sự** rời main thread (Exec/Write) hoặc được gõ vào PTY (Visible) | Policy phải chặn **trước** hai điểm này. Với `exec_visible`, phải chặn **trước khi gõ vào shell** — không được gõ rồi mới hỏi. | `remote.rs:82` (`Operation::run`), `:265` (`send_visible_command`, gọi `try_execute_command_preserving_input`) |
-| `BridgeResult::Pending{request_id, receiver}` đã có từ Warp Sync; `start`/`exec_visible` trả `Result<RemoteReceiver, ControlError>` rồi bridge bọc thành `Pending` | Không cần đổi protocol HTTP: việc "chờ duyệt" nằm **trong** future đã `ctx.spawn`, y hệt cách `visible::wait` (D29) chờ block xong bằng poll + `Timer::after`. Không cần thêm biến thể `BridgeResult` mới. | `app/src/local_control/bridge.rs:24-33`, `app/src/local_control/mod.rs:600-612` |
-| `exec_visible` đã là **chuỗi `ctx.spawn` nhiều tầng**: ghi audit `started` (fail-closed) → callback main-thread gõ lệnh → `ctx.spawn` chờ block | Đúng khuôn để chèn thêm một tầng "chờ duyệt" ở **đầu** chuỗi, trước cả `begin_operation(Visible)`. `start` (Hidden) hiện là **một** `ctx.spawn` duy nhất — phải tách thành 2 tầng giống `exec_visible` để chèn chờ duyệt trước `begin_operation(Hidden)`. | `remote.rs:184-260` |
-| `agent_bridge::operations::Operations` (Hidden/Visible, không cho visible chạy chồng bất kỳ gì khác) | Nếu `begin_operation` được gọi **trước** khi chờ duyệt, một yêu cầu đang "Ask" (có thể chờ tới 5 phút) sẽ **chiếm slot Visible** của session, khoá luôn mọi `exec`/`write` ẩn khác trong lúc chờ người bấm. Quyết định: `begin_operation` chỉ gọi **sau** khi có Allow (kể cả Allow do duyệt) — slot chỉ bị chiếm trong lúc lệnh **thật sự chạy**, không phải lúc chờ người. | `app/src/agent_bridge/operations.rs` (toàn file, xem trích đầy đủ dưới đây) |
-| `agent_bridge/error.rs::AgentBridgeError` + `From<AgentBridgeError> for ControlError` là **một** hàm ánh xạ sang `ErrorCode` | Thêm biến thể mới (`PolicyDenied`) và một `ErrorCode` mới cùng cách. | `app/src/agent_bridge/error.rs:9-50` |
-| `crates/local_control/src/protocol.rs::ErrorCode` (14 biến thể, exhaustive match ở nhiều nơi: `warp_cli` output, MCP `format.rs`, …) | Thêm biến thể mới nghĩa là sửa mọi match exhaustive theo compiler — như D1 của mục 3.1 Bridge đã làm với 4 mã lỗi mới. | `crates/local_control/src/protocol.rs:867-896` |
-| `app/src/warp_sync/confirm_dialog.rs::WarpSyncConfirmDialog` — dialog **singleton theo Workspace** (`ViewHandle` giữ trong `WorkspaceView`, `is_warp_sync_confirm_dialog_open: bool`), `set_request()` **thay thế** request đang hiện nếu đã mở (trả lại request cũ để hàm gọi tự huỷ nó) | Là "hộp thoại xác nhận" thật duy nhất trong repo giống thứ O2 cần, nhưng: (a) **không có timeout** — phải tự thêm; (b) **chỉ một dialog tại một thời điểm cho cả Workspace** — nếu 2 session khác nhau cùng "Ask" một lúc, dialog thứ hai đá dialog thứ nhất (mất, không tự Deny request bị đá — phải tự làm). Bảng 1.3(a) cân nhắc dùng lại mẫu này hay không. | `app/src/warp_sync/confirm_dialog.rs:311-356`, chỗ gắn vào Workspace: `app/src/workspace/view.rs:1136,2030-2033,3137,19152-19270,28261-28266` |
-| Pane header indicator của O1 (D26): `agent_bridge_access()` đọc `AgentBridgeModel::as_ref(app).status(session.id())`, vẽ icon + nhãn + nút Revoke — chỉ hiện khi session đó đang là **active session của pane đang mở** | Mẫu đúng để hiện trạng thái "đang chờ duyệt" theo session, nhưng có cùng giới hạn: nếu người dùng không đang nhìn đúng pane đó, không thấy gì. Cần thêm kênh khác (toast) cho trường hợp đó — xem mục 3.6. | `app/src/terminal/view/pane_impl.rs:1006-1090` |
-| `crates/local_control/src/mcp/jsonrpc.rs::McpHandler::set_client_name`, gọi trong `initialize()` với `clientInfo.name` | Điểm duy nhất phía MCP server biết tên client tự khai — đúng chỗ để **thêm** bước ghép cặp (gửi/nhận secret) nếu làm pairing token, nhưng bản thân MCP `initialize` không có chỗ cho client gửi thêm secret ngoài `clientInfo` (không phải trường chuẩn của MCP) → phải nghĩ theo hướng khác (mục 1.3(d)/3.10). | `crates/warp_cli/src/local_control/mcp/jsonrpc.rs:43-55,113-140` |
-| `crates/local_control/src/auth.rs::CredentialGrant` là credential theo **1 action, TTL ngắn** (broker cấp lại mỗi lần gọi), không phải danh tính bền theo agent | Pairing không phải là mở rộng của cơ chế này (khác tầng: mỗi request local-control vẫn xin credential riêng qua broker UID như cũ) — pairing là một **danh tính bền** nằm phía trên, được validate thêm trong request `remote.*`. | `crates/local_control/src/auth.rs` (toàn file) |
-| `app/Cargo.toml` đã có `toml = "0.8.13"` và `regex.workspace = true` (D23 của Bridge đã dùng `regex` cho `mcp/redact.rs`, nhưng đó là crate `warp_cli`; `app` cũng có sẵn `regex` + `toml` — không cần thêm dependency mới cho `policy.rs`) | Đỡ một task thêm dependency. | `app/Cargo.toml:172,173,211` |
-| Audit log cục bộ: `app/src/agent_bridge/audit.rs`, thư mục `~/.warp/agent-bridge/audit.jsonl` (khác `~/.warp-agent/backups` — đó là thư mục **trên server**, tạo bởi script ghi file, không liên quan) | Policy file theo roadmap nằm ở `~/.warp/agent-ops/policy.toml` — **khác thư mục** với audit (`agent-bridge` vs `agent-ops`). Giữ đúng như roadmap ghi (đây là namespace rộng hơn, G1 cũng dùng `~/.warp/agent-ops/hosts.toml`), nhưng ghi rõ để không nhầm hai thư mục. | `app/src/agent_bridge/audit.rs:15-16,62`; roadmap mục "O2" (khối `policy.toml`), mục "G1a" (`hosts.toml`) |
-| `warp_sync::paths::create_private_dir_all` (`app/src/warp_sync/paths.rs:302`) | Dùng lại để tạo `~/.warp/agent-ops/` với quyền đúng (đã `pub(crate) mod paths` re-export từ Task 1.6 của Bridge, D16) thay vì viết lại. | `app/src/warp_sync/paths.rs:302`, `app/src/agent_bridge/audit.rs:14` (cách dùng) |
-| `crates/warp_features/src/lib.rs:1011` (`FeatureFlag::AgentBridge`), `app/src/features.rs:110-111` (bật qua cargo feature `agent_bridge`) | Mẫu để thêm flag mới cho O2 (mục 3.1) — theo skill `add-feature-flag`. | như trên |
-| `app/src/ai/blocklist/permissions.rs` — mô hình duyệt lệnh của **Agent Mode** (không phải Agent Bridge): `CommandExecutionPermission::{Allowed(reason), Denied(reason), Ask}`-kiểu, hiện UI **trong khối chat** (nút Run/Always Allow/Deny), không phải modal | Cùng ý tưởng ba trạng thái Allow/Ask/Deny nhưng **UI khác hẳn ngữ cảnh** (chat block của Agent Mode, không phải pane terminal của một session SSH). Không dùng lại được UI, nhưng xác nhận cụm từ `Allow/Ask/Deny` là mẫu quen thuộc trong code, không phải thuật ngữ tự bịa. | `app/src/ai/blocklist/permissions.rs:34-64,940-1000` |
-
-### 1.3 Các phương án đã cân nhắc
-
-**(a) Nơi hiện hộp thoại duyệt — ⚠ Cần duyệt**
-
-| Phương án | Ưu | Nhược | 
-|---|---|---|
-| **A. Modal toàn cục kiểu `WarpSyncConfirmDialog`** | Có mẫu sẵn để copy gần nguyên (title/body/2 nút, focus, Esc không tự Confirm) | Một Workspace chỉ hiện được 1 dialog: 2 session khác nhau cùng "Ask" → dialog sau đá dialog trước; dialog che toàn bộ, không thấy pane đứng sau để đối chiếu ngữ cảnh |
-| **B. Banner gắn trong pane header** (mở rộng D26: thêm trạng thái "Pending approval" cạnh "Full"/"ReadOnly", có nút Approve/Deny ngay trên header) | Theo đúng session, nhiều session hỏi cùng lúc không đụng nhau, thấy pane thật khi quyết định | Chỉ thấy khi đang mở đúng pane/tab đó; cần thêm kênh phụ nếu người dùng đang ở tab khác |
-| **C. B + toast khi có request mới** (dùng lại `WorkspaceView` toast, Task 2.6 của Bridge) đưa người dùng chú ý, click toast → focus đúng tab/pane | Giải quyết nhược điểm chính của B | Thêm việc: theo dõi tab nào chứa pane nào để focus đúng |
-
-**Khuyến nghị: C.** B là nơi hiển thị chính (nhất quán với "operator đang ngồi trước Warp", không che
-màn hình như modal); toast chỉ để không bỏ sót khi đang ở tab khác. Modal (A) giữ lại cho luồng pairing
-(mục 3.10) vì đó là sự kiện hiếm, không theo session cụ thể, không xung đột với nhiều request cùng lúc.
-
-**(b) Cách "chờ duyệt" trong code**
-
-| Phương án | Ưu | Nhược |
-|---|---|---|
-| **A. oneshot channel + đua với `Timer::after` trong future đã `ctx.spawn`** (giống `visible::wait`, D29) | Nhất quán với code Bridge hiện có; timeout tự nhiên; không cần thêm state trong model để dọn khi hết giờ | — |
-| B. Lưu `PendingId` + state trong model, resume bằng gọi method khi Approve (kiểu Warp Sync) | Có mẫu sẵn | Không có timeout sẵn (phải tự thêm race riêng); model phải tự quản lý dọn dẹp khi Deny/timeout, dễ rò rỉ nếu quên một nhánh |
-
-**Khuyến nghị: A** — nhất quán với style async hiện có của Agent Bridge (mọi chờ đợi đều nằm trong
-future, không phải trong state của model UI).
-
-**(c) Vị trí file chính sách**
-
-Giữ nguyên như roadmap: `~/.warp/agent-ops/policy.toml`, quyền `0600`. Đây là namespace dùng chung
-với G1 (`hosts.toml`) — khác thư mục audit `~/.warp/agent-bridge/` của O1 (bảng 1.2). Không cần duyệt
-thêm, đã đủ rõ trong roadmap.
-
-**(d) Pairing token — ⚠ Cần duyệt (mục 3.10, có thể lùi thành Phase riêng sau)**
-
-Roadmap tự nhận: "Không chặn được process cùng UID (đọc được token), nên giá trị nằm ở danh tính".
-Ba câu hỏi thiết kế chưa có câu trả lời rõ trong roadmap:
-
-1. **Bền qua khởi động lại Warp hay không?** Attach (D4 của Bridge) cố tình chỉ ở RAM. Pairing token
-   nếu cũng chỉ-RAM thì mỗi lần mở Warp, agent phải ghép cặp lại (hộp thoại mới) — an toàn hơn nhưng
-   phiền nếu dùng hằng ngày. Nếu bền (ghi ra đĩa phía Warp) thì cần một file registry mới
-   (`~/.warp/agent-ops/pairings.toml`?) và một lệnh revoke độc lập với "Revoke all" của attachment.
-2. **Cơ chế trao đổi bí mật.** MCP `initialize` không có trường chuẩn nào để client gửi một secret
-   ngoài `clientInfo.name` (bảng 1.2). Hai hướng: (i) `warpctrl mcp` tự sinh secret, ghi file cục bộ
-   `0600` (giống cách O1 không lưu gì), rồi gọi một **action local-control mới** (`agent.pair`) qua
-   HTTP broker sẵn có (đã có UID-check + credential ngắn hạn) để "trình" secret cho Warp lần đầu —
-   Warp hiện hộp thoại (Modal A ở trên) "Agent muốn ghép cặp, tên nó tự khai là X — Cho phép?",
-   duyệt xong Warp nhớ `(secret_hash, agent_id do Warp đặt)`; (ii) không tự sinh, mà **người dùng** tạo
-   token trước trong Warp (Settings hoặc palette "Agent Ops: Create pairing token") rồi dán vào cấu
-   hình MCP client (biến môi trường hoặc arg `warpctrl mcp --pairing-token-file <path>`) — không cần
-   hộp thoại lúc runtime, nhưng người dùng phải tự copy/paste, giống mẫu Claude Code API key.
-3. **Dùng `agent_id` đã ghép cặp để làm gì trong policy?** Nếu chỉ để audit đẹp hơn (thay `agent` tự
-   khai) thì giá trị thấp so với công sức. Nếu policy.toml có thể giới hạn theo `agent_id` (vd "chỉ
-   agent đã ghép cặp mới được allowlist L1") thì giá trị cao hơn nhưng cần thêm cú pháp trong
-   policy.toml chưa có trong ví dụ của roadmap.
-
-**Khuyến nghị:** làm **(i)** cho câu 2 (action `agent.pair`, dùng lại hộp thoại kiểu Modal A) vì tận
-dụng được broker UID-check sẵn có và không bắt người dùng copy/paste; **không bền qua restart** cho
-câu 1 (nhất quán với D4, đơn giản hơn, và giá trị pairing chủ yếu là "trong phiên làm việc này, đúng
-là agent X" chứ không phải kiểm soát truy cập dài hạn); để câu 3 cho **sau O2** (audit ghi `agent_id`
-đã xác minh thay `agent` tự khai là đủ giá trị cho v1; mở rộng cú pháp policy theo agent là việc của
-G2/O6 khi có nhiều operator/agent thật). Đây vẫn là 3 quyết định người dùng nên tự chốt trước Phase 5
-— plan để **Phase 5 tách riêng, chỉ bắt đầu sau khi được hỏi lại** (mục 0.12).
+| `handlers/remote.rs`: `start` (Exec/Read/Write, một `ctx.spawn`), `output_recent`, `exec_visible` (chuỗi `ctx.spawn` nhiều tầng); cả ba gọi `check_access` | Policy chỉ gắn vào **2 đường ghi**: `start` khi `Operation::Exec`/`Write` và `exec_visible`. `start` phải tách thành nhiều tầng theo khuôn `exec_visible`. | `app/src/local_control/handlers/remote.rs` — `needed_access` ~71, `Operation::run` ~82, `start` ~115 (`begin_operation(Hidden)` ~129), `output_recent` ~153, `exec_visible` ~188 (`begin_operation(Visible)` ~203), `send_visible_command` ~262, `check_access` ~316 |
+| `BridgeResult::Pending { request_id, receiver }`; HTTP handler `await receiver` trên runtime tokio | Chờ duyệt nằm **trong** future đã spawn; **không** đổi `BridgeResult` hay HTTP. | `app/src/local_control/bridge.rs:24-33`, `app/src/local_control/mod.rs:600-612` |
+| `agent_bridge/operations.rs::Operations` (Hidden đếm, Visible độc quyền) | `begin_operation` phải gọi **sau** Allow, nếu không một request chờ người (≤ 5 phút) chiếm slot và khoá session. | `app/src/agent_bridge/operations.rs` |
+| `AgentBridgeModel { attachments, operations }`, `type Event = ()`, `ctx.notify()` khi attach/detach; `TerminalView` observe model khi flag bật (D26) | Hàng đợi duyệt đặt vào đây; đổi `Event` thành enum để Workspace nghe "có request mới" và hiện toast. Header của pane tự vẽ lại qua observe sẵn có. | `app/src/agent_bridge/model.rs:1-60` |
+| `Attachment { access, last_used, exec_count }` (field private), hết hạn/detach xoá entry | Tập "lệnh đã cho phép trong session" đặt **trong** `Attachment` → tự mất khi detach/hết hạn/rời `sudo -i`. | `app/src/agent_bridge/attachments.rs:33-37` |
+| `AgentBridgeError` + một `From<AgentBridgeError> for ControlError` duy nhất; `ErrorCode` là enum dùng chung CLI/MCP | Thêm `AgentBridgeError::PolicyDenied` + `ErrorCode::PolicyDenied`, sửa match theo compiler. Không cần mã "đang chờ duyệt": request chờ chỉ là HTTP chưa trả lời. | `app/src/agent_bridge/error.rs`, `crates/local_control/src/protocol.rs:867-896` |
+| `warp_sync/confirm_dialog.rs::WarpSyncConfirmDialog`: view dùng `ui_components::dialog::Dialog` + `ActionButton` (`NakedTheme`/`PrimaryTheme`/`DangerPrimaryTheme`), Esc = Cancel, **không** bind Enter; Workspace sở hữu một handle + cờ `is_…_open`, vẽ overlay | Khuôn trực tiếp cho **hộp thoại duyệt** (P4): một dialog/Workspace nhưng là **cửa sổ nhìn vào hàng đợi** (request nằm trong model, không nằm trong dialog) → không mất request khi mở request khác. | `app/src/warp_sync/confirm_dialog.rs`; `app/src/workspace/view.rs` field ~1136, build ~2030, show ~19188, event ~19207, render ~28261 |
+| `DismissibleToast` có `with_link(ToastLink::with_onclick_action(WorkspaceAction))`, `with_action_button`; Workspace có `add_agent_bridge_toast`, `activate_tab_by_pane_group_id`, `focus_pane(PaneViewLocator)` | Toast "Agent request waiting — Review" mở hộp thoại đúng request, chuyển tới đúng tab/pane. | `app/src/view_components/dismissible_toast.rs:319-470`, `app/src/workspace/view.rs` ~18952, ~5402, ~6063 |
+| Indicator D26 trên pane header (`agent_bridge_access`, `render_agent_bridge_indicator`, nút Revoke, `should_render_header`) | Thêm trạng thái "N waiting" + nút **Review**. Header hẹp → **không** đặt nội dung lệnh ở đây (P4). | `app/src/terminal/view/pane_impl.rs:752-764, 1006-1090` |
+| `RequestEnvelope { protocol_version, request_id, target, action }` — **không** `deny_unknown_fields`, không bị log | Chỗ gọn nhất để client gửi token pairing cho **mọi** action (P15). | `crates/local_control/src/protocol.rs:721-737` |
+| `CredentialRequest`/`CredentialGrant` là quyền **theo 1 action, TTL 5 phút**, broker kiểm UID | Pairing là tầng danh tính riêng, **không** sửa broker. | `crates/local_control/src/auth.rs`, `app/src/local_control/mod.rs:454-505` |
+| MCP: `McpHandler::set_client_name` gọi trong `initialize`; transport gửi mọi action qua `commands.rs::send_action(args, action, params, timeout)` → `client::send_request_with_timeout` | Tên client biết sau `initialize`; token gắn vào `RequestEnvelope` trong transport MCP. | `crates/warp_cli/src/local_control/mcp/jsonrpc.rs:43-55,127-140`, `crates/warp_cli/src/local_control/commands.rs:791-808`, `crates/warp_cli/src/local_control/mcp/mod.rs:~73` |
+| Timeout client: `wait = timeout_secs + EXEC_CLIENT_MARGIN (30 s)` ở `warpctrl remote` và `mcp/tools.rs` | Phải cộng thêm thời gian chờ duyệt, nếu không HTTP client bỏ cuộc trước khi người bấm. | `crates/warp_cli/src/local_control/remote.rs:28,206,222`, `crates/warp_cli/src/local_control/mcp/tools.rs:170-192` |
+| `app/Cargo.toml` có sẵn `toml = "0.8.13"`, `regex`, `sha2`? (kiểm ở Task 1.1; `warp_cli` đã có `sha2` từ D23) | Không thêm dependency cho parse/regex. Glob tự viết (P7). | `app/Cargo.toml:172-173,211` |
+| Audit `~/.warp/agent-bridge/audit.jsonl` (`AUDIT_DIR = ".warp/agent-bridge"`), `create_private_dir_all` | Policy và danh sách agent đặt ở `~/.warp/agent-ops/` (namespace của roadmap, dùng chung với G1 `hosts.toml`) — khác thư mục audit, cố ý. | `app/src/agent_bridge/audit.rs:15,62`, `app/src/warp_sync/paths.rs:302` |
+| `MAX_COMMAND_BYTES = 8 KiB` | Lệnh dài vậy không ai đọc hết để duyệt → giới hạn riêng cho lệnh cần duyệt (P11). | `app/src/agent_bridge/mod.rs:24` |
 
 ---
 
 ## 2. Kiến trúc
 
-### 2.1 Sơ đồ
+### 2.1 Luồng
 
 ```
- MCP client (Claude Code / Codex / …)
-   └─ remote.exec / remote.file.write / remote.exec.visible ─► warpctrl mcp ─► broker ─► Warp
-                                                                                  │
-                                          handlers/remote.rs::start / exec_visible
-                                                                                  │
-                                                        check_access (đã có, O1)  │  Full/ReadOnly?
-                                                                                  ▼
-                                                        policy::evaluate(host, user, command)  [MỚI]
-                                                          │             │              │
-                                                        Deny          Allow           Ask
-                                                          │             │              │
-                                                 lỗi PolicyDenied   begin_operation   đăng ký chờ duyệt
-                                                    (ngay)          + chạy như O1     (banner/toast)
-                                                                                       │        │
-                                                                                   Approve    Deny/
-                                                                                   (≤5 phút)  timeout
-                                                                                       │        │
-                                                                                 begin_operation  lỗi
-                                                                                 + chạy như O1  PolicyDenied
+ agent ─MCP─► warpctrl mcp ─(RequestEnvelope + agent_token?)─► Warp: LocalControlBridge
+                                                                   │
+                  handlers/remote.rs::start (Exec/Write) | exec_visible
+                    1. parse/validate, resolve, ensure_supported, check_access   (như O1, main thread)
+                    2. flag AgentOpsPolicy tắt → chạy như O1
+                    3. ctx.spawn [nền]: nạp policy.toml + agents.toml, policy::evaluate  ──► Decision
+                    4. callback [main]:
+                         Deny ─────────────────────────────► audit + lỗi PolicyDenied
+                         Allow ────────────────────────────► begin_operation → chạy như O1
+                         Ask:
+                           lệnh nằm trong "cho phép trong session" → như Allow
+                           ngược lại → ApprovalQueue.push, emit ApprovalRequested
+                                 (header "1 waiting · Review", toast "Review")
+                           ctx.spawn [nền]: audit approval_requested (fail-closed),
+                                            chờ select(quyết định, Timer 5 phút)
+                           callback [main]: Approve → check_access lại → begin_operation → chạy
+                                            Deny / hết giờ / Revoke → audit + lỗi PolicyDenied
 ```
 
-### 2.2 Luồng một lệnh `remote.exec` khi chính sách là "hỏi"
+### 2.2 Luật chính sách (`policy::evaluate`, thứ tự cố định)
 
-1. `handlers/remote.rs::start` parse `Operation`, `check_access` như O1 (không đổi).
-2. **[MỚI]** `authorize()`: đọc policy đã nạp (cache trong `AgentBridgeModel` hoặc model riêng, xem
-   3.2), gọi `policy::evaluate(host, user, &command_text, mode)` — hàm **thuần**, không I/O.
-3. Kết quả `Ask(description)`: đăng ký một `PendingApproval` (mục 3.4) gắn với `SessionId` +
-   `request_id`, trả `receiver` chờ ở **tầng ctx.spawn đầu tiên** (không gọi `begin_operation` lúc
-   này — mục 1.2 giải thích lý do). Banner ở pane header đổi sang "Agent muốn chạy: `<command>` —
-   Approve / Deny"; nếu pane không active, toast xuất hiện.
-4. Người dùng bấm Approve/Deny (dispatch một `TerminalAction` mới) **hoặc** hết 5 phút
-   (`Timer::after(APPROVAL_TIMEOUT)` đua với oneshot receiver, giống `visible::wait`).
-5. Callback (main thread): Approve → `begin_operation(Hidden)` → `ctx.spawn(operation.run(...))` như
-   O1 từ đây. Deny/timeout → trả lỗi `PolicyDenied`, ghi audit `result: "error", error_code:
-   "policy_denied"`.
-6. Audit ghi thêm quyết định chính sách (`policy_decision: "allow" | "ask_approved" | "ask_denied" |
-   "ask_timeout" | "deny"`), xem 3.9.
+Input: `hostname` (tên server tự báo, `session.hostname()`), `request` (`Exec{command}` |
+`ExecVisible{command}` | `Write{path}`), `paired: bool`.
 
-### 2.3 Định dạng `policy.toml`
+1. `require_pairing = true` (mặc định `false`) và `!paired` → **Deny** ("agent is not paired").
+2. Chọn luật host: host **đầu tiên** trong file có `match` khớp `hostname` (glob `*`/`?`, không phân
+   biệt hoa thường); không host nào khớp → `[defaults]`.
+3. Deny (L3), luôn thắng: lệnh (`Exec`/`ExecVisible`) khớp bất kỳ regex trong `[deny] patterns`; hoặc
+   path (`Write`) khớp bất kỳ glob trong `[deny] paths` → **Deny**.
+4. Theo `mode` của luật đã chọn:
+   - `read_only` → **Deny**.
+   - `approve` → **Ask**.
+   - `allowlist` → `Exec`/`ExecVisible` có `command.trim()` bằng đúng một entry của `allow` → **Allow**;
+     còn lại (kể cả mọi `Write`) → **Ask**.
+5. Ask mà lệnh dài hơn `APPROVAL_MAX_COMMAND_BYTES` (2 KiB) hoặc hơn `APPROVAL_MAX_COMMAND_LINES` (20
+   dòng) → **Deny** ("too long for a person to review; write a script with write_file, then run
+   it"). (Lệnh visible vốn đã bị cấm xuống dòng — D Task 5.9 của Bridge.)
 
-Giữ đúng ví dụ của roadmap, làm rõ luật ưu tiên (roadmap không nói thứ tự, đây là điểm đã tự quyết
-theo nguyên tắc an toàn "deny thắng"; ghi vào mục 8 khi thực hiện):
+Chọn host **trước** deny để `[deny]` là chung cho mọi host (roadmap chỉ có một `[deny]` toàn cục) —
+thứ tự 2/3 không đổi kết quả, chỉ để code rõ.
+
+### 2.3 Định dạng `~/.warp/agent-ops/policy.toml`
 
 ```toml
 [defaults]
-mode = "approve"                 # "read_only" | "approve" | "allowlist"
+mode = "approve"                 # bắt buộc: "read_only" | "approve" | "allowlist"
+require_pairing = false          # tuỳ chọn
 
 [[hosts]]
-match = "lab-*"                  # glob trên hostname (dùng crate glob đã có? — kiểm ở Task 1.1)
+match = "lab-*"                  # glob trên hostname server tự báo (`hostname`), * và ?
 mode = "allowlist"
-allow = ["systemctl restart php-fpm", "systemctl reload nginx"]   # khớp NGUYÊN VĂN, sau khi trim
+allow = ["systemctl restart php-fpm", "systemctl reload nginx"]   # khớp nguyên văn sau trim
 
 [deny]
-patterns = ['\brm\s+-rf\s+/', '\bmkfs', '\bdd\s+if=', '\b(shutdown|reboot|halt)\b',
+patterns = ['\brm\s+-rf\s+/', '\bmkfs', '\bdd\s+if=', '\b(shutdown|reboot|halt|poweroff)\b',
             'iptables\s+-F', 'nft\s+flush', '(?i)drop\s+(database|table)']
+paths = ["/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d/*", "/etc/sudoers", "/etc/sudoers.d/*"]
 ```
 
-**Luật (`policy::evaluate`, thứ tự cố định):**
+Kiểm khi nạp (lỗi → `PolicyError` nêu rõ khoá/entry): `mode` hợp lệ; `match` không rỗng; regex biên
+dịch được; **entry `allow` không chứa** `; | & $ \` < > ( ) \n \r` hoặc backtick (roadmap mục 3: L1 chỉ
+cho lệnh đơn, không metachar); khoá lạ → lỗi (`#[serde(deny_unknown_fields)]`, bắt lỗi gõ nhầm).
 
-1. Lệnh khớp bất kỳ pattern nào trong `[deny]` (regex, case theo pattern) → **Deny**, luôn luôn,
-   **bất kể mode của host**. Đây là L3 — không có ngoại lệ (kể cả `allowlist` khớp allow list).
-2. Không có host nào khớp `match` (glob so với hostname của session) → dùng `defaults.mode`.
-3. Có host khớp (nếu nhiều host khớp, dùng **host đầu tiên khớp**, thứ tự trong file — ghi rõ trong
-   lỗi parse nếu người dùng cần biết) → dùng `mode` của host đó.
-4. Theo `mode` đã chọn ở bước 2/3:
-   - `read_only`: mọi hành động ghi → **Deny** ngay (không hỏi — đúng nghĩa "chỉ đọc").
-   - `approve`: mọi hành động ghi → **Ask**.
-   - `allowlist`: lệnh khớp nguyên văn (sau `trim()`) một entry của `allow` → **Allow**; không khớp
-     → **Ask** (roadmap: "Mọi lệnh ghi khác" ở L2, không phải tự-Deny khi không khớp allowlist).
-5. `remote.file.write` không có "lệnh" — dùng gì để so với `allow`/hiển thị trong hộp thoại? **⚠ Cần
-   duyệt nhỏ**: đề xuất coi allowlist chỉ áp dụng cho `remote.exec`/`remote.exec.visible`; mọi
-   `remote.file.write` trong mode `allowlist`/`approve` đều **Ask** (không có khái niệm "ghi file đã
-   duyệt trước" ở v1 — diff thật để review nằm ở G4/Warp Sync). Trong `read_only` vẫn Deny.
+| Tình trạng file | Hành vi | Lý do |
+|---|---|---|
+| Không tồn tại | Như `[defaults] mode = "approve"`, không deny, không host | An toàn mặc định, vẫn dùng được ngay |
+| Lỗi đọc/parse/validate | **Mọi hành động ghi → Deny** với message nêu file + lỗi ("Ask the user to fix ~/.warp/agent-ops/policy.toml: …") | Fail-closed (P8) |
+| Quyền rộng hơn `0600` (group/other ghi được) | Deny như lỗi parse | Người khác trên máy sửa được policy là mất tác dụng |
 
-### 2.4 Mô hình an toàn (bổ sung cho bảng 2.3 của plan Bridge)
+Nạp lại **mỗi request ghi**, ở tầng `ctx.spawn` nền (P6) — file nhỏ, không cần cache, sửa file là có
+hiệu lực ngay.
+
+### 2.4 Mô hình an toàn (bổ sung bảng 2.3 của plan Bridge)
 
 | Lớp | Cơ chế |
 |---|---|
-| Có sẵn (O1) | Attach theo session, TTL 30 phút, `Full`/`ReadOnly`, Revoke all, audit fail-closed |
-| **Flag mới** | `AgentOpsPolicy` (Task 0.1). Tắt flag → hành vi y hệt O1 hôm nay (mọi ghi tự chạy nếu đã `Full`) — không phá vỡ người đang dùng O1. |
-| **File chính sách** | `~/.warp/agent-ops/policy.toml`, quyền `0600`, tạo thư mục qua `create_private_dir_all`. Thiếu file → mặc định **`approve`** (an toàn nhất, không phải `read_only` vì sẽ khoá luôn write ngoài ý muốn, không phải `allowlist` vì rỗng nguy hiểm nếu người dùng gõ nhầm mode). File lỗi cú pháp → **fail-closed**: coi như `read_only` toàn bộ + toast lỗi rõ ràng (không dùng `approve` khi không đọc được policy, vì `approve` vẫn cho léo qua nếu người dùng bấm nhầm Approve hàng loạt trong lúc không biết file hỏng). |
-| **Đúng một chỗ gọi** | `authorize()` trong `handlers/remote.rs`, gọi từ `start` (khi `Operation::Exec`/`Write`) và `exec_visible` — không nơi nào khác được gọi `policy::evaluate` trực tiếp (test bằng cách chỉ `pub(super)` hàm này trong module `remote`). |
-| **Duyệt = Ask** | Đăng ký trong `ApprovalQueue` (RAM, không bền qua restart — nhất quán với Attachments D4), timeout 5 phút → Deny, không có "nhớ lựa chọn" ngoại trừ nút tường minh "Approve lệnh này cho session này" (roadmap) — xem 3.6. |
-| **Kill switch** | "Revoke all" (đã có) + hành động mới "Deny tất cả yêu cầu đang chờ" (mục 3.7) — không tự động gộp vào Revoke all vì ngữ nghĩa khác (Revoke huỷ quyền tương lai, Deny-all-pending chỉ xử lý các yêu cầu đang treo). |
-| **Truy vết** | Audit ghi `policy_decision`; không ghi nội dung `policy.toml` (có thể chứa hostname nội bộ — coi như dữ liệu nhạy vừa phải, không phải bí mật, nên không redact, nhưng không log nguyên file ra đâu khác). |
+| Có sẵn (O1) | Attach theo `SessionId`, TTL 30 phút, Full/ReadOnly, Revoke/Revoke all, audit fail-closed, redaction phía MCP |
+| Flag | `AgentOpsPolicy`. Tắt → y hệt O1. Bật → mọi ghi qua `policy::evaluate` |
+| Một đường vào | `authorize` là hàm duy nhất gọi `policy::evaluate`; chỉ `start` (Exec/Write) và `exec_visible` gọi nó |
+| Duyệt | Hàng đợi trong RAM, 5 phút → Deny; hộp thoại chỉ mở khi người **bấm** Review (không tự bật, không cướp phím đang gõ); không bind Enter |
+| Hiện nguyên văn | Hộp thoại hiện lệnh **không che secret** — người duyệt phải thấy đúng thứ sẽ chạy (P10) |
+| Sau khi duyệt | Kiểm attach lại; visible còn kiểm session active + shell rảnh như O1 |
+| Kill switch | Revoke / Revoke all / rời `sudo -i` → mọi request đang chờ của session đó bị Deny ngay |
+| Danh tính | Pairing token → `agent_id` đã xác minh trong hộp thoại + audit; `require_pairing` |
+| Truy vết | Audit thêm `approval_requested`, `policy_decision`, `policy_reason`, `agent_id` |
 
 ### 2.5 Ngoài phạm vi O2
 
-- G2 (agent tự mở session), G3 (transport ssh trực tiếp), G4 (sửa file qua mirror Warp Sync + diff
-  trong hộp thoại) — vẫn đứng sau O2 theo AO7/D27.
-- Sửa policy qua Settings UI — v1 chỉ sửa file tay (giống cách roadmap mô tả); Settings UI đọc để
-  hiện trạng thái là **có thể làm nếu rẻ** (mục 4, Phase 4) nhưng không bắt buộc.
-- Nhiều operator/Hub, chia allowlist theo operator — O6.
-- Cú pháp policy theo `agent_id` đã pairing — sau O2 (mục 1.3(d) câu 3).
-- L1 tự động cho **prod** — roadmap: "prod chỉ sau gate O4"; O2 chỉ chạy L1 trên host lab theo
-  `match` glob mà người dùng tự cấu hình (không có khái niệm "prod" trong code, chỉ trong cách người
-  dùng đặt `match`).
+G2–G5; sửa policy qua Settings UI (chỉ sửa file); policy theo agent (ngoài `require_pairing`); diff
+đầy đủ cho `write_file` (G4 — O2 chỉ hiện 40 dòng đầu); danh sách "mọi request đang chờ" dạng panel
+(O5b); L1 cho prod (chỉ là cách người dùng đặt `match`).
 
 ---
 
 ## 3. Thiết kế chi tiết
 
-### 3.1 Feature flag mới
+### 3.1 Flag + hằng số dùng chung
 
-`FeatureFlag::AgentOpsPolicy` trong `crates/warp_features/src/lib.rs` (cạnh `AgentBridge`), cargo
-feature `agent_ops_policy` trong `app/Cargo.toml` + ánh xạ trong `app/src/features.rs` (theo đúng mẫu
-`AgentBridge`, skill `add-feature-flag`). **Không** thêm vào `DOGFOOD_FLAGS` cho tới CHECKPOINT cuối
-(giữ tắt mặc định trong lúc phát triển, giống cách `AgentBridge` được bật thủ công qua feature trong
-suốt O1). Khi tắt: `authorize()` luôn trả `Allow` ngay (hành vi giống hệt O1 hôm nay) — **không** trả
-lỗi `UnsupportedAction` (khác với `AgentBridge` tắt) vì đây là một tính năng bổ sung, không phải một
-action mới.
+- `FeatureFlag::AgentOpsPolicy` (`crates/warp_features/src/lib.rs` cạnh `AgentBridge`), cargo feature
+  `agent_ops_policy` trong `app/Cargo.toml`, ánh xạ `#[cfg(feature = "agent_ops_policy")]` trong
+  `app/src/features.rs` (cạnh `agent_bridge`, dòng ~110). **Không** thêm vào `DOGFOOD_FLAGS` (giống
+  `AgentBridge` trong O1). Không có setting/toggle mới → không cần entry palette bật/tắt.
+- `crates/local_control/src/protocol.rs`: `pub const APPROVAL_TIMEOUT_SECS: u64 = 300;` — app dùng để
+  chờ, client dùng để nới timeout (P12). Một con số, hai phía.
+- `app/src/agent_bridge/mod.rs`: `APPROVAL_MAX_COMMAND_BYTES = 2048`, `APPROVAL_MAX_COMMAND_LINES = 20`,
+  `APPROVAL_PREVIEW_LINES = 40` (preview nội dung file), `POLICY_FILE = ".warp/agent-ops/policy.toml"`,
+  `AGENTS_FILE = ".warp/agent-ops/agents.toml"`, `MAX_PENDING_APPROVALS_PER_SESSION = 8`.
 
-### 3.2 `app/src/agent_bridge/policy.rs` (thuần, test dày)
+### 3.2 `app/src/agent_bridge/policy.rs` (thuần) + `policy_tests.rs`
 
 ```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Mode { ReadOnly, Approve, Allowlist }
 
-pub(crate) struct HostRule { pub match_glob: String, pub mode: Mode, pub allow: Vec<String> }
+pub(crate) struct Policy { defaults: Rule, require_pairing: bool, hosts: Vec<HostRule>,
+                           deny_patterns: Vec<Regex>, deny_paths: Vec<String> }
 
-pub(crate) struct Policy {
-    default_mode: Mode,
-    hosts: Vec<HostRule>,
-    deny_patterns: Vec<Regex>,          // biên dịch một lần lúc nạp file
-}
+pub(crate) enum PolicyRequest<'a> { Exec(&'a str), ExecVisible(&'a str), Write { path: &'a str } }
 
-pub(crate) enum Decision {
-    Allow,
-    Ask { reason: AskReason },          // vd "no allowlist match", "mode is approve"
-    Deny { reason: String },            // vd "matches deny pattern '...'"
-}
-
-pub(crate) enum Operation<'a> { Exec(&'a str), Write, ExecVisible(&'a str) }  // xem 2.3.5
+pub(crate) enum Decision { Allow, Ask, Deny(String) }   // String = lý do cho agent + audit
 
 impl Policy {
-    pub(crate) fn load(path: &Path) -> Result<Self, PolicyError>;   // parse toml, biên dịch regex
-    pub(crate) fn evaluate(&self, hostname: &str, operation: Operation<'_>) -> Decision;  // thuần
+    /// Parse + validate (mục 2.3). Không đọc file — nhận `&str` để test.
+    pub(crate) fn parse(text: &str) -> Result<Self, PolicyError>;
+    pub(crate) fn evaluate(&self, hostname: &str, request: PolicyRequest<'_>, paired: bool) -> Decision;
 }
+
+/// Nạp từ đĩa: thiếu file → Policy mặc định; lỗi đọc/parse/quyền → Err (người gọi Deny).
+pub(crate) fn load(home: &Path) -> Result<Policy, PolicyError>;
+
+/// Glob tối giản: `*` (chuỗi bất kỳ, gồm `/`), `?` (một ký tự); `case_insensitive` cho hostname.
+fn glob_matches(pattern: &str, text: &str, case_insensitive: bool) -> bool;
 ```
 
-Test: mọi tổ hợp mode × operation × khớp/không khớp allow × khớp/không khớp deny; glob nhiều host
-khớp (host đầu tiên thắng); regex compile lỗi ở `load` → `PolicyError` rõ pattern nào hỏng; file rỗng
-→ `default_mode = Approve`, không host, không deny (roadmap không nói rõ default cho `defaults` thiếu
-— coi `mode` bắt buộc trong `[defaults]`, thiếu thì lỗi parse, không tự đoán). Crate glob: kiểm
-`Cargo.toml` gốc có sẵn `glob`/`globset` chưa — nếu không, đề xuất so khớp glob đơn giản tự viết
-(chỉ cần `*` ở đầu/cuối như ví dụ `lab-*`, không cần glob đầy đủ) thay vì thêm dependency; **⚠ nếu
-compiler/khảo sát cho thấy cần glob phức tạp hơn, dừng hỏi trước khi thêm crate mới**.
+`PolicyError` (thiserror): `Read(String)`, `Parse(String)` (message của `toml` có dòng/cột),
+`Invalid(String)`, `Permissions { mode: u32 }`. Không có `unwrap`.
 
-### 3.3 `ErrorCode` mới (`crates/local_control/src/protocol.rs`)
+Test (≥ 30): mỗi mode × mỗi loại request; host đầu tiên khớp thắng; glob `lab-*`/`db-?`/không phân
+biệt hoa thường/không khớp; deny pattern thắng allowlist; deny path thắng; `allow` có metachar → lỗi;
+regex hỏng → lỗi nêu pattern; khoá lạ → lỗi; thiếu `[defaults]`/`mode` → lỗi; `require_pairing` +
+`paired=false` → Deny, reads không liên quan (evaluate không nhận read); lệnh > 2 KiB / > 20 dòng khi
+Ask → Deny, nhưng khi Allow (khớp allowlist) thì vẫn Allow; `command.trim()`; `load` với file thiếu /
+quyền 0644 / 0600 (dùng `tempfile` như `audit_tests.rs`).
 
-Thêm `PolicyDenied` (không dùng lại `InsufficientPermissions` vì đó là do **attach** không đủ quyền,
-khác nguyên nhân với "bị chính sách/host từ chối" — agent cần phân biệt để biết có nên hỏi lại người
-dùng attach lại hay không). Sửa mọi match exhaustive theo compiler báo (như D1 mục 3.1 của Bridge).
-Message ví dụ: `"Denied by policy: matches a deny pattern (rm -rf /). This command is never allowed."`
-hoặc `"Denied by policy: no one approved it within 5 minutes."`.
+### 3.3 Lỗi
 
-### 3.4 `app/src/agent_bridge/approval.rs` (mới)
+- `AgentBridgeError::PolicyDenied(String)` → `ErrorCode::PolicyDenied` (mới, cạnh `SessionNotAttached`
+  trong `protocol.rs`). Display: `"Denied by Warp's agent policy: {reason}"`. Các `reason`:
+  - `"it matches the deny rule '{pattern}'. This command is never allowed."`
+  - `"{host} is read-only for agents."`
+  - `"the user denied it."` / `"no one approved it within 5 minutes."` /
+    `"the user revoked agent access while it was waiting."`
+  - `"it is too long for a person to review; write a script with write_file, then run it."`
+  - `"this agent is not paired with Warp. …"` (Phase 5)
+  - `"the policy file ~/.warp/agent-ops/policy.toml is invalid ({error}). Ask the user to fix it."`
+  - `"too many requests are waiting for approval in this session."`
+- Sửa mọi match exhaustive trên `ErrorCode` theo compiler (`warp_cli` output/exit code, MCP
+  `format.rs` nếu có). CLI: exit code cho `policy_denied` giống các lỗi khác (không đặt mã riêng).
+- `ErrorCode::PolicyDenied` **khác** `InsufficientPermissions` (thiếu quyền attach): agent cần biết
+  hỏi user attach lại hay không.
+
+### 3.4 Hàng đợi duyệt — `app/src/agent_bridge/approval.rs` + tests
 
 ```rust
-pub(crate) struct PendingApproval {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ApprovalSubject {
+    Command { command: String, cwd: Option<String>, visible: bool },
+    Write { path: String, bytes: u64, creates: bool, preview: String, preview_truncated_lines: usize },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ApprovalRequest {
     pub request_id: Uuid,
     pub session: SessionId,
-    pub host: String,
-    pub user: String,
-    pub agent: Option<String>,
-    pub description: ApprovalDescription,   // Command(String) | FileWrite{path, bytes}
-    sender: Option<oneshot::Sender<ApprovalDecision>>,
+    pub session_label: String,        // "root@draff3"
+    pub agent: AgentLabel,            // tên tự khai + agent_id nếu đã pairing (Phase 5; trước đó chỉ tên)
+    pub subject: ApprovalSubject,
+    pub deadline: SystemTime,         // chỉ để hiện "tự từ chối lúc HH:MM"
+    pub window_id: WindowId,          // cửa sổ chứa pane — Workspace nào hiện toast
 }
 
-pub(crate) enum ApprovalDecision { Approve, Deny }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApprovalDecision { Approve, AllowInSession, Deny, TimedOut, Revoked }
 
 #[derive(Default)]
-pub(crate) struct ApprovalQueue { by_id: HashMap<Uuid, PendingApproval> }  // sống trong AgentBridgeModel
+pub(crate) struct ApprovalQueue { pending: Vec<(ApprovalRequest, oneshot::Sender<ApprovalDecision>)> }
 
 impl ApprovalQueue {
-    pub(crate) fn request(&mut self, ...) -> oneshot::Receiver<ApprovalDecision>;
-    pub(crate) fn decide(&mut self, request_id: Uuid, decision: ApprovalDecision) -> bool; // false nếu đã hết hạn/không tồn tại
-    pub(crate) fn deny_all_for_session(&mut self, id: SessionId) -> usize;   // kill switch mục 3.7
-    pub(crate) fn pending_for_session(&self, id: SessionId) -> Option<&PendingApproval>;  // banner mục 3.6
+    /// FIFO. Lỗi khi session đã có MAX_PENDING_APPROVALS_PER_SESSION request chờ.
+    pub(crate) fn push(&mut self, request: ApprovalRequest)
+        -> Result<oneshot::Receiver<ApprovalDecision>, AgentBridgeError>;
+    /// Gửi quyết định; false nếu request không còn (đã hết giờ / đã quyết).
+    pub(crate) fn decide(&mut self, request_id: Uuid, decision: ApprovalDecision) -> bool;
+    /// Bỏ khỏi hàng mà không gửi gì (dùng khi timer thắng).
+    pub(crate) fn remove(&mut self, request_id: Uuid) -> bool;
+    pub(crate) fn revoke_session(&mut self, id: SessionId) -> usize;   // gửi Revoked
+    pub(crate) fn revoke_all(&mut self) -> usize;
+    pub(crate) fn get(&self, request_id: Uuid) -> Option<&ApprovalRequest>;
+    pub(crate) fn count_for_session(&self, id: SessionId) -> usize;
+    pub(crate) fn oldest_for_session(&self, id: SessionId) -> Option<&ApprovalRequest>;
+    pub(crate) fn oldest_in_window(&self, window_id: WindowId) -> Option<&ApprovalRequest>;
 }
 ```
 
-Đặt trong `AgentBridgeModel` (cạnh `Attachments`/`Operations`, đã là `SingletonEntity` sẵn — không
-tạo model mới) hay tách model riêng? **⚠ Cần duyệt nhỏ, khuyến nghị: cùng `AgentBridgeModel`** — đơn
-giản hơn, và banner/toast của mục 3.6 vốn đã đọc `AgentBridgeModel` cho trạng thái attach.
-
-Chờ duyệt trong future đã `ctx.spawn` (mục 2.2 bước 3–4):
+Chờ (tầng nền), theo mẫu `Timer` của `visible::wait`:
 
 ```rust
-let (rx, request_id) = AgentBridgeModel::handle(ctx).update(ctx, |m, ctx| {
-    let rx = m.approval_queue.request(...);
-    ctx.notify();   // banner/toast vẽ lại
-    rx
-});
-ctx.spawn(async move {
-    futures::select! {
-        decision = rx.fuse() => decision.unwrap_or(ApprovalDecision::Deny),  // kênh đóng (Warp tắt?) → Deny
-        _ = Timer::after(APPROVAL_TIMEOUT).fuse() => ApprovalDecision::Deny,
-    }
-}, move |_, decision, ctx| { /* dọn queue nếu timeout thắng đua; rồi begin_operation nếu Approve */ });
+async fn wait_for_decision(receiver: oneshot::Receiver<ApprovalDecision>, timeout: Duration)
+    -> ApprovalDecision
+{
+    // futures::future::select(receiver, Timer::after(timeout)); receiver Canceled → Revoked.
+}
 ```
 
-Test: `approval` module (thuần, dùng oneshot + executor test như `visible_tests.rs` đã làm cho
-`Timer`), `AgentBridgeModel` (request/decide/timeout/deny_all_for_session), và test tích hợp qua
-handler HTTP (giả lập Approve tới trước timeout, Deny, không ai trả lời).
+Timer thắng → callback gọi `queue.remove(id)` (nếu `false`: người vừa bấm đúng lúc — quyết định đã
+gửi qua kênh nhưng future đã kết thúc bằng timeout; vẫn coi là `TimedOut`, request không chạy — ghi
+test cho race này). Mọi thay đổi hàng đợi → `ctx.notify()`.
 
-### 3.5 Wiring trong `handlers/remote.rs`
+Kiểm tra `futures::future::select` + `warpui::r#async::Timer` có dùng được trong `ctx.spawn` (xem
+`visible.rs:12,172` cho `Timer`); không chắc thì dừng hỏi.
 
-- `start()`: tách logic hiện tại của Task "một `ctx.spawn`" thành theo mẫu `exec_visible` (mục 1.2):
-  1. `check_access` (không đổi).
-  2. `authorize()` — gọi `policy::evaluate`. `Deny` → trả lỗi `PolicyDenied` **ngay, đồng bộ**, không
-     tạo receiver nào (không có gì để chờ).
-  3. `Allow` → y hệt code O1 hôm nay (`begin_operation(Hidden)` rồi `ctx.spawn(operation.run(...))`).
-  4. `Ask` → KHÔNG `begin_operation` ngay. `ctx.spawn` tầng 1 chờ quyết định (mục 3.4); callback: Deny
-     → trả lỗi, ghi audit; Approve → `begin_operation(Hidden)` rồi `ctx.spawn` tầng 2 chạy
-     `operation.run(...)` (y hệt code Allow ở bước 3, tránh trùng lặp bằng một hàm dùng chung
-     `run_operation(...)`).
-- `exec_visible()`: chèn bước `authorize()` ngay sau `check_access`, **trước** `begin_operation(Visible)`
-  hiện có ở đầu hàm (dòng `remote.rs:198-201` theo bản O1) — thứ tự còn lại giữ nguyên.
-- `output_recent()`: **không đổi** — L0, không qua policy.
-- Audit `started` (fail-closed, D20 của Bridge) ghi **trước khi chạy lệnh**, nghĩa là với `Ask`, thời
-  điểm ghi "started" phải là **sau khi Approve**, không phải lúc đăng ký chờ duyệt (nếu ghi sớm hơn,
-  một request bị Deny/timeout sẽ để lại bản ghi "started" không bao giờ "chạy" — gây hiểu nhầm khi đọc
-  audit). Thêm bản ghi audit riêng cho chính sự kiện chờ duyệt/bị từ chối (mục 3.9), tách khỏi
-  "started"/"ok"/"error" của O1.
+### 3.5 `AgentBridgeModel` (`model.rs`)
 
-### 3.6 UI — banner pane header + toast (phương án C của 1.3a)
+- Thêm field `approvals: ApprovalQueue`.
+- `type Event = AgentBridgeEvent;` với `pub enum AgentBridgeEvent { ApprovalRequested { request_id:
+  Uuid, window_id: WindowId }, ApprovalsChanged }`. Mọi chỗ `notify()` hiện có giữ nguyên; thêm
+  `emit` khi push (và `ApprovalsChanged` khi decide/remove/revoke) để Workspace đóng dialog khi request
+  biến mất. Kiểm mọi `subscribe_to_model`/`observe` hiện có với `AgentBridgeModel` vẫn compile (đổi
+  `Event` từ `()`).
+- `detach`/`detach_all` gọi thêm `approvals.revoke_session`/`revoke_all`.
+- **Rời `sudo -i` / session đổi:** attachment không tự biết (O1 kiểm lười ở `check`). Request đang chờ
+  của session cũ vẫn nằm đó tới khi hết giờ; Approve → `check_access` lại (mục 3.6) trả
+  `NotAttached`/`StaleTarget` → không chạy. Chấp nhận (không thêm hook vào vòng đời session).
+- Allow-in-session: `Attachment` thêm `allowed_commands: HashSet<String>` (lệnh đã `trim`);
+  `Attachments::allow_command(id, command)`, `Attachments::is_command_allowed(id, command, now) -> bool`
+  (không trả true cho entry hết hạn). Wrapper tương ứng trong model.
 
-- Mở rộng `pane_impl.rs`: `agent_bridge_access()` (dòng 1007) đọc thêm
-  `AgentBridgeModel::as_ref(app).approval_queue.pending_for_session(id)`. Khi có pending: banner thay
-  thế nội dung của `render_agent_bridge_indicator` bằng "Agent wants to run: `<command đã cắt ngắn +
-  redact secret>`" (dùng `secret_redaction`/`mcp::redact`-kiểu che secret **trước khi hiện**, không
-  chỉ trước khi gửi model — người dùng cũng không nên thấy secret thô trong UI nếu tránh được **⚠ Cần
-  duyệt nhỏ**: liệu redact luôn, hay chỉ theo cùng setting redact của O1? Khuyến nghị: theo cùng
-  setting, để nhất quán với những gì agent thấy — nếu user tắt redact cho agent, họ cũng đã chấp nhận
-  thấy secret) + hai nút Approve/Deny (theme theo `gui-ui-guidelines`: dùng `PrimaryTheme`/
-  `DangerPrimaryTheme` có sẵn, **không** tự chế theme mới).
-- `TerminalAction` mới: `ApproveAgentRequest`, `DenyAgentRequest` (giống mẫu
-  `RevokeAgentBridgeAccess`), dispatch qua `PaneHeaderAction::CustomAction`.
-- Toast: dùng lại cơ chế toast của `workspace/view.rs` (đã dùng cho O1 Task 2.6) khi có pending mới và
-  pane chứa nó **không phải** pane đang active của tab hiện tại; toast có nút "Xem" → focus đúng
-  tab/pane (cần tra `pane_group`/`window_index` như `metadata::session_entries` đã làm — dùng lại,
-  không viết lại logic tìm pane).
-- Nút "Approve lệnh này cho session này" (roadmap) — phạm vi hẹp hơn allowlist toàn host: chỉ nhớ
-  **trong RAM, cho đúng session đó, tới khi detach/hết hạn attach** (không ghi ra `policy.toml`).
-  Lưu trong `AgentBridgeModel` như một tập `HashSet<(SessionId, String /* lệnh đã trim */)>`, kiểm
-  trước khi vào `authorize()` bước Ask — khớp thì tự Allow không cần hỏi lại. **⚠ Cần duyệt**: có làm
-  nút này ở v1 hay để `Ask` luôn hỏi từng lần (đơn giản hơn, an toàn hơn, nhưng phiền hơn khi lặp lại
-  một lệnh chẩn đoán nhiều lần)? Khuyến nghị: làm, vì roadmap liệt kê nó tường minh trong danh sách nút
-  của hộp thoại.
+### 3.6 `authorize` và wiring (`handlers/remote.rs`)
 
-### 3.7 Kill switch
+Giữ nguyên thứ tự kiểm tra đầu hàm của O1. Thêm:
 
-Thêm hành động `TerminalAction::DenyAllPendingAgentRequests` (nút mới cạnh Revoke, hoặc gộp vào overflow
-menu như Revoke — theo `pane_impl.rs:718-727`) gọi `approval_queue.deny_all_for_session`. `revoke_agent_bridge_access`
-(dòng 1083) gọi thêm `deny_all_for_session` (Revoke ý là "ngưng mọi quyền" — pending Ask cũng nên bị
-Deny theo, không để nó tự Allow sau khi đã Revoke).
+```rust
+/// Decides whether an agent may perform `request` in `session`, asking the user when the policy
+/// says so. `proceed` runs on the main thread once the request is allowed.
+fn authorize(
+    ctx_info: AuthorizeInput,              // session id, hostname, user, session_label, window_id,
+                                           // request_id, agent label, paired, subject, audit target
+    proceed: impl FnOnce(&mut ModelContext<LocalControlBridge>) + 'static,
+    fail: impl FnOnce(AgentBridgeError, &mut ModelContext<LocalControlBridge>) + 'static,
+    ctx: &mut ModelContext<LocalControlBridge>,
+)
+```
 
-### 3.8 CLI / MCP
+(Hình dạng closure là gợi ý; nếu borrow/`'static` khiến khó viết, tách thành enum trạng thái +
+các hàm `continue_*` — ghi Quyết định. Không được để logic Allow bị copy ở 2 chỗ.)
 
-Không có tool MCP mới cho Approve/Deny — roadmap: "duyệt ở phía Warp", agent chỉ nhận kết quả
-(Allow/Deny) hoặc chờ (agent thấy tool call chưa trả lời, tự nhiên là "đang chờ người duyệt" từ phía
-agent — không cần thông báo gì đặc biệt qua MCP, timeout của MCP client đã có sẵn timeout dài hơn 5
-phút do request `remote.exec`/`.visible` vốn cấu hình `timeout_secs + 30s`, D... của Bridge — **kiểm
-lại**: nếu người dùng đặt `timeout_secs` mặc định 120s nhưng duyệt tốn 4 phút, HTTP client (30s cộng
-thêm) có thể timeout **trước** khi người dùng kịp bấm. **⚠ Cần duyệt**: thời gian chờ duyệt (5 phút)
-phải nằm **trong** `timeout_secs` của request, hay là một hạn mức **riêng, cộng thêm**? Khuyến nghị:
-riêng, cộng thêm — thời gian "chờ người" không nên tính vào ngân sách thời gian "chạy lệnh" mà agent
-khai báo; nghĩa là HTTP client (CLI `warpctrl`, MCP transport) phải dùng timeout =
-`APPROVAL_TIMEOUT + timeout_secs + 30s` khi biết trước hành động có thể bị Ask — nhưng client **không
-biết trước** liệu có bị hỏi hay không. Giải pháp: nới **timeout HTTP mặc định của mọi `remote.exec`/
-`write`/`exec.visible`** thêm `APPROVAL_TIMEOUT` (5 phút) vô điều kiện, vì các request đó vốn đã có
-`timeout_secs` (tối đa 600s theo O1) cộng thêm 30s — nới thêm 300s là chấp nhận được và đơn giản hơn
-"biết trước có bị hỏi không". Việc này sửa ở **client** (`warpctrl remote`, `mcp/tools.rs`), không
-phải ở app.
-Tuỳ chọn thêm `warpctrl remote policy show` (đọc + hiện policy đang nạp, chỉ để debug) — không bắt
-buộc theo gate roadmap, để cuối Phase 4 nếu còn thời gian, không phải một Task riêng.
+1. Flag tắt → `proceed(ctx)` ngay.
+2. `ctx.spawn` nền: `policy::load(home)` → `evaluate`. Lỗi load → `Deny(invalid policy …)`.
+3. Callback main:
+   - `Deny(reason)` → audit (nền, best-effort) `result: error, error_code: policy_denied,
+     policy_decision: deny` → `fail(PolicyDenied(reason))`.
+   - `Allow` → `proceed(ctx)` (audit `policy_decision: allow` ghi trong bản ghi `started` của O1 — thêm
+     field vào `Target`/`Audit` để `ops::*` ghi nó).
+   - `Ask` + `is_command_allowed` → `proceed` với `policy_decision: session_rule`.
+   - `Ask` → `push` (lỗi → `fail`), emit `ApprovalRequested` → `ctx.spawn` nền: audit
+     `approval_requested` (**fail-closed**: ghi không được → `remove` + `fail(Io)`), rồi
+     `wait_for_decision(rx, APPROVAL_TIMEOUT)` → callback main:
+     - `Approve`/`AllowInSession` → `check_access` lại (lỗi → `fail`); `AllowInSession` +
+       `Command` → `allow_command`; `proceed` với `policy_decision: approved` / `approved_in_session`.
+     - `Deny`/`TimedOut`/`Revoked` → audit `ask_denied`/`ask_timeout`/`revoked` → `fail(PolicyDenied)`.
 
-### 3.9 Audit (`app/src/agent_bridge/audit.rs`)
+Nối vào:
 
-Thêm trường `policy_decision: Option<&'static str>` (`"allow" | "ask_approved" | "ask_denied" |
-"ask_timeout" | "deny"`) vào `AuditRecord`; với `deny`/`ask_denied`/`ask_timeout`, ghi thêm
-`policy_reason: Option<String>` (lý do từ `Decision::Deny{reason}`/`AskReason`, không phải nội dung
-lệnh — lệnh đã có trường `command` sẵn). Một bản ghi audit riêng cho lúc bắt đầu chờ duyệt (`result:
-Started`-kiểu nhưng có thể không bao giờ có bản ghi kết thúc tương ứng nếu Warp tắt giữa chừng — chấp
-nhận được, giống rủi ro (a) đã ghi ở D21 của Bridge).
+- **`start`** (Exec/Write): Read → như O1 (không authorize). Exec/Write → sau `check_access`, tạo
+  `oneshot` trả `receiver` ngay (như O1), rồi `authorize(proceed = begin_operation(Hidden) +
+  ctx.spawn(operation.run) như code O1 hiện tại, chuyển thành hàm `run_hidden_operation`, fail =
+  gửi lỗi qua `sender`)`. `Write`: `subject = Write { path, bytes, creates = expectation ==
+  MustNotExist, preview }` với preview = decode base64 → nếu UTF-8 thì 40 dòng đầu, không thì
+  `"(binary, N bytes)"`.
+- **`exec_visible`**: sau `check_access`, thay `begin_operation(Visible)` + phần sau bằng
+  `authorize(proceed = begin_operation(Visible) + toàn bộ chuỗi O1 hiện có (audit started → gõ lệnh →
+  chờ block), fail = gửi lỗi)`. Lệnh chỉ được **gõ vào shell sau khi Allow**.
+- Audit `started` của O1 (fail-closed) vẫn ở trong `proceed` — tức **sau** duyệt (P13).
 
-### 3.10 Phase 5 (tuỳ chọn) — Pairing token
+### 3.7 Hộp thoại duyệt — `app/src/agent_bridge/approval_dialog.rs` + tests
 
-Chi tiết thiết kế nằm ở mục 1.3(d) (khuyến nghị: action `agent.pair` mới, hộp thoại kiểu Modal A,
-không bền qua restart). **Không viết thêm task cụ thể ở đây** — sau khi Phase 0–4 xong và được duyệt,
-quay lại hỏi người dùng chốt 3 câu ở 1.3(d), rồi mới viết task chi tiết (giống cách Phase 5 của plan
-Bridge được viết **sau** Checkpoint C, không viết trước).
+Theo khuôn `WarpSyncConfirmDialog` (đọc `gui-ui-guidelines` trước):
+
+- `AgentApprovalDialog { request_id: Option<Uuid>, deny_button, allow_in_session_button,
+  approve_button }` — `ActionButton`: Deny = `NakedTheme`, "Allow this command in this session" =
+  `SecondaryTheme` (ẩn khi subject là `Write`), Approve = `DangerPrimaryTheme` (chạy root trên server,
+  giống nút Upload của Warp Sync). Kiểm tên theme thật trong `view_components/action_button.rs`;
+  **không** tạo theme mới.
+- Keymap: `escape` → `Close` (đóng dialog, request **vẫn chờ**). Không bind Enter.
+- `set_request(request_id)`; `render` đọc `AgentBridgeModel::as_ref(app).approvals.get(id)` — không
+  còn → render rỗng và Workspace đóng dialog (nghe `ApprovalsChanged`).
+- Nội dung (chữ trung lập với agent, D11; tiếng Anh như phần còn lại của UI), qua hàm thuần
+  `approval_dialog::content(&ApprovalRequest, now) -> (title, body)` để test:
+  - Title: `Run on root@draff3?` / `Write a file on root@draff3?`
+  - Body: `Agent: claude-code (paired)` hoặc `Agent: claude-code (unverified name)`; `Runs visibly
+    in the terminal` / `Runs in the background`; `Directory: /etc/nginx` (nếu có);
+    lệnh nguyên văn (không che, P10); với Write: `Path`, `Size`, `Creates a new file` /
+    `Replaces the existing file (a backup is kept on the server)`, preview + `… N more lines`;
+    dòng cuối `Denied automatically at 14:32 if no one answers.` Dùng `printable()` cho chữ lấy
+    từ server/agent (bỏ ký tự điều khiển), **không** redaction.
+- Events: `Decided { request_id, decision }`, `Closed`.
+- Workspace (`workspace/view.rs`, theo đúng các chỗ gắn `warp_sync_confirm_dialog`): field
+  `agent_approval_dialog`, cờ `is_agent_approval_dialog_open` (cùng struct chứa cờ warp sync), build,
+  render overlay, `show_agent_approval_dialog(request_id)`, xử lý event → `AgentBridgeModel::decide`.
+  Nếu dialog Warp Sync đang mở thì dialog duyệt đợi (toast vẫn hiện) — không chồng hai overlay.
+
+### 3.8 Header, toast, palette
+
+- `pane_impl.rs`: `agent_bridge_access` giữ nguyên; thêm `pending_agent_requests(app) -> usize` cho
+  session active. `> 0` → nhãn indicator thành `Agents · root · 1 waiting` (màu vàng như Full) và
+  thêm nút `Review` (text button nhỏ hoặc icon button + tooltip "Review the waiting agent request";
+  `MouseStateHandle` tạo **một lần** trên view như nút Revoke) dispatch
+  `TerminalAction::ReviewAgentRequest` → emit event lên Workspace mở dialog cho
+  `oldest_for_session`. Tìm đường event TerminalView → Workspace có sẵn (vd cách các
+  `TerminalAction` khác mở modal cấp Workspace); không có đường gọn thì dùng
+  `ctx.dispatch_typed_action(WorkspaceAction::AgentOpsReviewRequest { request_id })`.
+- Toast: Workspace `subscribe_to_model(AgentBridgeModel)`; `ApprovalRequested { window_id }` khớp
+  `ctx.window_id()` → `add_agent_bridge_toast(DismissibleToast::default("An agent is waiting for
+  approval on root@host").with_link(ToastLink::new("Review").with_onclick_action(
+  WorkspaceAction::AgentOpsReviewRequest { request_id })))`. Action này: nếu request còn → chuyển tới
+  tab/pane chứa session (dùng `metadata::session_entries`-kiểu tra pane, `activate_tab_by_pane_group_id`
+  + `focus_pane`; nếu khó, chỉ mở dialog — ghi Quyết định) rồi mở dialog.
+- `window_id` cho `ApprovalRequest`: lấy từ view handle của pane lúc resolve (`SessionSnapshot` đã giữ
+  `terminal_view`; kiểm `ViewHandle::window_id(ctx)` hoặc tương đương). Không tìm được → hỏi.
+- Palette (`WorkspaceAction` + binding trong `if FeatureFlag::AgentOpsPolicy`, như 5 binding
+  `workspace:agent_bridge_*` của O1): `Agent Ops: Review waiting agent requests` (mở dialog cho
+  `oldest_in_window`, không có → toast "No agent request is waiting"), `Agent Ops: Deny all waiting
+  agent requests`. Revoke all hiện có đã deny luôn (mục 3.5).
+
+### 3.9 Client: timeout + hướng dẫn
+
+- `warpctrl remote exec` / `exec --visible` / `write` và MCP `exec`, `exec_visible`, `write_file`,
+  `edit_file`: `wait = timeout_secs + EXEC_CLIENT_MARGIN + APPROVAL_TIMEOUT_SECS` (vô điều kiện, P12).
+  Write hiện có timeout riêng — cộng tương tự. Test: giá trị `wait` tính đúng.
+- MCP `format.rs`: lỗi `policy_denied` là `isError` với message gốc (đã có cơ chế cho mọi lỗi — chỉ
+  kiểm).
+- `INSTRUCTIONS` (mcp/tools.rs) + skill `specs/agent-bridge/claude/SKILL.md`: thêm đoạn: "Warp may ask
+  the user to approve a write; the call then waits up to 5 minutes. If the result says 'Denied by
+  Warp's agent policy', do not retry the same command or rephrase it to get around the rule; tell the
+  user why it was denied." Thêm: "Keep commands short and single-purpose so the user can review them."
+- Timeout phía MCP client: Claude Code và Codex có giới hạn thời gian cho một tool call. Mục 7 hướng
+  dẫn đặt giới hạn ≥ 900 s. **Tra tài liệu chính thức** tên cấu hình hiện tại (Claude Code: biến
+  `MCP_TOOL_TIMEOUT`?; Codex: `tool_timeout_sec` trong `[mcp_servers.<name>]`?) — không chắc thì ghi
+  "kiểm tài liệu" thay vì bịa; checklist P2.9 đo thật.
+
+### 3.10 Audit (`audit.rs`)
+
+`AuditOutcome` thêm `ApprovalRequested`. `AuditRecord` thêm (đều `skip_serializing_if` rỗng):
+`policy_decision: Option<&'static str>` (`allow` | `session_rule` | `approved` | `approved_in_session` |
+`deny` | `ask_denied` | `ask_timeout` | `revoked`), `policy_reason: Option<String>`,
+`agent_id: Option<String>` (Phase 5). Không ghi token, không ghi nội dung file. Test: mỗi nhánh một
+dòng đúng; bản ghi Deny có `command`/`path` như O1.
+
+### 3.11 Pairing token (Phase 5)
+
+**Mô hình:** client giữ một token bí mật; Warp giữ `sha256(token)` + nhãn. Token đi trong
+`RequestEnvelope` của **mọi** action; bridge băm và tra để biết `agent_id`.
+
+- **Protocol** (`crates/local_control/src/protocol.rs`):
+  - `pub struct AgentToken(String)` — `#[serde(transparent)]`, `Debug` in `AgentToken(****)`, không
+    `Display`. Validate: 43 ký tự base64url (32 byte, như `AuthToken::generate`).
+  - `RequestEnvelope` thêm `#[serde(default, skip_serializing_if = "Option::is_none")] pub agent_token:
+    Option<AgentToken>`.
+  - Action mới `agent.pair` (group mới `agent`, target `Instance`, `Implemented`):
+    `AgentPairParams { name: String }` (`deny_unknown_fields`, cùng quy tắc tên `agent` của D12:
+    `[A-Za-z0-9._-]{1,64}`); kết quả `AgentPairResult { agent_id: String, status: "paired" |
+    "already_paired" }`. Không có `agent_token` trong envelope → `InvalidParams`.
+- **Kho phía Warp** — `app/src/agent_bridge/pairing.rs` + tests:
+  `~/.warp/agent-ops/agents.toml` (`0600`, ghi atomic: file tạm cùng thư mục + `rename`):
+  ```toml
+  [[agents]]
+  id = "claude-code"            # Warp đặt: tên tự khai, trùng thì "-2", "-3"
+  token_sha256 = "…64 hex…"
+  paired_at = "2026-09-28T09:00:00Z"
+  ```
+  Hàm thuần: `parse`, `serialize`, `find(&[PairedAgent], sha) -> Option<&PairedAgent>`,
+  `next_id(existing, name)`; I/O: `load(home)`, `add(home, name, sha)`, `forget_all(home)`. File lỗi
+  → coi như **không agent nào được ghép** (+ `log::warn!`, không log nội dung). Bền qua khởi động lại
+  (P16); quên từng agent = xoá khối trong file (đọc lại mỗi request).
+- **Tra danh tính** (bridge): `handle_request` băm `request.agent_token` (nếu có) một lần → truyền
+  `token_sha256: Option<String>` xuống `handlers::remote::{start, exec_visible}`; `authorize` đọc
+  `agents.toml` ở tầng nền cùng lúc với policy → `paired`, `agent_id`. Không có token hoặc không
+  khớp → `paired = false` (không lỗi, trừ khi `require_pairing`).
+- **Handler `agent.pair`** (`app/src/local_control/handlers/agent.rs`, `Pending` như remote):
+  1. Token đã có trong file → `already_paired` ngay.
+  2. Đã có một yêu cầu pairing đang chờ (toàn app) → lỗi `SessionBusy`-kiểu (`"another agent is
+     waiting to be paired"`) — chống spam hộp thoại.
+  3. Push vào `ApprovalQueue` với subject mới `ApprovalSubject::Pairing { name }` (session = none →
+     đổi field `session` thành `Option<SessionId>`; `window_id` = cửa sổ đang active). Hộp thoại (cùng
+     `AgentApprovalDialog`): title `Pair an agent with Warp?`, body: tên tự khai, câu cảnh báo
+     `Pairing lets Warp show which agent sends each request. It does not stop other programs running
+     as your user.`, nút Deny / Pair (ẩn "Allow in session"). Toast như 3.8.
+  4. Approve → `pairing::add` (nền) → `paired`; Deny/hết giờ → `PolicyDenied("the user did not pair
+     this agent")`.
+- **Palette:** `Agent Ops: Forget all paired agents` (xoá file sau khi xác nhận bằng
+  `WarpSyncConfirmDialog`-kiểu? — không: dùng toast kết quả, thao tác này chỉ **giảm** quyền, không
+  cần xác nhận).
+- **Client** (`crates/warp_cli/src/local_control/`):
+  - `pairing.rs`: token file `~/.warp/agent-ops/agent-tokens/<name>.token` (`0600`, thư mục `0700`,
+    ghi bằng `create_new` để không đè; đọc: từ chối file quyền rộng hơn `0600`). `<name>` = tên đã làm
+    sạch của client (D24).
+  - `send_action` (hoặc biến thể mới `send_action_as_agent`) nhận `Option<&AgentToken>` và đặt vào
+    envelope. Đổi tối thiểu: không đổi chữ ký hàm của crate `local_control`.
+  - MCP transport: sau `initialize` (biết tên), **lần tool call đầu tiên** của process: nạp/tạo token →
+    gọi `agent.pair` (timeout `APPROVAL_TIMEOUT_SECS + 30 s`) → nhớ kết quả cho cả process. Lỗi / bị từ
+    chối → vẫn gửi token (Warp coi là chưa ghép), in một dòng stderr, **không** thử lại trong process
+    đó. Cờ `warpctrl mcp --no-pair`: không gửi token, không pairing.
+  - `warpctrl remote …` (CLI người dùng gõ): không pairing, không token (người là "agent" ở đây).
+- **Hiện danh tính:** `AgentLabel { claimed: Option<String>, agent_id: Option<String> }` trong
+  `ApprovalRequest`; hộp thoại: `claude-code (paired)` / `claude-code (unverified name)`; audit thêm
+  `agent_id`. Indicator header không đổi.
 
 ---
 
 ## 4. Các Phase
 
-**Thứ tự:** 0 → 1 → 2 → 3 → 4 → CHECKPOINT chính → (hỏi lại) → 5 (pairing, tuỳ chọn) → CHECKPOINT phụ.
+Thứ tự: 0 → 1 → CHECKPOINT P1 → 2 → 3 → CHECKPOINT P2 → 4 → CHECKPOINT P3. Cuối mỗi Phase: clippy 3
+package + `./script/format` một lần (mục 0.8).
 
 ### Phase 0 — Chuẩn bị
 
-- 0.1 `FeatureFlag::AgentOpsPolicy` (mục 3.1). Test: flag mặc định tắt, bật qua cargo feature.
-- 0.2 Xác nhận `git status` sạch, `cargo check -p warp -p local_control -p warp_cli` pass trước khi
-  sửa gì (đảm bảo bắt đầu từ trạng thái O1 hoàn tất, không có gì dở dang).
+- **0.1** `FeatureFlag::AgentOpsPolicy` + cargo feature `agent_ops_policy` + ánh xạ `features.rs`
+  (skill `add-feature-flag`, mục 3.1). `APPROVAL_TIMEOUT_SECS` trong `protocol.rs`; hằng số của
+  `agent_bridge/mod.rs`. Verify: `cargo check -p warp -p local_control -p warp_cli`, và
+  `cargo check -p warp --features agent_ops_policy`.
 
-### Phase 1 — Chính sách (thuần, không UI, không async)
+### Phase 1 — Chính sách chặn/cho phép (chưa có Ask)
 
-- 1.1 `agent_bridge/policy.rs`: `Mode`, `HostRule`, `Policy::load`, `Decision`, `Operation`,
-  `Policy::evaluate` (mục 3.2). Quyết định cách so khớp glob (tự viết `*` đầu/cuối hay thêm crate —
-  dừng hỏi nếu cần hơn thế). ~25-30 test theo bảng tổ hợp ở 3.2.
-- 1.2 `ErrorCode::PolicyDenied` + `AgentBridgeError::PolicyDenied` + `From` (mục 3.3). Sửa match
-  exhaustive theo compiler báo (`warp_cli` output/format, MCP `format.rs`, …).
-- 1.3 Nạp `policy.toml` lúc cần (không cache vĩnh viễn — đọc lại mỗi request là đơn giản và đủ nhanh
-  cho tần suất dùng thực tế; **⚠ nếu review sau thấy cần cache, bàn ở đó, không tối ưu sớm**), quyền
-  `0600`, thư mục `~/.warp/agent-ops/` qua `create_private_dir_all`. Test: file thiếu → `Approve`
-  default; file lỗi cú pháp → fail-closed `read_only` + thông báo rõ dòng/lý do lỗi.
-- Cuối Phase: `cargo test -p warp --lib agent_bridge`, clippy 3 package.
+- **1.1** `agent_bridge/policy.rs` + `policy_tests.rs` (mục 3.2). Kiểm `app/Cargo.toml` có `sha2`
+  (cần ở Phase 4) — ghi nhật ký. Verify: `cargo test -p warp --lib agent_bridge::policy`.
+- **1.2** `ErrorCode::PolicyDenied`, `AgentBridgeError::PolicyDenied`, `From` (mục 3.3); sửa match theo
+  compiler; test `error_tests.rs` (mã + message), `protocol_tests.rs` (serde `policy_denied`).
+- **1.3** `authorize` **chỉ với Allow/Deny** (Ask tạm thời → Deny với reason `"approval is not
+  available yet"` — thay ở 2.3): tầng nền nạp + evaluate, callback main; tách `start` thành
+  `run_hidden_operation`; nối `start` (Exec/Write) và `exec_visible` (mục 3.6). Audit
+  `policy_decision`/`policy_reason` (mục 3.10, phần không liên quan Ask). Test handler qua HTTP như
+  `remote_tests.rs`: flag tắt → hành vi O1 (các test cũ vẫn pass); read không bị policy chặn kể cả
+  `read_only`; lỗi `policy_denied` có message đúng (dùng `HOME` tạm — xem cách `audit_tests.rs`/
+  `remote_tests.rs` đặt thư mục; nếu phải đổi `HOME` toàn cục thì dùng `#[serial]` như test khác trong
+  repo, hoặc cho `load` nhận `home: &Path` và handler lấy từ một hàm có thể thay trong test).
+- **1.4** Nới timeout client (mục 3.9, phần timeout) + test.
+- Cuối Phase: `cargo test -p warp -p warp_cli --lib -- agent_bridge local_control`, clippy, format.
 
-### Phase 2 — Chờ duyệt (async, chưa có UI — dùng test resolve thủ công)
+**⛔ CHECKPOINT P1** — checklist 5.P1 (CLI, không cần UI).
 
-- 2.1 `agent_bridge/approval.rs`: `PendingApproval`, `ApprovalDecision`, `ApprovalQueue` (mục 3.4).
-  Test thuần: request/decide/timeout race/deny_all_for_session/pending_for_session, id không tồn tại.
-- 2.2 Gắn `ApprovalQueue` vào `AgentBridgeModel` (quyết định 3.4, khuyến nghị dùng chung model).
-- 2.3 `authorize()` trong `handlers/remote.rs`, wiring `start`/`exec_visible` theo mục 3.5 (tách
-  `start` thành 2 tầng `ctx.spawn`, hàm dùng chung `run_operation`). Audit `started` dời tới sau
-  Approve (mục 3.5, đoạn cuối). Test handler qua HTTP: Allow chạy ngay (không đổi hành vi O1 khi flag
-  tắt hoặc mode=allowlist khớp), Deny trả lỗi ngay không tạo `Pending`, Ask + resolve thủ công (gọi
-  thẳng `ApprovalQueue::decide` trong test) → Allow tiếp tục chạy / Deny trả lỗi, Ask + hết
-  `APPROVAL_TIMEOUT` (rút ngắn hằng số qua `#[cfg(test)]` hoặc tham số — theo mẫu `visible_tests.rs`
-  đã rút ngắn `VISIBLE_POLL_INTERVAL`) → tự Deny.
-- 2.4 Nới timeout HTTP client thêm `APPROVAL_TIMEOUT` cho `remote.exec`/`.write`/`.visible` (mục 3.8,
-  cả `warpctrl remote` và `mcp/tools.rs`). Test: timeout tính đúng.
-- Cuối Phase: test `agent_bridge`/`local_control` + clippy 3 package.
+### Phase 2 — Hàng đợi duyệt (logic, chưa có UI)
 
-### Phase 3 — Kill switch + audit
+- **2.1** `agent_bridge/approval.rs` + tests (mục 3.4): push/decide/remove/revoke/oldest; giới hạn 8;
+  `wait_for_decision` (Approve trước timeout, timeout, kênh bị drop → Revoked); race timeout-thắng.
+- **2.2** `AgentBridgeModel`: `approvals`, `AgentBridgeEvent`, detach → revoke; `Attachment.allowed_commands`
+  + hết hạn xoá (mục 3.5). Sửa chỗ nghe model theo compiler. Test `attachments_tests.rs`/`model`.
+- **2.3** `authorize` nhánh Ask đầy đủ (mục 3.6): push, audit `approval_requested` fail-closed, chờ,
+  kiểm attach lại, AllowInSession. `ApprovalSubject` cho Exec/ExecVisible/Write (preview). Test handler:
+  Ask → quyết định bằng `AgentBridgeModel::decide` trong test → chạy/không chạy; Revoke khi đang chờ →
+  `policy_denied` ngay; detach giữa chừng rồi Approve → `session_not_attached`; `APPROVAL_TIMEOUT`
+  rút ngắn trong test (tham số hoá `wait_for_decision(timeout)`; handler lấy timeout từ một hàm
+  `#[cfg(test)]`-thay được hoặc field trong model — chọn cách ít xâm lấn, ghi Quyết định).
+- **2.4** INSTRUCTIONS MCP + skill `SKILL.md` (mục 3.9). Test MCP: message `policy_denied` là `isError`.
+- Cuối Phase: test, clippy, format.
 
-- 3.1 `deny_all_for_session` gọi từ `revoke_agent_bridge_access` (mục 3.7); hành động mới
-  `DenyAllPendingAgentRequests` nếu tách riêng khỏi Revoke (quyết định lúc code: có thể gộp im lặng
-  vào Revoke, ghi vào mục 8 nếu làm khác plan).
-- 3.2 Audit: `policy_decision`, `policy_reason` (mục 3.9). Test: mỗi nhánh Allow/Ask-approved/
-  Ask-denied/Ask-timeout/Deny ghi đúng dòng.
-- Cuối Phase: test + clippy.
+### Phase 3 — UI duyệt
 
-### Phase 4 — UI (banner + toast + nút)
+- **3.1** Đọc `gui-ui-guidelines`; đọc `confirm_dialog.rs` + chỗ gắn Workspace.
+- **3.2** `approval_dialog.rs` (view + `content` thuần + tests nội dung: lệnh dài, lệnh có ký tự điều
+  khiển, write text/binary/preview cắt, pairing chưa có ở phase này).
+- **3.3** Gắn dialog vào Workspace (field, build, render overlay, show/close, event → `decide`, đóng khi
+  `ApprovalsChanged` làm request biến mất, không chồng dialog Warp Sync).
+- **3.4** Header: "N waiting" + nút Review (`MouseStateHandle` một lần), `TerminalAction::ReviewAgentRequest`
+  → mở dialog (mục 3.8). Test nhãn trong `messages.rs` (không nhắc "claude").
+- **3.5** Toast + `WorkspaceAction::AgentOpsReviewRequest { request_id }` (chuyển tab/pane nếu làm
+  được) + 2 entry palette (mục 3.8).
+- **3.6** Tự review: rust-reviewer + security-reviewer (agent `ecc:rust-reviewer`,
+  `ecc:security-reviewer`), trọng tâm: không đường nào chạy lệnh ghi khi flag bật mà không qua
+  `authorize`; lệnh visible không bao giờ được gõ trước Allow; race quyết định/timeout/revoke; lock
+  `TerminalModel` (quy tắc bảng lock Phase 5 của Bridge vẫn áp dụng; code mới không được lock thêm);
+  dialog không có Enter; không log token/nội dung. Sửa CRITICAL/HIGH, ghi phần bác bỏ vào nhật ký.
+  Test: `agent_bridge`, `local_control`, `terminal::view`, `workspace` (song song, fail thì chạy lại
+  `--test-threads=1`).
+- Cuối Phase: clippy, format.
 
-- 4.1 Đọc kỹ `gui-ui-guidelines` trước khi bắt đầu (mục 0.1).
-- 4.2 Mở rộng `pane_impl.rs`: banner khi có pending (mục 3.6), nút Approve/Deny, `TerminalAction`
-  mới, dispatch, handler trong view. Chữ trung lập với agent (D11 của Bridge — không nêu tên agent cụ
-  thể, chỉ "Agent"/"Agents" như nhãn hiện có).
-- 4.3 Nút "Approve lệnh này cho session này" (mục 3.6, nếu quyết định làm ở v1).
-- 4.4 Toast khi pending mới và pane không active (mục 3.6); focus đúng tab/pane khi bấm.
-- 4.5 (tuỳ chọn, làm nếu rẻ) `warpctrl remote policy show` để debug (mục 3.8).
-- 4.6 Tự review (rust-reviewer + security-reviewer): đặc biệt kiểm race giữa Approve/Deny/timeout (ai
-  thắng khi cả 3 xảy ra gần nhau), kiểm `deny_all_for_session` không bỏ sót request đang ở giữa hai
-  tầng `ctx.spawn`, kiểm banner không lộ secret khi setting redact bật.
-- 4.7 `./script/format` **một lần**, cuối cùng của Phase 0–4. Commit.
+**⛔ CHECKPOINT P2** — checklist 5.P2.
 
-**⛔ CHECKPOINT chính** — người dùng bật `AgentOpsPolicy`, thử: mode `read_only` chặn mọi ghi; mode
-`approve` hiện banner + toast, Approve chạy được (kể cả visible — chạy thành block thật), Deny/hết 5
-phút trả lỗi cho agent; mode `allowlist` với 1 entry đúng tự chạy, lệch một ký tự thì Ask; deny pattern
-(thử một lệnh vô hại đại diện, KHÔNG thử `rm -rf /` thật) luôn chặn dù đang `allowlist`; Revoke dọn
-sạch cả pending đang chờ.
+### Phase 4 — Pairing token
 
-**Sau CHECKPOINT chính:** dừng, hỏi người dùng có làm Phase 5 (pairing token) ngay không, hay để đó
-cho một phiên khác / gộp vào lúc bắt đầu G2.
+- **4.1** Protocol: `AgentToken`, `RequestEnvelope.agent_token`, action `agent.pair` (Stub) + params/
+  result + catalog + resolver + arm bridge; test serde (Debug che token, envelope cũ không có trường vẫn
+  parse, token sai độ dài → lỗi).
+- **4.2** `agent_bridge/pairing.rs` (kho `agents.toml`) + tests (parse/serialize/tên trùng/ghi atomic/
+  quyền 0600/file hỏng → rỗng).
+- **4.3** Bridge băm token → `token_sha256` xuống handler; `authorize` tra `paired`/`agent_id`;
+  `require_pairing`; `AgentLabel` trong `ApprovalRequest`; audit `agent_id`. Test.
+- **4.4** Handler `agent.pair` (`Implemented`), `ApprovalSubject::Pairing`, `session: Option<SessionId>`,
+  một pairing chờ tại một thời điểm; dialog nhánh pairing; palette "Forget all paired agents". Test
+  handler (already_paired, busy, approve → file có entry, deny).
+- **4.5** Client: `warp_cli/src/local_control/pairing.rs` (token file), `send_action` mang token, MCP
+  pairing lười ở tool call đầu, `--no-pair`, test với transport giả (pair một lần/process, lỗi pair
+  không chặn tool call, token có trong envelope, `--no-pair` không gửi).
+- **4.6** Mục 7 + skill: pairing, cách quên agent.
+- **4.7** Review (rust + security; trọng tâm: token không bao giờ vào log/audit/lỗi; so sánh hash; file
+  token quyền; spam pairing) + test + clippy + format.
 
-### Phase 5 — Pairing token (tuỳ chọn, viết task chi tiết SAU khi được hỏi lại — mục 3.10)
+**⛔ CHECKPOINT P3** — checklist 5.P3. Sau đó cập nhật roadmap (tick O2) và ghi nhật ký kết thúc.
 
 ---
 
 ## 5. Checklist test tay (cho người dùng)
 
-Môi trường: kế thừa từ checklist 5.A/5.B/5.C của plan Bridge (VM có sshd, hostname khác máy local,
-sudo cần mật khẩu). `W=/projects/github/warp-agent-bridge/target/debug/warp-oss`.
+**Môi trường:** như checklist 5.A–5.C của plan Bridge (VM có sshd, hostname khác máy local, sudo cần
+mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full** session `root@<host>`.
+`W=/projects/github/warp-agent-bridge/target/debug/warp-oss`, `P=~/.warp/agent-ops/policy.toml`,
+`S='<session id>'` (lấy bằng `$W --warpctrl remote sessions`).
 
-**D. Chính sách cơ bản (Checkpoint chính)**
+**5.P1 — Chặn/cho phép qua CLI (CHECKPOINT P1)**
 
-1. `~/.warp/agent-ops/policy.toml` chưa tồn tại → gọi `remote.exec` qua Claude Code → kỳ vọng: **Ask**
-   (default an toàn), banner hiện đúng lệnh.
-2. Tạo file với `[defaults] mode = "read_only"` → mọi `remote.exec`/`remote.file.write`/
-   `remote.exec.visible` → lỗi `PolicyDenied` ngay, không có banner (không phải Ask).
-3. Đổi `mode = "approve"`, gọi `remote.exec -- 'echo hi'` → banner "Agent wants to run: echo hi" +
-   nút Approve/Deny; bấm **Deny** → agent nhận lỗi `PolicyDenied` với lý do "denied by the user".
-4. Lặp lại, bấm **Approve** → lệnh chạy, kết quả trả về agent bình thường như O1.
-5. Lặp lại, **không bấm gì** > 5 phút → tự Deny, banner tự ẩn, audit ghi `ask_timeout`.
-6. `[[hosts]] match = "<hostname thật của VM>" mode = "allowlist" allow = ["echo hi"]` → `remote.exec
-   -- 'echo hi'` chạy thẳng không hỏi; `remote.exec -- 'echo hi '` (thêm khoảng trắng cuối, agent tự
-   gửi) vẫn chạy thẳng (đã `trim()`); `remote.exec -- 'echo hi2'` → Ask.
-7. `[deny] patterns` thêm một pattern vô hại để test (vd `'\bwhoami\b'`) → `remote.exec -- whoami`
-   luôn Deny ngay cả khi đang ở host `allowlist` — xác nhận L3 thắng L1.
-8. `remote.exec.visible -- 'echo hi'` ở mode `approve`, Approve → block thật hiện trong pane (như
-   Checklist 5.C của Bridge), không phải chạy ẩn.
-9. Trong lúc một request đang "Ask", dùng Attach → **Revoke** trên pane đó → banner biến mất, request
-   đang chờ nhận lỗi `PolicyDenied` (không phải treo tới khi timeout).
-10. Sửa file thành cú pháp sai (xoá dấu `"`) → request tiếp theo → Deny với thông báo lỗi cú pháp rõ
-    ràng (fail-closed, không phải im lặng coi như `approve`).
-11. Toast: mở 2 tab, mỗi tab một session SSH khác nhau đã attach; gửi `remote.exec` vào session của
-    tab **không active** → toast xuất hiện ở tab đang active, bấm "Xem" nhảy đúng tab/pane.
-12. Nút "Approve lệnh này cho session này" (nếu làm ở 4.3): Approve theo cách này cho `ls`, gọi lại
-    `remote.exec -- ls` lần hai trong cùng session → không hỏi lại, tự Allow; detach rồi attach lại →
-    phải hỏi lại (không nhớ qua lượt attach mới).
+1. Build **không** có `agent_ops_policy`: `$W --warpctrl remote exec --session "$S" -- 'id -un'` chạy
+   như O1 (không có policy).
+2. Build có feature, **không có** `$P`: lệnh trên → lỗi `policy_denied` "approval is not available yet"
+   (Phase 1 chưa có Ask; mặc định là `approve`).
+3. `$P` = `[defaults] mode = "read_only"` (`chmod 600 $P`): `exec` → `policy_denied` "… is read-only
+   for agents"; `$W --warpctrl remote read --session "$S" /etc/hostname` vẫn đọc được.
+4. `mode = "allowlist"`, `allow = ["id -un"]`: `exec -- 'id -un'` chạy, in `root`; `exec -- ' id -un '`
+   cũng chạy; `exec -- 'id'` → `policy_denied`.
+5. Thêm `[deny] patterns = ['\bid\b']`: `exec -- 'id -un'` → `policy_denied` "matches the deny rule"
+   (deny thắng allowlist).
+6. `[deny] paths = ["/tmp/agent-ops-*"]`: `write --create /tmp/agent-ops-x` → `policy_denied`.
+7. `chmod 644 $P` → mọi ghi `policy_denied` nêu quyền file. `chmod 600`, rồi xoá một dấu `"` → mọi ghi
+   `policy_denied` nêu lỗi parse (có số dòng). Sửa lại → chạy lại được **không cần restart Warp**.
+8. `allow = ["id; reboot"]` → lỗi nạp policy nêu metachar.
+9. `tail -3 ~/.warp/agent-bridge/audit.jsonl` có `policy_decision`/`policy_reason` cho các bước trên.
+
+**5.P2 — Hộp thoại duyệt (CHECKPOINT P2)**
+
+1. `mode = "approve"`. Từ Claude Code (MCP `warp-bridge`): "chạy `uptime` trên server". Header pane
+   hiện "Agents · root · 1 waiting" + nút Review; toast "An agent is waiting…". Chưa có gì chạy trên
+   server.
+2. Bấm Review → hộp thoại: title "Run on root@<host>?", agent, "Runs in the background", lệnh nguyên
+   văn, giờ tự từ chối. Nhấn Enter → **không** có gì xảy ra. Esc → đóng, header vẫn "1 waiting".
+3. Review lại → Approve → Claude nhận output `uptime`; header về "Agents · root".
+4. Lặp lại, Deny → Claude nhận lỗi "the user denied it" và **không** thử lách (skill).
+5. Lặp lại, không làm gì 5 phút → Claude nhận "no one approved it within 5 minutes"; header hết
+   "waiting"; audit có `ask_timeout`.
+6. `exec_visible` (nhờ Claude "chạy `df -h` cho tôi xem"): **không có gì gõ vào shell** trước khi
+   Approve; sau Approve block hiện trong pane như O1, bản nháp đang gõ dở vẫn còn.
+7. "Allow this command in this session" cho `uptime` → Claude gọi `uptime` lần hai: chạy ngay không hỏi.
+   Revoke rồi attach lại → `uptime` phải hỏi lại.
+8. Claude sửa một file (`edit_file`): hộp thoại "Write a file on root@<host>?" có path, size, "Replaces
+   the existing file…", preview; không có nút "Allow in session".
+9. Đang có request chờ → bấm Revoke trên header → Claude nhận lỗi ngay ("revoked…"), dialog (nếu mở)
+   tự đóng.
+10. Hai tab, hai session đã attach; nhờ Claude chạy lệnh ở session của tab **không** active → toast ở
+    cửa sổ hiện tại, bấm Review → chuyển tới đúng tab (hoặc ít nhất mở đúng request), duyệt được.
+11. Palette "Agent Ops: Deny all waiting agent requests" khi có 2 request chờ → cả hai bị từ chối.
+12. Lệnh dài > 20 dòng / > 2 KiB (nhờ Claude chạy một heredoc dài qua `exec`) → Deny ngay "too long…".
+13. (Nếu dùng Codex) request chờ 3 phút rồi Approve: Codex vẫn nhận kết quả — nếu Codex báo timeout,
+    đặt giới hạn tool call theo mục 7 và thử lại; ghi kết quả vào nhật ký.
+
+**5.P3 — Pairing (CHECKPOINT P3)**
+
+1. Khởi động lại Claude Code (process `warpctrl mcp` mới), gọi `list_sessions`: hộp thoại "Pair an agent
+   with Warp?" (tên `claude-code`) — Pair. `~/.warp/agent-ops/agents.toml` có entry (quyền 0600),
+   `~/.warp/agent-ops/agent-tokens/claude-code.token` quyền 0600.
+2. Lệnh cần duyệt từ Claude: hộp thoại ghi "claude-code (paired)"; audit có `agent_id`.
+3. Khởi động lại Warp và Claude Code: **không** hỏi pairing lại.
+4. `require_pairing = true`; chạy `$W --warpctrl remote exec …` (CLI, không token) → `policy_denied`
+   "not paired"; Claude vẫn chạy được (sau duyệt).
+5. Xoá khối của `claude-code` trong `agents.toml` → lệnh tiếp theo từ Claude: "unverified name", và
+   (với `require_pairing = true`) bị Deny; restart Claude Code → hỏi pairing lại.
+6. Deny hộp thoại pairing → Claude vẫn dùng được như client chưa ghép cặp (khi `require_pairing =
+   false`), không hỏi lại tới khi process MCP khởi động lại.
+7. Palette "Agent Ops: Forget all paired agents" → file rỗng; toast báo số agent đã quên.
+8. `grep -r "<nội dung token>" ~/.warp/agent-bridge ~/.local/state/warp* 2>/dev/null` (log của bản
+   dev — tìm đường log thật ở nhật ký Bridge) → không thấy token.
 
 ---
 
 ## 6. Rủi ro đã biết
 
-| Rủi ro | Giảm thiểu |
+| Rủi ro | Giảm thiểu / chấp nhận |
 |---|---|
-| `policy.toml` đọc/ghi được bởi bất kỳ process nào cùng UID | Không mạnh hơn mô hình tin cậy đã chấp nhận ở O1 (D21 (f) tương tự) — quyền `0600` chỉ chặn user khác, không chặn process cùng UID; đây là giới hạn đã biết, không phải lỗi thiết kế |
-| Regex denylist bị lách bằng shell obfuscation (`eval $(echo ... | base64 -d)`) | Roadmap đã ghi nhận: denylist chỉ là "gờ giảm tốc"; ranh giới thật là read-only/hộp thoại/allowlist khớp nguyên văn, không phải denylist |
-| Một dialog/banner cho nhiều session cùng lúc → dễ bỏ sót | Banner theo session (không phải modal toàn cục) + toast; vẫn có thể bỏ sót nếu nhiều toast dồn dập — chấp nhận ở v1, cải thiện (danh sách "pending approvals" tổng hợp) để dành cho O5 nếu cần |
-| Người dùng bấm Approve theo phản xạ mà không đọc kỹ | Hiện đầy đủ lệnh/host/user mỗi lần, không có "auto-approve trong N phút tới"; chỉ có "approve lệnh **này**, session **này**" theo đúng roadmap, không mở rộng hơn |
-| Nới timeout HTTP thêm 5 phút cho mọi request ghi (mục 3.8) làm agent chờ lâu hơn cả khi không có gì để duyệt | Chỉ ảnh hưởng khi request thật sự bị Ask; Allow/Deny trả lời gần như ngay (không đổi độ trễ đo được ở Checkpoint A của Bridge, 0,183 s) |
-| Pairing token (Phase 5) không chặn được process cùng UID | Đã ghi rõ trong roadmap và mục 1.3(d); giá trị chỉ là danh tính, không phải cách ly — nhắc lại trong hộp thoại ghép cặp để người dùng không hiểu lầm là một lớp bảo mật mạnh |
-| File chính sách lỗi cú pháp giữa lúc đang dùng (sửa tay, gõ nhầm) | Fail-closed (`read_only`) thay vì fail-open — thà chặn nhầm còn hơn cho chạy nhầm |
+| Process cùng UID sửa `policy.toml`, đọc token, gọi thẳng broker | Giới hạn đã biết của mô hình (D21 của Bridge, roadmap): quyền 0600 chỉ chặn user khác. Giá trị thật: chặn agent "ngoan" nhưng bỏ qua permission, và hiện đúng lệnh trước mắt người |
+| Denylist regex bị lách (`eval "$(echo … \| base64 -d)"`) | Roadmap: chỉ là gờ giảm tốc; ranh giới thật là `read_only`, hộp thoại, allowlist khớp nguyên văn không metachar |
+| Duyệt theo phản xạ | Hộp thoại chỉ mở khi người bấm Review; không Enter; lệnh nguyên văn; giới hạn độ dài; "allow in session" chỉ đúng lệnh đó, mất khi detach |
+| Script ghi bằng `write_file` (preview 40 dòng) rồi chạy bằng `exec` | Người duyệt thấy "Write a file … N more lines" rồi "Run `sh /tmp/x.sh`" — hai lần hỏi; diff đầy đủ là G4. Ghi trong skill: script dài → nói trước với user |
+| Hộp thoại không che secret | Người duyệt là chủ server, cần thấy đúng lệnh; rủi ro khi chia sẻ màn hình — chấp nhận |
+| MCP client timeout tool call ngắn hơn 5 phút | Mục 7 hướng dẫn cấu hình; checklist 5.P2.13 |
+| Request của session cũ (sau khi rời `sudo -i`) vẫn nằm hàng tới hết giờ | Approve vẫn không chạy (kiểm attach lại); chấp nhận |
+| Timeout HTTP dài thêm 5 phút cho mọi request ghi | Chỉ là trần; Allow/Deny trả lời ngay như O1 (0,183 s đo ở Checkpoint A) |
+| Đổi `AgentBridgeModel::Event` từ `()` | Compiler chỉ ra mọi chỗ; test `terminal::view`/`workspace` |
+| Spam hộp thoại pairing | Một pairing chờ tại một thời điểm; MCP chỉ pair một lần/process |
+| `agents.toml` bền qua restart (khác attach) | Pairing không cấp quyền gì, chỉ gắn danh tính; quên được bằng palette/xoá khối |
 
 ---
 
-## 7. Hướng dẫn dùng hằng ngày (viết đầy đủ sau khi xong Phase 4)
+## 7. Hướng dẫn dùng hằng ngày (hoàn thiện ở Task 2.4/4.6)
 
-Phác thảo — hoàn thiện thành hướng dẫn thật ở Task 4.7 cùng lúc `./script/format`:
-
-1. Bật `AgentOpsPolicy` (feature + Settings nếu có công tắc).
-2. Tạo `~/.warp/agent-ops/policy.toml` (quyền `0600`), bắt đầu với `mode = "approve"`.
-3. Thêm `[[hosts]]` cho host lab quen thuộc khi đã tin tưởng một số lệnh, chuyển `mode = "allowlist"`.
-4. Không tự ý thêm allowlist cho lệnh có thể phá huỷ — dùng `[deny]` cho nhóm lệnh không bao giờ muốn
-   chạy dù ai duyệt.
-5. Duyệt trong Warp: banner trên pane header của session đó; Deny/không trả lời > 5 phút = an toàn
-   mặc định.
+1. Build/bản release với feature `agent_ops_policy` (thêm vào lệnh `bundle` ở mục 3.11 của plan Bridge).
+2. Tạo `~/.warp/agent-ops/policy.toml`, `chmod 600`. Bắt đầu `mode = "approve"`; thêm `[[hosts]]` +
+   `allowlist` cho lệnh đã tin trên host lab; `[deny]` cho thứ không bao giờ được chạy.
+3. Khi agent muốn ghi: header pane "N waiting" / toast → **Review** → đọc lệnh → Approve / Deny /
+   Allow in session. Không làm gì = từ chối sau 5 phút. Revoke = từ chối mọi thứ đang chờ.
+4. Timeout tool call của agent (điền tên cấu hình đã kiểm ở Task 2.4): Claude Code …; Codex
+   `[mcp_servers.warp-bridge]` … ≥ 900.
+5. Pairing (sau Phase 4): lần đầu agent kết nối sẽ hỏi "Pair an agent with Warp?". Quên một agent: xoá
+   khối trong `~/.warp/agent-ops/agents.toml`; quên hết: palette "Agent Ops: Forget all paired agents".
+   `require_pairing = true` để chỉ agent đã ghép cặp được ghi.
 
 ---
 
@@ -614,36 +725,50 @@ Phác thảo — hoàn thiện thành hướng dẫn thật ở Task 4.7 cùng l
 
 ### Tiến độ
 
-- [ ] Phase 0 — flag + xác nhận trạng thái sạch
-- [ ] 1.1 `policy.rs` · [ ] 1.2 `ErrorCode`/`AgentBridgeError` · [ ] 1.3 nạp file
-- [ ] 2.1 `approval.rs` · [ ] 2.2 gắn vào model · [ ] 2.3 wiring `authorize()` · [ ] 2.4 nới timeout client
-- [ ] 3.1 kill switch · [ ] 3.2 audit
-- [ ] 4.1 đọc skill · [ ] 4.2 banner + nút · [ ] 4.3 "approve cho session này" · [ ] 4.4 toast · [ ] 4.5 CLI debug (tuỳ chọn) · [ ] 4.6 review · [ ] 4.7 format
-- [ ] ⛔ CHECKPOINT chính
-- [ ] Hỏi lại người dùng về Phase 5 (pairing)
-- [ ] Phase 5 (nếu làm)
+- [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
+- [ ] 0.1 flag + hằng số
+- [ ] 1.1 `policy.rs` · [ ] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
+- [ ] ⛔ CHECKPOINT P1
+- [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
+- [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
+- [ ] ⛔ CHECKPOINT P2
+- [ ] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
 
 | # | Ngày | Quyết định | Lý do |
 |---|---|---|---|
-| DP1 | 2026-09-27 | Chỉ 2 hàm gọi `policy::evaluate` (`start` cho Exec/Write, `exec_visible`), không phải nghĩa đen "một hàm" — `output_recent`/`Operation::Read` không qua policy vì là L0 | `check_access` vốn đã dùng chung cho 3 handler nhưng chỉ 2 trong số đó làm việc ghi; roadmap tự mô tả policy áp cho "hành động" (write), không phải đọc |
-| DP2 | 2026-09-27 | `begin_operation` (Hidden/Visible) chỉ gọi **sau** khi có Allow, không gọi lúc đăng ký "Ask" | Nếu gọi trước, một yêu cầu đang chờ người (tới 5 phút) sẽ chiếm slot và khoá các yêu cầu ẩn khác của cùng session trong lúc chờ |
-| DP3 | 2026-09-27 | Audit "started" dời tới sau khi Approve; thêm bản ghi audit riêng cho sự kiện chờ duyệt | Ghi "started" lúc đăng ký Ask sẽ để lại bản ghi mồ côi nếu Deny/timeout, gây hiểu nhầm khi đọc log |
-| DP4 | 2026-09-27 | Hộp thoại duyệt hiện theo banner trên pane header (mở rộng D26) + toast khi pane không active, không dùng modal toàn cục kiểu `WarpSyncConfirmDialog` | Modal của Workspace chỉ hiện được 1 cái tại một thời điểm — 2 session cùng Ask sẽ đá nhau; banner theo session tránh xung đột và giữ ngữ cảnh pane |
-| DP5 | 2026-09-27 | Timeout HTTP của mọi `remote.exec`/`.write`/`.visible` nới thêm `APPROVAL_TIMEOUT` (5 phút) vô điều kiện, thay vì chỉ khi biết trước sẽ bị Ask | Client không biết trước một request có bị Ask hay không; nới vô điều kiện đơn giản hơn và không ảnh hưởng độ trễ khi Allow/Deny trả lời ngay |
-| DP6 | 2026-09-27 | Pairing token tách thành Phase 5, chỉ viết task chi tiết sau khi hỏi lại người dùng 3 câu ở mục 1.3(d) | Roadmap mô tả pairing ở mức mục tiêu, không phải API; 3 câu hỏi (bền qua restart? cơ chế trao đổi bí mật? dùng để làm gì trong policy?) cần người dùng chốt trước khi viết code, đúng quy tắc "API không chắc thì dừng hỏi" |
-
-*(Các dòng trên là quyết định đề xuất trong lúc viết plan — cần người dùng duyệt trước khi Phase 0
-bắt đầu code. Nhật ký thực thi sẽ nối tiếp bên dưới khi bắt đầu Phase 0.)*
+| P1 | 2026-09-27 | Policy chỉ áp cho ghi: `remote.exec`, `remote.file.write`, `remote.exec.visible`. `read`/`output.recent`/`session.list` giữ như O1 | Roadmap: L0 tự chạy; đọc đã được attach ReadOnly/Full kiểm soát |
+| P2 | 2026-09-27 | Một hàm `authorize` là chỗ duy nhất gọi `policy::evaluate`, gọi từ `start` (Exec/Write) và `exec_visible` | Đúng ý "một chỗ" của roadmap; `check_access` dùng chung cả đường đọc nên không đặt policy vào đó |
+| P3 | 2026-09-27 | `begin_operation` chỉ gọi sau Allow; lệnh visible chỉ gõ vào shell sau Allow | Chờ người ≤ 5 phút không được chiếm slot của session; không bao giờ gõ trước rồi hỏi |
+| P4 | 2026-09-27 | Duyệt bằng **hộp thoại modal cấp Workspace** mở khi người bấm **Review** (từ header pane "N waiting" hoặc toast), dialog là cửa sổ nhìn vào **hàng đợi trong `AgentBridgeModel`**. Không tự bật dialog, không đặt lệnh trên header | Header quá hẹp để đọc trọn lệnh; modal tự bật sẽ cướp phím người đang gõ; dialog kiểu Warp Sync là singleton nhưng khi request nằm trong model thì mở request khác không làm mất request cũ |
+| P5 | 2026-09-27 | Chờ duyệt = oneshot + `Timer` (5 phút) trong `ctx.spawn`, như `visible::wait`; hết giờ = Deny | Khớp style async của Bridge; không cần state dọn dẹp riêng |
+| P6 | 2026-09-27 | Nạp `policy.toml` mỗi request ghi, ở tầng nền; thiếu file = `approve` | Sửa file có hiệu lực ngay, không I/O trên main thread, mặc định an toàn nhưng dùng được |
+| P7 | 2026-09-27 | Glob tự viết (`*`, `?`) cho `match` và `[deny] paths`; không thêm crate | Chỉ cần mẫu đơn giản; P6 của roadmap (patch nhỏ) |
+| P8 | 2026-09-27 | File lỗi/quyền rộng hơn 0600 → Deny mọi ghi (fail-closed), message chỉ file + lỗi | Thà chặn nhầm còn hơn chạy nhầm dưới root |
+| P9 | 2026-09-27 | Thứ tự luật: `require_pairing` → chọn host đầu tiên khớp → `[deny]` (luôn thắng) → mode; `allowlist` không khớp = Ask; mọi `write` = Ask (trừ `read_only`/deny); thêm `[deny] paths` | Roadmap: L3 luôn từ chối, "mọi lệnh ghi khác" là L2; sửa sshd/sudoers là L3 trong roadmap nhưng không phải lệnh nên cần deny theo path |
+| P10 | 2026-09-27 | Hộp thoại hiện lệnh/nội dung **nguyên văn** (chỉ bỏ ký tự điều khiển), không redaction | Người duyệt phải thấy đúng thứ sẽ chạy; `****` sẽ che chính thứ đang được duyệt |
+| P11 | 2026-09-27 | Lệnh cần duyệt dài > 2 KiB hoặc > 20 dòng → Deny; preview file 40 dòng | Không ai duyệt nổi lệnh 8 KiB; buộc agent chia nhỏ hoặc viết script (được hỏi riêng) |
+| P12 | 2026-09-27 | Client (CLI + MCP) cộng vô điều kiện `APPROVAL_TIMEOUT_SECS` (hằng số trong `local_control::protocol`) vào thời gian chờ mọi request ghi | Client không biết trước có bị hỏi; một con số dùng chung hai phía |
+| P13 | 2026-09-27 | Audit `started` của O1 ghi sau khi duyệt; thêm bản ghi `approval_requested` (fail-closed) và các trường `policy_decision`/`policy_reason`/`agent_id` | Không có bản ghi "started" mồ côi; vẫn truy được mọi lần hỏi |
+| P14 | 2026-09-27 | `remote.exec` ẩn được duyệt vẫn chạy **ẩn** (không tự đổi sang visible); hộp thoại ghi rõ "Runs in the background" | Đổi sang visible sẽ đổi kiểu kết quả (stdout/stderr tách), mất `cwd`, và để lại `cd`/`export` trong shell của user. "Dùng lại exec.visible" của roadmap = lệnh visible chỉ gõ vào shell sau khi duyệt, thành block thật |
+| P15 | 2026-09-27 | Token pairing đi trong `RequestEnvelope.agent_token` (newtype che `Debug`), Warp chỉ giữ `sha256`; action `agent.pair` do MCP gọi lười ở tool call đầu của process; không sửa broker | Một trường chung cho mọi action (G2 dùng lại), không đổi chữ ký `local_control::client`; người dùng không phải copy token |
+| P16 | 2026-09-27 | Pairing **bền** qua restart (`~/.warp/agent-ops/agents.toml`, 0600), khác attach (chỉ RAM) | Pairing không cấp quyền, chỉ gắn danh tính; hỏi lại mỗi lần mở Warp sẽ làm người dùng bấm theo phản xạ |
+| P17 | 2026-09-27 | Dùng danh tính: hiện trong hộp thoại + audit + `require_pairing` (mặc định false). Không có luật policy theo từng agent ở O2 | Đủ cho gate O2 và điều kiện AO7 của G2; luật theo agent để O6 |
+| P18 | 2026-09-27 | "Allow this command in this session" lưu trong `Attachment` (RAM), khớp nguyên văn sau trim, chỉ cho lệnh; `[deny]` vẫn thắng | Roadmap liệt kê nút này; tự mất khi detach/hết hạn/rời `sudo -i` |
+| P19 | 2026-09-27 | Flag riêng `AgentOpsPolicy` (cargo feature `agent_ops_policy`); tắt = y hệt O1 | Patch sau feature flag (P6 của roadmap); không đổi hành vi người đang dùng O1 |
+| P20 | 2026-09-27 | Ba checkpoint: P1 (CLI, Allow/Deny) → P2 (UI duyệt) → P3 (pairing) | Bắt lỗi wiring trước khi làm UI; pairing tách riêng để O2 lõi dùng được sớm |
 
 ### Nhật ký
 
-- 2026-09-27 — Plan v1 viết sau khi khảo sát code thật hậu-O1: `handlers/remote.rs` (điểm gọi
-  `check_access`, cấu trúc `ctx.spawn` của `start`/`exec_visible`), `bridge.rs`/`mod.rs`
-  (`BridgeResult::Pending`), `operations.rs`, `error.rs`, `crates/local_control/src/protocol.rs`
-  (`ErrorCode`), `crates/local_control/src/auth.rs` (credential theo action, không phải danh tính
-  bền), `warp_sync/confirm_dialog.rs` + chỗ gắn vào `workspace/view.rs` (mẫu dialog singleton, không
-  timeout), `pane_impl.rs` (indicator D26), `mcp/jsonrpc.rs` (`set_client_name`, không có trường
-  pairing chuẩn), `app/Cargo.toml` (đã có `toml`/`regex`, không cần dependency mới). Chưa bắt đầu
-  Phase 0. Chờ người dùng duyệt các mục **⚠ Cần duyệt** ở mục 1.3 và các quyết định DP1–DP6.
+- 2026-09-27 — Plan v1 (Claude Sonnet 5): khảo sát `handlers/remote.rs`, `bridge.rs`/`mod.rs`,
+  `operations.rs`, `error.rs`, `protocol.rs`, `auth.rs`, `confirm_dialog.rs` + Workspace, `pane_impl.rs`,
+  `mcp/jsonrpc.rs`, `app/Cargo.toml`; để 5 nhóm quyết định chờ duyệt.
+- 2026-09-27 — Plan v2 (Claude Opus 5.5): người dùng giao quyền quyết định. Kiểm thêm: timeout client
+  (`EXEC_CLIENT_MARGIN`), broker `issue_credential`, `RequestEnvelope` (không `deny_unknown_fields`),
+  `send_action`, `DismissibleToast`/`ToastLink`, `focus_pane`/`activate_tab_by_pane_group_id`, inline
+  banner của blocklist (cân nhắc, không dùng: cần sửa blocklist dưới lock model), `Attachment`,
+  `AgentBridgeModel`. Chốt P1–P20, viết đầy đủ Phase 0–4 (pairing là Phase 4) và checklist 5.P1–5.P3.
+  Sửa v1: đường dẫn `crates/warp_cli/src/local_control/mcp/jsonrpc.rs`; bỏ phương án banner-có-nút trên
+  header (không đủ chỗ hiện lệnh). Chưa bắt đầu Phase 0.
