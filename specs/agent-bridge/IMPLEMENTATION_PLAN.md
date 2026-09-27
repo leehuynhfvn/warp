@@ -925,8 +925,8 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - [x] 3.1 deps · [x] 3.2 jsonrpc · [x] 3.3 edit/format/redact · [x] 3.4 tools · [x] 3.5 `warpctrl mcp` · [x] 3.6 docs · [x] 3.7 review
 - [x] ⛔ CHECKPOINT B (user, 2026-09-27) — người dùng báo checklist 5.B đạt với Claude Code thật qua `warp-bridge` (MCP Connected, session `root@draff3`)
 - [x] 4.1 recent_output · [x] 4.2 indicator · [x] 4.3 format
-- [ ] ⛔ CHECKPOINT C (user)
-- [x] Plan Phase 5 (D27–D32) · [ ] người dùng duyệt bảng phân loại
+- [x] ⛔ CHECKPOINT C (user, 2026-09-27) — người dùng báo test tay `recent_output` + indicator đạt
+- [x] Plan Phase 5 (D27–D32) · [x] người dùng duyệt (2026-09-27)
 - [ ] 5.1 protocol · [ ] 5.2 chống chạy chồng · [ ] 5.3 `visible.rs` · [ ] 5.4 gửi lệnh · [ ] 5.5 chờ block · [ ] 5.6 CLI · [ ] 5.7 MCP `exec_visible` · [ ] 5.8 bản release · [ ] 5.9 review · [ ] 5.10 format
 - [ ] ⛔ CHECKPOINT D (user, checklist 5.C)
 
@@ -1006,3 +1006,4 @@ bị coi là local). Chạy Warp build từ worktree: `cd ../warp-agent-bridge &
 - 2026-09-27 — Task 4.2: indicator trên pane header (D26): `agent_bridge_access`, `render_agent_bridge_indicator`, `render_agent_bridge_revoke_button`, `revoke_agent_bridge_access` trong `pane_impl.rs`; `TerminalAction::RevokeAgentBridgeAccess`; chữ `indicator_label`/`revoke_tooltip` trong `agent_bridge/messages.rs` (+1 test, và kiểm không nhắc "claude"). Test `agent_bridge`/`terminal::view::`/`pane_group`: 585 pass, 8 fail khi chạy song song đều pass khi chạy lại `--test-threads=1` (4 test `terminal::view` đã fail như vậy trước thay đổi này; test `ops`/`script` dùng `sh` thật nhạy với tải). Clippy 3 package sạch. Hiển thị thật để Checkpoint C.
 - 2026-09-27 — Task 4.3: `./script/format` chạy một lần; chỉ đổi định dạng trong 31 file của feature (rustfmt các file viết tay từ Phase 1–4). Không chạy lại test/lint sau format (AGENTS.md). **Chờ CHECKPOINT C** (người dùng test `recent_output` + indicator).
 - 2026-09-27 — Lập plan Phase 5 (chưa code): đối chiếu roadmap, phân loại 7 hạng mục (D27); khảo sát `Input::try_execute_command*`, `TerminalView::execute_command_or_set_pending`, driver agent SDK, `ShellCommandExecutor`, `script/linux/bundle --artifact warpctrl`; viết Task 5.1–5.10, bảng lock, checklist 5.C, CHECKPOINT D (D28–D32). CHECKPOINT C **chưa tick**: prompt của phiên này còn để placeholder kết quả checklist C. Chờ người dùng báo kết quả C và duyệt bảng phân loại.
+- 2026-09-27 — Checkpoint C hoàn tất (người dùng xác nhận test tay `recent_output` + indicator đạt). Người dùng duyệt plan Phase 5 và yêu cầu làm luôn.
