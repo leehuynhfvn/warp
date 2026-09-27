@@ -501,7 +501,8 @@ async fn commit_upload(
             | AgentBridgeError::Conflict(_)
             | AgentBridgeError::RemoteFailed(_)
             | AgentBridgeError::Executor(_)
-            | AgentBridgeError::Io(_) => false,
+            | AgentBridgeError::Io(_)
+            | AgentBridgeError::PolicyDenied(_) => false,
         };
         (error, scratch_may_remain)
     })

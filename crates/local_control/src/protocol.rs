@@ -897,6 +897,8 @@ pub enum ErrorCode {
     Timeout,
     /// A remote operation ran and failed; the message says why.
     RemoteOperationFailed,
+    /// Warp's agent-ops policy denied the write; the message says why.
+    PolicyDenied,
     Internal,
 }
 

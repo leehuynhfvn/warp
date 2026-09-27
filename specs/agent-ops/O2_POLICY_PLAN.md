@@ -727,7 +727,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 
 - [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
 - [x] 0.1 flag + hằng số
-- [x] 1.1 `policy.rs` · [ ] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
+- [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P1
 - [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
 - [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
@@ -791,3 +791,11 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   dependency. `cargo test -p warp --lib agent_bridge::policy`: 44 passed. `AGENTS_FILE`,
   `MAX_PENDING_APPROVALS_PER_SESSION`, `APPROVAL_PREVIEW_LINES` vẫn chưa dùng (Phase 2–4) — sẽ cần
   `#[allow(dead_code)]` tạm thời trước khi chạy clippy cuối Phase 1 (xem P22).
+- 2026-09-27 — Task 1.2 (Claude Sonnet 5): `ErrorCode::PolicyDenied` (`crates/local_control/src/
+  protocol.rs`, serde `policy_denied`) + `AgentBridgeError::PolicyDenied(String)` →
+  `"Denied by Warp's agent policy: {reason}"` (`app/src/agent_bridge/error.rs`), map sang
+  `ErrorCode::PolicyDenied`. Compiler chỉ ra đúng một match không tổng quát:
+  `app/src/agent_bridge/ops.rs::commit_upload` (`scratch_may_remain`) — xếp `PolicyDenied` vào
+  nhánh `false` (bị từ chối trước khi chạm script trên server nên không có gì để dọn). Test:
+  `error_tests.rs` (mã + message), `protocol_tests.rs::remote_error_codes_serialize_as_machine_codes`
+  (thêm case `policy_denied`). `cargo test -p warp -p local_control --lib`: pass.

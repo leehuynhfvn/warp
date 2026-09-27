@@ -57,6 +57,10 @@ fn every_error_maps_to_the_documented_code() {
             AgentBridgeError::Io("x".to_owned()),
             ErrorCode::RemoteOperationFailed,
         ),
+        (
+            AgentBridgeError::PolicyDenied("it is read-only for agents.".to_owned()),
+            ErrorCode::PolicyDenied,
+        ),
     ];
     for (error, code) in cases {
         assert_eq!(code_of(error.clone()), code, "{error:?}");
@@ -75,6 +79,15 @@ fn a_not_attached_message_names_the_session_and_tells_the_user_what_to_do() {
             .message
             .contains("Agent Bridge: Allow agents to control this session")
     );
+}
+
+#[test]
+fn a_policy_denied_message_quotes_the_reason_and_names_the_policy() {
+    let error = ControlError::from(AgentBridgeError::PolicyDenied(
+        "prod-1 is read-only for agents.".to_owned(),
+    ));
+    assert!(error.message.contains("Denied by Warp's agent policy"));
+    assert!(error.message.contains("prod-1 is read-only for agents."));
 }
 
 #[test]

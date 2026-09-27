@@ -713,6 +713,7 @@ fn remote_error_codes_serialize_as_machine_codes() {
         (ErrorCode::SessionBusy, "session_busy"),
         (ErrorCode::Timeout, "timeout"),
         (ErrorCode::RemoteOperationFailed, "remote_operation_failed"),
+        (ErrorCode::PolicyDenied, "policy_denied"),
     ] {
         assert_eq!(
             serde_json::to_value(code).expect("serializes"),

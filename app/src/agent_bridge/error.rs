@@ -50,6 +50,8 @@ pub(crate) enum AgentBridgeError {
     UnexpectedOutput(String),
     #[error("Local error: {0}")]
     Io(String),
+    #[error("Denied by Warp's agent policy: {0}")]
+    PolicyDenied(String),
 }
 
 impl From<AgentBridgeError> for ControlError {
@@ -74,6 +76,7 @@ impl From<AgentBridgeError> for ControlError {
             | AgentBridgeError::Executor(_)
             | AgentBridgeError::UnexpectedOutput(_)
             | AgentBridgeError::Io(_) => ErrorCode::RemoteOperationFailed,
+            AgentBridgeError::PolicyDenied(_) => ErrorCode::PolicyDenied,
         };
         ControlError::new(code, printable(&error.to_string()))
     }
