@@ -53,10 +53,14 @@ fn block_index_of(block_list: &BlockList, command: &str) -> BlockIndex {
 #[test]
 fn validation_matches_remote_exec() {
     assert_eq!(validate(&params("systemctl status nginx", Some(30))), Ok(()));
+    assert_eq!(validate(&params("printf 'a\tb'; echo done", None)), Ok(()));
     for invalid in [
         params("  ", None),
         params("echo\0", None),
         params(&"x".repeat(MAX_COMMAND_BYTES + 1), None),
+        params("true\nrm -rf /srv", None),
+        params("true\rreboot", None),
+        params("echo \u{1b}[2J", None),
         params("ls", Some(0)),
         params("ls", Some(EXEC_MAX_TIMEOUT_SECS + 1)),
         RemoteExecVisibleParams {

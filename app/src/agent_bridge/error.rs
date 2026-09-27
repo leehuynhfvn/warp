@@ -32,8 +32,8 @@ pub(crate) enum AgentBridgeError {
     )]
     SessionBusy,
     #[error(
-        "Another agent request is still running in this session, and a visible command cannot \
-         run alongside it. Wait for it to finish, then try again."
+        "Another agent request is still running in this session, and visible commands never \
+         run alongside other requests. Wait for it to finish, then try again."
     )]
     OperationRunning,
     #[error("The operation did not finish within {secs} seconds")]

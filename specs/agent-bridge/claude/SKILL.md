@@ -59,7 +59,7 @@ shell instead, where it runs as a block they watch. Use it only when:
 - the command may ask something the user should answer in the terminal (a confirmation, a
   passphrase).
 
-It enters the shell history on the server, and its output is what the terminal shows (stdout and
+The command must be a single line (join steps with `;` or `&&`). It enters the shell history on the server, and its output is what the terminal shows (stdout and
 stderr together, secrets hidden per the user's settings). Never send `exit`, `logout`, `exec …`,
 `su` or `sudo -i` with it: leaving the shell ends your access to the session. If the result says
 the command is **still running**, it keeps running in the terminal: tell the user, and read the

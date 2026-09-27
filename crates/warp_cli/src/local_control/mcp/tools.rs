@@ -640,7 +640,11 @@ fn tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "Shell command to type." },
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to type, on a single line (join commands \
+                                        with ';' or '&&')."
+                    },
                     "timeout_secs": {
                         "type": "integer", "minimum": 1, "maximum": 600,
                         "description": "Seconds to wait for the command before answering with \

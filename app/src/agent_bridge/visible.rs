@@ -25,7 +25,17 @@ use crate::terminal::model::session::SessionId;
 use crate::terminal::model::terminal_model::BlockIndex;
 
 pub(crate) fn validate(params: &RemoteExecVisibleParams) -> Result<(), AgentBridgeError> {
-    validate_command(&params.command, params.timeout_secs, params.agent.as_deref())
+    validate_command(&params.command, params.timeout_secs, params.agent.as_deref())?;
+    // The command is typed into a live shell. Without bracketed paste a newline is an Enter, so
+    // one request could run several commands, and none of their blocks would match the request.
+    if params.command.chars().any(|c| c.is_control() && c != '\t') {
+        return Err(AgentBridgeError::InvalidParams(
+            "a visible command must be a single line without control characters; join commands \
+             with ';' or '&&', or use exec for a script"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// How long to wait for the command before answering with what it has printed so far.
@@ -171,7 +181,7 @@ pub(crate) fn step(
             Err(AgentBridgeError::Executor(format!(
                 "the command did not start within {} seconds; the terminal may be busy or \
                  waiting for input",
-                elapsed.as_secs()
+                VISIBLE_START_TIMEOUT.min(timeout).as_secs()
             )))
         }
         Progress::Running if elapsed >= timeout => {

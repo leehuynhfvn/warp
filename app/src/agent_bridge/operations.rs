@@ -1,6 +1,9 @@
 //! The agent requests running in each session. A visible command is typed into the user's shell,
 //! which cancels any in-band command running there, so it must not overlap another request.
 //! Hidden requests may overlap each other: the in-band executor runs them one after another.
+//! A visible command that outlives its request is like any command the user runs: hidden
+//! requests then get `SessionBusy` from the in-band executor, and visible ones from the busy
+//! check before typing.
 
 use std::collections::HashMap;
 
