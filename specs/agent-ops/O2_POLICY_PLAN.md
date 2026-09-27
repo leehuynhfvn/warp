@@ -759,6 +759,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P18 | 2026-09-27 | "Allow this command in this session" lưu trong `Attachment` (RAM), khớp nguyên văn sau trim, chỉ cho lệnh; `[deny]` vẫn thắng | Roadmap liệt kê nút này; tự mất khi detach/hết hạn/rời `sudo -i` |
 | P19 | 2026-09-27 | Flag riêng `AgentOpsPolicy` (cargo feature `agent_ops_policy`); tắt = y hệt O1 | Patch sau feature flag (P6 của roadmap); không đổi hành vi người đang dùng O1 |
 | P20 | 2026-09-27 | Ba checkpoint: P1 (CLI, Allow/Deny) → P2 (UI duyệt) → P3 (pairing) | Bắt lỗi wiring trước khi làm UI; pairing tách riêng để O2 lõi dùng được sớm |
+| P21 | 2026-09-27 | Phase 0 (chỉ Task 0.1) không chạy clippy 3 package cuối phase, chỉ `cargo check` như mục 4 (Phase 0) đã nêu; clippy+format thật sự chạy ở cuối Phase 1 | Hằng số `APPROVAL_*`/`POLICY_FILE`/`AGENTS_FILE`/`MAX_PENDING_APPROVALS_PER_SESSION` thêm ở 0.1 chưa được dùng tới Task 1.1 → `cargo clippy -D warnings` báo `dead_code` là lỗi thật, không phải lỗi code; mục 0.8 ("cuối mỗi Phase") là quy tắc chung, còn văn bản riêng của Phase 0 chỉ yêu cầu `cargo check` — theo văn bản riêng, cụ thể hơn |
 
 ### Nhật ký
 
