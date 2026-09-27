@@ -8,9 +8,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
-    ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams, RemoteExecResult,
-    RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult,
-    RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
+    APPROVAL_TIMEOUT_SECS, ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams,
+    RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams,
+    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
     RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult, RemoteSessionSummary,
     WriteExpectation,
 };
@@ -26,6 +26,11 @@ const AGENT_NAME: &str = "warpctrl-cli";
 /// How long the client waits beyond the command's own timeout: the app waits a little longer than
 /// the timeout itself before it answers.
 pub(super) const EXEC_CLIENT_MARGIN: Duration = Duration::from_secs(30);
+
+/// Added unconditionally to the wait for every write (`exec`, `exec --visible`, `write`), so a
+/// client does not give up before the user has had the full agent-ops approval window to answer
+/// (P12 of the O2 plan). The client cannot know in advance whether the policy will ask.
+pub(super) const APPROVAL_CLIENT_MARGIN: Duration = Duration::from_secs(APPROVAL_TIMEOUT_SECS);
 
 /// Reading and writing a file are several remote commands that only run while the shell is idle.
 pub(super) const FILE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -203,7 +208,7 @@ fn run_exec(args: RemoteExecArgs, output_format: OutputFormat) -> Result<u8, Con
         timeout_secs: Some(args.timeout_secs),
         agent: Some(AGENT_NAME.to_owned()),
     };
-    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
     let data = send_action(&args.target, ActionKind::RemoteExec, params, wait)?;
     let result: RemoteExecResult = decode(data.clone(), "command result")?;
     print_result(&data, output_format, || {
@@ -219,7 +224,7 @@ fn run_exec_visible(args: RemoteExecArgs, output_format: OutputFormat) -> Result
         timeout_secs: Some(args.timeout_secs),
         agent: Some(AGENT_NAME.to_owned()),
     };
-    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
     let data = send_action(&args.target, ActionKind::RemoteExecVisible, params, wait)?;
     let result: RemoteExecVisibleResult = decode(data.clone(), "command result")?;
     print_result(&data, output_format, || {
@@ -305,7 +310,7 @@ fn run_write(args: RemoteWriteArgs, output_format: OutputFormat) -> Result<u8, C
         &args.target,
         ActionKind::RemoteFileWrite,
         params,
-        FILE_CLIENT_TIMEOUT,
+        FILE_CLIENT_TIMEOUT + APPROVAL_CLIENT_MARGIN,
     )?;
     let result: RemoteFileWriteResult = decode(data.clone(), "write result")?;
     print_result(&data, output_format, || {

@@ -22,8 +22,9 @@ use super::format::{
 use super::jsonrpc::{McpHandler, ToolResult};
 use super::redact::Redactor;
 use crate::local_control::remote::{
-    EXEC_CLIENT_MARGIN, EXEC_DEFAULT_TIMEOUT_SECS, FILE_CLIENT_TIMEOUT, MAX_WRITE_BYTES,
-    RECENT_DEFAULT_COUNT, RECENT_MAX_COUNT, SESSIONS_CLIENT_TIMEOUT, decode, render_recent,
+    APPROVAL_CLIENT_MARGIN, EXEC_CLIENT_MARGIN, EXEC_DEFAULT_TIMEOUT_SECS, FILE_CLIENT_TIMEOUT,
+    MAX_WRITE_BYTES, RECENT_DEFAULT_COUNT, RECENT_MAX_COUNT, SESSIONS_CLIENT_TIMEOUT, decode,
+    render_recent,
 };
 
 /// Audit name when the client does not say who it is.
@@ -174,7 +175,7 @@ impl<T: ControlTransport> Tools<T> {
             timeout_secs: Some(timeout_secs),
             agent: Some(self.agent.clone()),
         };
-        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
         let result: RemoteExecResult =
             self.call(ActionKind::RemoteExec, params, Some(&session_id), wait)?;
         Ok(render_exec(&result))
@@ -189,7 +190,7 @@ impl<T: ControlTransport> Tools<T> {
             timeout_secs: Some(timeout_secs),
             agent: Some(self.agent.clone()),
         };
-        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN;
+        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
         let result: RemoteExecVisibleResult = self.call(
             ActionKind::RemoteExecVisible,
             params,
@@ -420,7 +421,7 @@ impl<T: ControlTransport> Tools<T> {
             ActionKind::RemoteFileWrite,
             params,
             Some(session_id),
-            FILE_CLIENT_TIMEOUT,
+            FILE_CLIENT_TIMEOUT + APPROVAL_CLIENT_MARGIN,
         )?;
         if result.sha256 != sha256_hex(content) {
             return Err(format!(

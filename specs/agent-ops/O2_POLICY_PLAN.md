@@ -727,7 +727,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 
 - [x] Plan v1 (2026-09-27) · [x] Plan v2 — chốt quyết định (2026-09-27)
 - [x] 0.1 flag + hằng số
-- [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [ ] 1.3 `authorize` Allow/Deny · [ ] 1.4 timeout client · [ ] clippy + format
+- [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [x] 1.3 `authorize` Allow/Deny · [x] 1.4 timeout client · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P1
 - [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
 - [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
@@ -799,3 +799,33 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   nhánh `false` (bị từ chối trước khi chạm script trên server nên không có gì để dọn). Test:
   `error_tests.rs` (mã + message), `protocol_tests.rs::remote_error_codes_serialize_as_machine_codes`
   (thêm case `policy_denied`). `cargo test -p warp -p local_control --lib`: pass.
+- 2026-09-28 — Task 1.3 (Claude Sonnet 5): `authorize`/`deny_authorization`/`evaluate_policy`
+  (`handlers/remote.rs`, mục 3.6) nối vào `start` (Exec/Write; Read bỏ qua — L0) và `exec_visible`.
+  `begin_operation` tách khỏi `start`/`exec_visible` thành `run_hidden_operation`/
+  `run_visible_operation`, chỉ gọi **sau** Allow (P3) — hai hàm này tự phát mọi lỗi (kể cả lỗi
+  `begin_operation`) qua `sender`, vì `start`/`exec_visible` đã trả `receiver` cho caller trước khi
+  hàng nền chạy xong. Đổi hình dạng closure so với gợi ý 3.6: một `continue_with:
+  FnOnce(Result<Option<&'static str>, AgentBridgeError>, &mut ModelContext<..>)` thay vì
+  `proceed`/`fail` riêng — hai closure riêng đều cần sở hữu `oneshot::Sender` (không `Clone`) nên
+  không compile; mục 3.6 cho phép đổi hình dạng khi `'static` gây khó (lý do ghi ngay trong
+  doc-comment của `authorize`, không thêm mục Quyết định riêng vì không đổi thiết kế, chỉ đổi hình
+  dạng closure). Ask (Phase 2 mới có) tạm là Deny("approval is not available yet"). Audit: thêm
+  `policy_decision`/`policy_reason` vào `AuditRecord` (`audit.rs`) và `Target.policy_decision`
+  (`ops.rs`) để bản ghi "started" mang nhãn `allow`; request bị Deny chỉ có một dòng audit qua
+  `ops::audit_policy_denied` (không có dòng "started" mồ côi — P13). Test: không có harness nào
+  trong repo dựng được một session `WarpifiedRemote` thật để gọi qua HTTP tới `authorize` (mọi test
+  `remote_tests.rs` hiện có dừng ở `StaleTarget`/`InvalidParams`, trước `check_access`) — viết test
+  trực tiếp cho phần thuần của `handlers/remote.rs`: `Operation::policy_subject()` (Read → `None`,
+  Exec/Write → `Some`) và `evaluate_policy()` với `$HOME` tạm (`#[serial_test::serial]`, lưu/khôi
+  phục `HOME` như `git_credentials_tests.rs`). Logic `Policy::evaluate` đã có 44 test riêng ở 1.1.
+  `cargo test -p warp -p warp_cli --lib -- agent_bridge local_control`: 104 passed. `cargo check`
+  (thường và `--features agent_ops_policy`): qua (còn 3 warning dead-code đã biết, xem P22).
+- 2026-09-28 — Task 1.4 (Claude Sonnet 5): `APPROVAL_CLIENT_MARGIN = Duration::from_secs(
+  local_control::protocol::APPROVAL_TIMEOUT_SECS)` (`warp_cli/src/local_control/remote.rs`), cộng
+  vô điều kiện vào `wait` của `exec`/`exec --visible`/`write` — CLI (`remote.rs`) và MCP
+  (`mcp/tools.rs`: `exec`, `exec_visible`, `write_raw` dùng chung cho `write_file`/`edit_file`).
+  `read`/`read_raw`/`recent`/`sessions` (L0) giữ nguyên timeout. Sửa 3 assertion timeout có sẵn
+  trong `tools_tests.rs` + thêm assertion timeout cho `write_file_creates_a_missing_file`. `cargo
+  test -p warp -p warp_cli --lib -- mcp::tools`: 24 passed (chạy riêng `-p warp_cli` build lỗi
+  `yeslogic-fontconfig-sys`/`pkg-config` thiếu `fontconfig.pc` — không liên quan thay đổi này; né
+  bằng cách build kèm `-p warp`).

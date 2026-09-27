@@ -241,7 +241,10 @@ fn exec_sends_the_command_and_renders_the_result() {
         sent.params,
         json!({ "command": "id -un", "timeout_secs": 5, "agent": "claude-code" })
     );
-    assert_eq!(sent.timeout, Duration::from_secs(5) + EXEC_CLIENT_MARGIN);
+    assert_eq!(
+        sent.timeout,
+        Duration::from_secs(5) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN
+    );
 }
 
 #[test]
@@ -361,6 +364,11 @@ fn write_file_creates_a_missing_file() {
     let params = write_params(&tools.transport.calls[1]);
     assert_eq!(params.expectation, WriteExpectation::MustNotExist);
     assert_eq!(params.content_base64, BASE64.encode("hello\n"));
+    assert_eq!(
+        tools.transport.calls[1].timeout,
+        FILE_CLIENT_TIMEOUT + APPROVAL_CLIENT_MARGIN,
+        "a write waits the full approval window on top of the file timeout (P12 of the O2 plan)"
+    );
 }
 
 #[test]
@@ -802,7 +810,10 @@ fn exec_visible_sends_the_command_without_a_directory_and_renders_the_block() {
         json!({ "command": "systemctl status nginx", "timeout_secs": 30, "agent": "claude-code" })
     );
     assert_eq!(sent.session.as_deref(), Some("Pane 7"));
-    assert_eq!(sent.timeout, Duration::from_secs(30) + EXEC_CLIENT_MARGIN);
+    assert_eq!(
+        sent.timeout,
+        Duration::from_secs(30) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN
+    );
 }
 
 #[test]
@@ -839,7 +850,9 @@ fn exec_visible_reports_a_command_that_is_still_running() {
     );
     assert_eq!(
         tools.transport.calls[0].timeout,
-        Duration::from_secs(EXEC_DEFAULT_TIMEOUT_SECS.into()) + EXEC_CLIENT_MARGIN
+        Duration::from_secs(EXEC_DEFAULT_TIMEOUT_SECS.into())
+            + EXEC_CLIENT_MARGIN
+            + APPROVAL_CLIENT_MARGIN
     );
 }
 
