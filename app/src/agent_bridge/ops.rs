@@ -233,30 +233,40 @@ pub(crate) fn validate_agent(agent: Option<&str>) -> Result<(), AgentBridgeError
 }
 
 fn validate_exec(params: &RemoteExecParams) -> Result<(), AgentBridgeError> {
-    validate_agent(params.agent.as_deref())?;
-    if params.command.trim().is_empty() {
+    validate_command(&params.command, params.timeout_secs, params.agent.as_deref())?;
+    params.cwd.as_deref().map_or(Ok(()), validate_cwd)
+}
+
+/// Checks the parameters `remote.exec` and `remote.exec.visible` share.
+pub(crate) fn validate_command(
+    command: &str,
+    timeout_secs: Option<u32>,
+    agent: Option<&str>,
+) -> Result<(), AgentBridgeError> {
+    validate_agent(agent)?;
+    if command.trim().is_empty() {
         return Err(AgentBridgeError::InvalidParams(
             "command is empty".to_owned(),
         ));
     }
-    if params.command.len() > MAX_COMMAND_BYTES {
+    if command.len() > MAX_COMMAND_BYTES {
         return Err(AgentBridgeError::InvalidParams(format!(
             "command is longer than {MAX_COMMAND_BYTES} bytes; write a script file instead"
         )));
     }
-    if params.command.contains('\0') {
+    if command.contains('\0') {
         return Err(AgentBridgeError::InvalidParams(
             "command contains a NUL byte".to_owned(),
         ));
     }
-    if let Some(timeout_secs) = params.timeout_secs
+    if let Some(timeout_secs) = timeout_secs
         && !(1..=EXEC_MAX_TIMEOUT_SECS).contains(&timeout_secs)
     {
         return Err(AgentBridgeError::InvalidParams(format!(
             "timeout_secs must be between 1 and {EXEC_MAX_TIMEOUT_SECS}"
         )));
     }
-    params.cwd.as_deref().map_or(Ok(()), validate_cwd)
+    Ok(())
 }
 
 fn validate_write(params: &RemoteFileWriteParams) -> Result<(), AgentBridgeError> {

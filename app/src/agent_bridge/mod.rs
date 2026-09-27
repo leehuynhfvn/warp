@@ -11,6 +11,7 @@ pub(crate) mod ops;
 pub(crate) mod path;
 pub(crate) mod recent;
 pub(crate) mod script;
+pub(crate) mod visible;
 
 use std::time::Duration;
 
@@ -43,6 +44,19 @@ pub(crate) const RECENT_OUTPUT_MAX_COUNT: u32 = 10;
 
 /// Cap on the output of each block returned by `remote.output.recent`.
 pub(crate) const RECENT_OUTPUT_MAX_BYTES: usize = 16 * 1024;
+
+/// Cap on the output returned by `remote.exec.visible`, as much as `remote.exec` returns for
+/// stdout and stderr together.
+pub(crate) const VISIBLE_OUTPUT_MAX_BYTES: usize = 32 * 1024;
+
+/// How often a visible command's block is checked, first while it may still be a quick command
+/// and then once it has proven slow.
+pub(crate) const VISIBLE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+pub(crate) const VISIBLE_SLOW_POLL_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const VISIBLE_FAST_POLL_WINDOW: Duration = Duration::from_secs(10);
+
+/// How long a visible command may take to show up in a block before the request fails.
+pub(crate) const VISIBLE_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long an attached session may go unused before access is withdrawn.
 pub(crate) const ATTACH_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
