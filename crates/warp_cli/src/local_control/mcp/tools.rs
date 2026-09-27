@@ -6,9 +6,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
     ActionKind, ControlError, RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams,
-    RemoteExecVisibleResult, RemoteFileReadParams,
-    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
-    RemoteOutputRecentResult, RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
+    RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams,
+    RemoteFileWriteResult, RemoteOutputRecentParams, RemoteOutputRecentResult,
+    RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -190,8 +190,12 @@ impl<T: ControlTransport> Tools<T> {
             agent: Some(self.agent.clone()),
         };
         let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN;
-        let result: RemoteExecVisibleResult =
-            self.call(ActionKind::RemoteExecVisible, params, Some(&session_id), wait)?;
+        let result: RemoteExecVisibleResult = self.call(
+            ActionKind::RemoteExecVisible,
+            params,
+            Some(&session_id),
+            wait,
+        )?;
         Ok(render_exec_visible(&result))
     }
 

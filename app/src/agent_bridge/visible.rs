@@ -4,9 +4,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ::local_control::protocol::{RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteSessionRef};
-
-
+use ::local_control::protocol::{
+    RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteSessionRef,
+};
 use instant::Instant;
 use parking_lot::FairMutex;
 use warpui::r#async::Timer;
@@ -25,7 +25,11 @@ use crate::terminal::model::session::SessionId;
 use crate::terminal::model::terminal_model::BlockIndex;
 
 pub(crate) fn validate(params: &RemoteExecVisibleParams) -> Result<(), AgentBridgeError> {
-    validate_command(&params.command, params.timeout_secs, params.agent.as_deref())?;
+    validate_command(
+        &params.command,
+        params.timeout_secs,
+        params.agent.as_deref(),
+    )?;
     // The command is typed into a live shell. Without bracketed paste a newline is an Enter, so
     // one request could run several commands, and none of their blocks would match the request.
     if params.command.chars().any(|c| c.is_control() && c != '\t') {
@@ -40,7 +44,12 @@ pub(crate) fn validate(params: &RemoteExecVisibleParams) -> Result<(), AgentBrid
 
 /// How long to wait for the command before answering with what it has printed so far.
 pub(crate) fn timeout(params: &RemoteExecVisibleParams) -> Duration {
-    Duration::from_secs(params.timeout_secs.unwrap_or(EXEC_DEFAULT_TIMEOUT_SECS).into())
+    Duration::from_secs(
+        params
+            .timeout_secs
+            .unwrap_or(EXEC_DEFAULT_TIMEOUT_SECS)
+            .into(),
+    )
 }
 
 /// The pause before the next look at the block, `elapsed` after the command was sent.
@@ -115,7 +124,10 @@ impl CommandWatch {
         block_list.block_with_id(id).map(capture_block)
     }
 
-    fn block<'a>(&mut self, block_list: &'a BlockList) -> Result<Option<&'a Block>, AgentBridgeError> {
+    fn block<'a>(
+        &mut self,
+        block_list: &'a BlockList,
+    ) -> Result<Option<&'a Block>, AgentBridgeError> {
         if let Some(id) = &self.block_id {
             return block_list.block_with_id(id).map(Some).ok_or_else(|| {
                 AgentBridgeError::Executor(
@@ -210,8 +222,11 @@ pub(crate) fn result(session: RemoteSessionRef, outcome: Outcome) -> RemoteExecV
         alt_screen,
         duration,
     } = outcome;
-    let (output, truncated) =
-        limit_output(captured.output, captured.output_rows, VISIBLE_OUTPUT_MAX_BYTES);
+    let (output, truncated) = limit_output(
+        captured.output,
+        captured.output_rows,
+        VISIBLE_OUTPUT_MAX_BYTES,
+    );
     RemoteExecVisibleResult {
         session,
         command: captured.command,

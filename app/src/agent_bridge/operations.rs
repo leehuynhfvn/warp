@@ -39,7 +39,11 @@ pub(crate) struct Operations {
 
 impl Operations {
     /// Registers an operation in `id`, or fails if it would overlap one it must not.
-    pub(crate) fn begin(&mut self, id: SessionId, kind: OperationKind) -> Result<(), AgentBridgeError> {
+    pub(crate) fn begin(
+        &mut self,
+        id: SessionId,
+        kind: OperationKind,
+    ) -> Result<(), AgentBridgeError> {
         let in_flight = self.by_session.get(&id).copied().unwrap_or_default();
         let is_free = match kind {
             OperationKind::Hidden => !in_flight.visible,

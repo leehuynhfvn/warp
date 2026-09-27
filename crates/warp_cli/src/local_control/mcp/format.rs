@@ -1,7 +1,7 @@
 //! Text of the tool results, shaped like the output of Claude Code's own tools.
 use local_control::protocol::{
-    RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary,
-    RemoteStream,
+    RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteSessionKind, RemoteSessionRef,
+    RemoteSessionSummary, RemoteStream,
 };
 
 /// Longer lines are cut, as Claude Code's Read tool does.

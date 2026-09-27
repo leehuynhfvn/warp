@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, HashSet};
 use clap_complete::aot::Shell;
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock,
-    RemoteExecResult, RemoteExecVisibleResult, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionKind,
-    RemoteSessionRef, RemoteSessionSummary, RemoteStream, SyncChange, SyncConfirmation,
-    SyncDifference, SyncPathStatus, SyncRemoteConflicts, SyncResult, SyncSessionSummary,
-    SyncSkippedEntry, SyncUploadSummary,
+    RemoteExecResult, RemoteExecVisibleResult, RemoteFileWriteResult, RemoteOutputRecentResult,
+    RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary, RemoteStream, SyncChange,
+    SyncConfirmation, SyncDifference, SyncPathStatus, SyncRemoteConflicts, SyncResult,
+    SyncSessionSummary, SyncSkippedEntry, SyncUploadSummary,
 };
 use serde_json::json;
 
@@ -1264,7 +1264,15 @@ fn remote_exec_needs_a_command_and_defaults_to_two_minutes() {
 #[test]
 fn remote_exec_visible_cannot_be_given_a_directory() {
     let args = ControlArgs::try_parse_from([
-        "warpctrl", "remote", "exec", "--visible", "--timeout", "5", "--", "cd", "/etc",
+        "warpctrl",
+        "remote",
+        "exec",
+        "--visible",
+        "--timeout",
+        "5",
+        "--",
+        "cd",
+        "/etc",
     ])
     .expect("remote exec --visible parses");
     let ControlCommand::Remote(RemoteCommand::Exec(args)) = args.command else {
@@ -1276,7 +1284,14 @@ fn remote_exec_visible_cannot_be_given_a_directory() {
 
     assert!(
         ControlArgs::try_parse_from([
-            "warpctrl", "remote", "exec", "--visible", "--cwd", "/etc", "--", "pwd",
+            "warpctrl",
+            "remote",
+            "exec",
+            "--visible",
+            "--cwd",
+            "/etc",
+            "--",
+            "pwd",
         ])
         .is_err()
     );
@@ -1424,7 +1439,11 @@ fn the_exec_exit_code_is_the_remote_one_kept_in_range() {
     assert_eq!(exec_exit_code(&exec_result(1000)), 255);
 }
 
-fn visible_result(exit_code: Option<i32>, alt_screen: bool, truncated: bool) -> RemoteExecVisibleResult {
+fn visible_result(
+    exit_code: Option<i32>,
+    alt_screen: bool,
+    truncated: bool,
+) -> RemoteExecVisibleResult {
     RemoteExecVisibleResult {
         session: RemoteSessionRef {
             session_id: "12".to_owned(),
@@ -1448,7 +1467,10 @@ fn a_visible_command_exits_with_its_code_or_124_while_it_runs() {
     use remote::visible_exit_code;
     assert_eq!(visible_exit_code(&visible_result(Some(0), false, false)), 0);
     assert_eq!(visible_exit_code(&visible_result(Some(3), false, false)), 3);
-    assert_eq!(visible_exit_code(&visible_result(Some(-1), false, false)), 0);
+    assert_eq!(
+        visible_exit_code(&visible_result(Some(-1), false, false)),
+        0
+    );
     assert_eq!(visible_exit_code(&visible_result(None, false, false)), 124);
 }
 

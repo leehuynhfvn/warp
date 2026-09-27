@@ -52,7 +52,10 @@ fn block_index_of(block_list: &BlockList, command: &str) -> BlockIndex {
 
 #[test]
 fn validation_matches_remote_exec() {
-    assert_eq!(validate(&params("systemctl status nginx", Some(30))), Ok(()));
+    assert_eq!(
+        validate(&params("systemctl status nginx", Some(30))),
+        Ok(())
+    );
     assert_eq!(validate(&params("printf 'a\tb'; echo done", None)), Ok(()));
     for invalid in [
         params("  ", None),
@@ -108,12 +111,22 @@ fn the_command_block_is_found_at_or_after_the_start() {
 
     let found = find_command_block(block_list, BlockIndex(0), session(), "uptime")
         .expect("an earlier uptime exists");
-    assert!(found.output_grid().content_summary(10, 10, false).contains("old"));
+    assert!(
+        found
+            .output_grid()
+            .content_summary(10, 10, false)
+            .contains("old")
+    );
 
     let start = block_index_of(block_list, "ls");
     let found = find_command_block(block_list, start, session(), " uptime ")
         .expect("the later uptime is found despite surrounding spaces");
-    assert!(found.output_grid().content_summary(10, 10, false).contains("new"));
+    assert!(
+        found
+            .output_grid()
+            .content_summary(10, 10, false)
+            .contains("new")
+    );
 }
 
 #[test]
@@ -122,16 +135,16 @@ fn blocks_of_other_sessions_and_other_commands_are_not_taken() {
     let block_list = model.block_list();
     assert!(find_command_block(block_list, BlockIndex(0), session(), "local_uptime").is_none());
     assert!(find_command_block(block_list, BlockIndex(0), session(), "id").is_none());
-    assert!(
-        find_command_block(block_list, BlockIndex(0), SessionId::from(99), "whoami").is_none()
-    );
+    assert!(find_command_block(block_list, BlockIndex(0), SessionId::from(99), "whoami").is_none());
 }
 
 #[test]
 fn the_active_prompt_block_is_not_the_command_block() {
     let model = model_with_blocks(&[("ls", "a")]);
     let block_list = model.block_list();
-    assert!(find_command_block(block_list, block_list.active_block_index(), session(), "").is_none());
+    assert!(
+        find_command_block(block_list, block_list.active_block_index(), session(), "").is_none()
+    );
 }
 
 #[test]
@@ -219,7 +232,12 @@ fn session_ref() -> RemoteSessionRef {
 fn a_finished_result_carries_the_exit_code() {
     let result = result(
         session_ref(),
-        outcome(captured("error: oops".to_owned(), 1), false, false, Duration::from_millis(1500)),
+        outcome(
+            captured("error: oops".to_owned(), 1),
+            false,
+            false,
+            Duration::from_millis(1500),
+        ),
     );
     assert_eq!(result.exit_code, Some(2));
     assert!(!result.still_running);
@@ -233,7 +251,12 @@ fn a_finished_result_carries_the_exit_code() {
 fn a_running_result_has_no_exit_code() {
     let result = result(
         session_ref(),
-        outcome(captured("waiting".to_owned(), 1), true, true, Duration::from_secs(5)),
+        outcome(
+            captured("waiting".to_owned(), 1),
+            true,
+            true,
+            Duration::from_secs(5),
+        ),
     );
     assert_eq!(result.exit_code, None);
     assert!(result.still_running);

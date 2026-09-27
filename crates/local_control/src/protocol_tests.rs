@@ -606,8 +606,8 @@ fn remote_params_roundtrip_and_omit_absent_options() {
         timeout_secs: Some(30),
         agent: Some("claude-code".to_owned()),
     };
-    let action =
-        Action::with_params(ActionKind::RemoteExecVisible, full_visible.clone()).expect("serializes");
+    let action = Action::with_params(ActionKind::RemoteExecVisible, full_visible.clone())
+        .expect("serializes");
     assert_eq!(
         action
             .params_as::<RemoteExecVisibleParams>()

@@ -74,7 +74,8 @@ pub(crate) fn capture_block(block: &Block) -> CapturedBlock {
 }
 
 pub(crate) fn command_block(block: CapturedBlock) -> RemoteCommandBlock {
-    let (output, truncated) = limit_output(block.output, block.output_rows, RECENT_OUTPUT_MAX_BYTES);
+    let (output, truncated) =
+        limit_output(block.output, block.output_rows, RECENT_OUTPUT_MAX_BYTES);
     RemoteCommandBlock {
         command: block.command,
         exit_code: block.exit_code,

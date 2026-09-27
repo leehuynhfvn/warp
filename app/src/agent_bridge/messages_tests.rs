@@ -86,7 +86,5 @@ fn an_appimage_is_set_up_by_its_file_not_its_mount_point() {
         setup_executable(Some(PathBuf::new()), mounted).expect("an empty variable is ignored"),
         PathBuf::from("/tmp/.mount_WarpAbc123/warp-oss")
     );
-    assert!(
-        setup_executable(None, || Err(io::Error::other("no executable"))).is_err()
-    );
+    assert!(setup_executable(None, || Err(io::Error::other("no executable"))).is_err());
 }

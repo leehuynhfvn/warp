@@ -9,9 +9,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
     ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams, RemoteExecResult,
-    RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
-    RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult,
-    RemoteSessionSummary, WriteExpectation,
+    RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult,
+    RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
+    RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult, RemoteSessionSummary,
+    WriteExpectation,
 };
 
 use crate::agent::OutputFormat;
@@ -404,9 +405,7 @@ pub(super) fn terminal_safe(text: &str) -> String {
 pub(super) fn render_visible_status(result: &RemoteExecVisibleResult) -> String {
     let mut status = match (result.exit_code, result.alt_screen) {
         (Some(exit_code), _) => format!("warpctrl: exit {exit_code}"),
-        (None, true) => {
-            "warpctrl: still running in the terminal (full-screen program)".to_owned()
-        }
+        (None, true) => "warpctrl: still running in the terminal (full-screen program)".to_owned(),
         (None, false) => "warpctrl: still running in the terminal".to_owned(),
     };
     if result.truncated {

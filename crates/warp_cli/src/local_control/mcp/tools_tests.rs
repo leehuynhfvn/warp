@@ -757,7 +757,11 @@ fn recent_output_defaults_to_three_commands_of_the_attached_session() {
     );
 }
 
-fn visible_result(exit_code: Option<i32>, alt_screen: bool, output: &str) -> RemoteExecVisibleResult {
+fn visible_result(
+    exit_code: Option<i32>,
+    alt_screen: bool,
+    output: &str,
+) -> RemoteExecVisibleResult {
     RemoteExecVisibleResult {
         session: session_ref(),
         command: "systemctl status nginx".to_owned(),
@@ -817,10 +821,22 @@ fn exec_visible_reports_a_command_that_is_still_running() {
     );
 
     assert!(!result.is_error);
-    assert!(result.text.starts_with("still running after 1.2s"), "{}", result.text);
-    assert!(result.text.contains("full-screen program"), "{}", result.text);
+    assert!(
+        result.text.starts_with("still running after 1.2s"),
+        "{}",
+        result.text
+    );
+    assert!(
+        result.text.contains("full-screen program"),
+        "{}",
+        result.text
+    );
     assert!(result.text.contains("recent_output"), "{}", result.text);
-    assert!(result.text.contains("--- output so far ---\nroot:x:0:0\n"), "{}", result.text);
+    assert!(
+        result.text.contains("--- output so far ---\nroot:x:0:0\n"),
+        "{}",
+        result.text
+    );
     assert_eq!(
         tools.transport.calls[0].timeout,
         Duration::from_secs(EXEC_DEFAULT_TIMEOUT_SECS.into()) + EXEC_CLIENT_MARGIN
@@ -854,7 +870,9 @@ fn exec_visible_passes_a_busy_shell_through_as_an_error() {
     );
     assert!(result.is_error);
     assert!(
-        result.text.starts_with("Invalid arguments for exec_visible"),
+        result
+            .text
+            .starts_with("Invalid arguments for exec_visible"),
         "{}",
         result.text
     );

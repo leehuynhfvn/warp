@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use ::local_control::protocol::{
     Action, RemoteAccess, RemoteAttachment, RemoteExecParams, RemoteExecVisibleParams,
-    RemoteFileReadParams,
-    RemoteFileWriteParams, RemoteOutputRecentParams, RemoteSessionKind, RemoteSessionListResult,
-    RemoteSessionRef, RemoteSessionSummary, RequestEnvelope, SessionTarget, TargetSelector,
+    RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams, RemoteSessionKind,
+    RemoteSessionListResult, RemoteSessionRef, RemoteSessionSummary, RequestEnvelope,
+    SessionTarget, TargetSelector,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode};
 use futures::channel::oneshot;
@@ -125,7 +125,9 @@ pub(crate) fn start(
     check_access(&session, operation.needed_access(), ctx)?;
     let id = session.id();
     AgentBridgeModel::handle(ctx)
-        .update(ctx, |model, _| model.begin_operation(id, OperationKind::Hidden))
+        .update(ctx, |model, _| {
+            model.begin_operation(id, OperationKind::Hidden)
+        })
         .map_err(ControlError::from)?;
 
     let target = target(snapshot.session_id, &session, snapshot.cwd, request);
@@ -197,7 +199,9 @@ pub(crate) fn exec_visible(
     check_access(&session, Access::Full, ctx)?;
     let id = session.id();
     AgentBridgeModel::handle(ctx)
-        .update(ctx, |model, _| model.begin_operation(id, OperationKind::Visible))
+        .update(ctx, |model, _| {
+            model.begin_operation(id, OperationKind::Visible)
+        })
         .map_err(ControlError::from)?;
 
     let target = target(
@@ -262,7 +266,10 @@ fn send_visible_command(
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<CommandWatch, AgentBridgeError> {
     let active = snapshot.terminal_view.read(ctx, |view, ctx| {
-        view.active_session().as_ref(ctx).session(ctx).map(|session| session.id())
+        view.active_session()
+            .as_ref(ctx)
+            .session(ctx)
+            .map(|session| session.id())
     });
     if active != Some(id) {
         return Err(AgentBridgeError::Executor(

@@ -9,9 +9,8 @@ use std::time::Duration;
 use ::local_control::ActionKind;
 use ::local_control::protocol::{
     RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult,
-    RemoteFileReadParams, RemoteFileReadResult,
-    RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentResult, RemoteSessionRef,
-    RemoteStream, WriteExpectation,
+    RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult,
+    RemoteOutputRecentResult, RemoteSessionRef, RemoteStream, WriteExpectation,
 };
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -234,7 +233,11 @@ pub(crate) fn validate_agent(agent: Option<&str>) -> Result<(), AgentBridgeError
 }
 
 fn validate_exec(params: &RemoteExecParams) -> Result<(), AgentBridgeError> {
-    validate_command(&params.command, params.timeout_secs, params.agent.as_deref())?;
+    validate_command(
+        &params.command,
+        params.timeout_secs,
+        params.agent.as_deref(),
+    )?;
     params.cwd.as_deref().map_or(Ok(()), validate_cwd)
 }
 
@@ -559,7 +562,11 @@ pub(crate) struct VisibleAudit(Audit);
 
 impl VisibleAudit {
     pub(crate) fn begin(target: &Target, params: &RemoteExecVisibleParams) -> Self {
-        let mut audit = Audit::begin(target, ActionKind::RemoteExecVisible, params.agent.as_deref());
+        let mut audit = Audit::begin(
+            target,
+            ActionKind::RemoteExecVisible,
+            params.agent.as_deref(),
+        );
         audit.record.command = Some(params.command.clone());
         audit.record.cwd = target.cwd.clone();
         Self(audit)

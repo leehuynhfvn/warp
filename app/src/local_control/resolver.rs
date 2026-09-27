@@ -2,10 +2,11 @@
 use ::local_control::protocol::{
     ActionNameParams, ActionParameterSpec, BindingNameParams, BooleanValueParams, ColorValueParams,
     DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams, NamespaceParams,
-    PageQueryParams, PaneTarget, QueryParams, RemoteExecParams, RemoteExecVisibleParams, RemoteFileReadParams,
-    RemoteFileWriteParams, RemoteOutputRecentParams, RenameParams, ResizeParams, SessionTarget,
-    SyncPathParams, SyncPendingParams, SyncStatusParams, TabActivateParams, TabCloseParams,
-    TabCreateParams, TabTarget, TargetSelector, TextParams, ThemeNameParams, WindowTarget,
+    PageQueryParams, PaneTarget, QueryParams, RemoteExecParams, RemoteExecVisibleParams,
+    RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams, RenameParams,
+    ResizeParams, SessionTarget, SyncPathParams, SyncPendingParams, SyncStatusParams,
+    TabActivateParams, TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams,
+    ThemeNameParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, TypedActionView, ViewHandle, WindowId};
@@ -46,9 +47,7 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
         ActionParameterSpec::PageQuery => parse_params::<PageQueryParams>(action),
         ActionParameterSpec::Query => parse_params::<QueryParams>(action),
         ActionParameterSpec::RemoteExec => parse_params::<RemoteExecParams>(action),
-        ActionParameterSpec::RemoteExecVisible => {
-            parse_params::<RemoteExecVisibleParams>(action)
-        }
+        ActionParameterSpec::RemoteExecVisible => parse_params::<RemoteExecVisibleParams>(action),
         ActionParameterSpec::RemoteFileRead => parse_params::<RemoteFileReadParams>(action),
         ActionParameterSpec::RemoteFileWrite => parse_params::<RemoteFileWriteParams>(action),
         ActionParameterSpec::RemoteOutputRecent => parse_params::<RemoteOutputRecentParams>(action),

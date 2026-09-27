@@ -277,7 +277,11 @@ fn a_visible_command_is_validated_before_any_session_is_looked_up() {
             serde_json::json!({ "command": "id", "agent": "Gemini CLI" }),
         ] {
             let result = harness
-                .call(ActionKind::RemoteExecVisible, params.clone(), session_id("999"))
+                .call(
+                    ActionKind::RemoteExecVisible,
+                    params.clone(),
+                    session_id("999"),
+                )
                 .await;
             assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
         }
