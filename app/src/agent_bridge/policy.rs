@@ -2,9 +2,8 @@
 //! agent's own permission prompt. Pure evaluation lives here; `handlers::remote::authorize` is
 //! the only caller.
 
-use std::fs;
-use std::io;
 use std::path::Path;
+use std::{fs, io};
 
 use regex::Regex;
 use serde::Deserialize;
@@ -147,7 +146,10 @@ impl Policy {
                     ));
                 }
                 let rule = build_rule(host.mode, host.allow)?;
-                Ok(HostRule { host_match: host.host_match, rule })
+                Ok(HostRule {
+                    host_match: host.host_match,
+                    rule,
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -238,7 +240,10 @@ impl Default for Policy {
     /// hosts: safe by default, but usable immediately.
     fn default() -> Self {
         Self {
-            defaults: Rule { mode: Mode::Approve, allow: Vec::new() },
+            defaults: Rule {
+                mode: Mode::Approve,
+                allow: Vec::new(),
+            },
             require_pairing: false,
             hosts: Vec::new(),
             deny_patterns: Vec::new(),
@@ -281,7 +286,8 @@ fn ask_or_deny_for_length(request: PolicyRequest<'_>) -> Decision {
     let Some(command) = command else {
         return Decision::Ask;
     };
-    if command.len() > APPROVAL_MAX_COMMAND_BYTES || command.lines().count() > APPROVAL_MAX_COMMAND_LINES
+    if command.len() > APPROVAL_MAX_COMMAND_BYTES
+        || command.lines().count() > APPROVAL_MAX_COMMAND_LINES
     {
         return Decision::Deny(
             "it is too long for a person to review; write a script with write_file, then run it."
@@ -294,7 +300,13 @@ fn ask_or_deny_for_length(request: PolicyRequest<'_>) -> Decision {
 /// Minimal glob: `*` matches any run of characters (including none, including `/`), `?` matches
 /// exactly one character. No other syntax is special.
 fn glob_matches(pattern: &str, text: &str, case_insensitive: bool) -> bool {
-    let normalize = |value: &str| if case_insensitive { value.to_lowercase() } else { value.to_owned() };
+    let normalize = |value: &str| {
+        if case_insensitive {
+            value.to_lowercase()
+        } else {
+            value.to_owned()
+        }
+    };
     let pattern: Vec<char> = normalize(pattern).chars().collect();
     let text: Vec<char> = normalize(text).chars().collect();
 

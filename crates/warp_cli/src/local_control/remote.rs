@@ -208,7 +208,8 @@ fn run_exec(args: RemoteExecArgs, output_format: OutputFormat) -> Result<u8, Con
         timeout_secs: Some(args.timeout_secs),
         agent: Some(AGENT_NAME.to_owned()),
     };
-    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
+    let wait =
+        Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
     let data = send_action(&args.target, ActionKind::RemoteExec, params, wait)?;
     let result: RemoteExecResult = decode(data.clone(), "command result")?;
     print_result(&data, output_format, || {
@@ -224,7 +225,8 @@ fn run_exec_visible(args: RemoteExecArgs, output_format: OutputFormat) -> Result
         timeout_secs: Some(args.timeout_secs),
         agent: Some(AGENT_NAME.to_owned()),
     };
-    let wait = Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
+    let wait =
+        Duration::from_secs(args.timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
     let data = send_action(&args.target, ActionKind::RemoteExecVisible, params, wait)?;
     let result: RemoteExecVisibleResult = decode(data.clone(), "command result")?;
     print_result(&data, output_format, || {

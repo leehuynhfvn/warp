@@ -175,7 +175,8 @@ impl<T: ControlTransport> Tools<T> {
             timeout_secs: Some(timeout_secs),
             agent: Some(self.agent.clone()),
         };
-        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
+        let wait =
+            Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
         let result: RemoteExecResult =
             self.call(ActionKind::RemoteExec, params, Some(&session_id), wait)?;
         Ok(render_exec(&result))
@@ -190,7 +191,8 @@ impl<T: ControlTransport> Tools<T> {
             timeout_secs: Some(timeout_secs),
             agent: Some(self.agent.clone()),
         };
-        let wait = Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
+        let wait =
+            Duration::from_secs(timeout_secs.into()) + EXEC_CLIENT_MARGIN + APPROVAL_CLIENT_MARGIN;
         let result: RemoteExecVisibleResult = self.call(
             ActionKind::RemoteExecVisible,
             params,

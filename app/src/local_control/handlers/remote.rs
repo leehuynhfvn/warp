@@ -521,8 +521,10 @@ struct AuthorizeInput {
 /// Task 2.3 adds the approval queue.
 fn authorize(
     input: AuthorizeInput,
-    continue_with: impl FnOnce(Result<Option<&'static str>, AgentBridgeError>, &mut ModelContext<LocalControlBridge>)
-        + 'static,
+    continue_with: impl FnOnce(
+        Result<Option<&'static str>, AgentBridgeError>,
+        &mut ModelContext<LocalControlBridge>,
+    ) + 'static,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) {
     if !FeatureFlag::AgentOpsPolicy.is_enabled() {
@@ -550,7 +552,10 @@ fn authorize(
 fn deny_authorization(
     input: AuthorizeInput,
     reason: String,
-    continue_with: impl FnOnce(Result<Option<&'static str>, AgentBridgeError>, &mut ModelContext<LocalControlBridge>),
+    continue_with: impl FnOnce(
+        Result<Option<&'static str>, AgentBridgeError>,
+        &mut ModelContext<LocalControlBridge>,
+    ),
     ctx: &mut ModelContext<LocalControlBridge>,
 ) {
     ops::audit_policy_denied(

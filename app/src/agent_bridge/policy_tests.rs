@@ -28,12 +28,18 @@ mode = "approve"
 
 #[test]
 fn missing_defaults_table_is_an_error() {
-    assert!(matches!(parse_err("[deny]\npatterns = []\n"), PolicyError::Parse(_)));
+    assert!(matches!(
+        parse_err("[deny]\npatterns = []\n"),
+        PolicyError::Parse(_)
+    ));
 }
 
 #[test]
 fn missing_mode_in_defaults_is_an_error() {
-    assert!(matches!(parse_err("[defaults]\nrequire_pairing = false\n"), PolicyError::Parse(_)));
+    assert!(matches!(
+        parse_err("[defaults]\nrequire_pairing = false\n"),
+        PolicyError::Parse(_)
+    ));
 }
 
 #[test]
@@ -140,13 +146,19 @@ fn read_only_denies_write() {
 #[test]
 fn approve_asks_for_exec() {
     let policy = parse(MINIMAL_APPROVE);
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
 }
 
 #[test]
 fn approve_asks_for_exec_visible() {
     let policy = parse(MINIMAL_APPROVE);
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::ExecVisible("df -h")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::ExecVisible("df -h")),
+        Decision::Ask
+    );
 }
 
 #[test]
@@ -159,25 +171,37 @@ fn approve_asks_for_write() {
 #[test]
 fn allowlist_allows_an_exact_match_exec() {
     let policy = parse("[defaults]\nmode = \"allowlist\"\nallow = [\"id -un\"]\n");
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec("id -un")), Decision::Allow);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec("id -un")),
+        Decision::Allow
+    );
 }
 
 #[test]
 fn allowlist_allows_an_exact_match_exec_visible() {
     let policy = parse("[defaults]\nmode = \"allowlist\"\nallow = [\"uptime\"]\n");
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::ExecVisible("uptime")), Decision::Allow);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::ExecVisible("uptime")),
+        Decision::Allow
+    );
 }
 
 #[test]
 fn allowlist_trims_whitespace_before_matching() {
     let policy = parse("[defaults]\nmode = \"allowlist\"\nallow = [\"id -un\"]\n");
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec(" id -un ")), Decision::Allow);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec(" id -un ")),
+        Decision::Allow
+    );
 }
 
 #[test]
 fn allowlist_asks_for_a_command_not_on_the_list() {
     let policy = parse("[defaults]\nmode = \"allowlist\"\nallow = [\"id -un\"]\n");
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
 }
 
 #[test]
@@ -220,30 +244,48 @@ match = "lab-*"
 mode = "read_only"
 "#;
     let policy = parse(text);
-    assert_eq!(decide(&policy, "lab-1", PolicyRequest::Exec("id -un")), Decision::Allow);
+    assert_eq!(
+        decide(&policy, "lab-1", PolicyRequest::Exec("id -un")),
+        Decision::Allow
+    );
 }
 
 #[test]
 fn glob_star_matches_a_hostname_prefix() {
-    let text = "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"lab-*\"\nmode = \"approve\"\n";
+    let text =
+        "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"lab-*\"\nmode = \"approve\"\n";
     let policy = parse(text);
-    assert_eq!(decide(&policy, "lab-42", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "lab-42", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
 }
 
 #[test]
 fn glob_question_mark_matches_exactly_one_character() {
-    let text = "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"db-?\"\nmode = \"approve\"\n";
+    let text =
+        "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"db-?\"\nmode = \"approve\"\n";
     let policy = parse(text);
-    assert_eq!(decide(&policy, "db-1", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "db-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
     let decision = decide(&policy, "db-12", PolicyRequest::Exec("id"));
-    assert!(deny_message(&decision).contains("read-only"), "db-12 has two characters after db-, should not match db-?");
+    assert!(
+        deny_message(&decision).contains("read-only"),
+        "db-12 has two characters after db-, should not match db-?"
+    );
 }
 
 #[test]
 fn host_match_is_case_insensitive() {
-    let text = "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"Lab-*\"\nmode = \"approve\"\n";
+    let text =
+        "[defaults]\nmode = \"read_only\"\n\n[[hosts]]\nmatch = \"Lab-*\"\nmode = \"approve\"\n";
     let policy = parse(text);
-    assert_eq!(decide(&policy, "LAB-1", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "LAB-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
 }
 
 // --- Deny always wins -------------------------------------------------------
@@ -281,7 +323,13 @@ mode = "allowlist"
 paths = ["/etc/sudoers", "/etc/sudoers.d/*"]
 "#;
     let policy = parse(text);
-    let decision = decide(&policy, "prod-1", PolicyRequest::Write { path: "/etc/sudoers.d/agent" });
+    let decision = decide(
+        &policy,
+        "prod-1",
+        PolicyRequest::Write {
+            path: "/etc/sudoers.d/agent",
+        },
+    );
     assert!(deny_message(&decision).contains("matches the deny rule"));
 }
 
@@ -339,7 +387,10 @@ fn a_command_over_the_line_limit_is_denied_instead_of_asked() {
 #[test]
 fn a_short_command_within_limits_is_still_asked() {
     let policy = parse(MINIMAL_APPROVE);
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec("id")), Decision::Ask);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
 }
 
 #[test]
@@ -347,7 +398,10 @@ fn a_long_command_that_matches_the_allowlist_is_still_allowed() {
     let long = "echo ".to_owned() + &"a".repeat(APPROVAL_MAX_COMMAND_BYTES);
     let text = format!("[defaults]\nmode = \"allowlist\"\nallow = [{long:?}]\n");
     let policy = parse(&text);
-    assert_eq!(decide(&policy, "prod-1", PolicyRequest::Exec(&long)), Decision::Allow);
+    assert_eq!(
+        decide(&policy, "prod-1", PolicyRequest::Exec(&long)),
+        Decision::Allow
+    );
 }
 
 #[test]
@@ -362,7 +416,10 @@ fn writes_are_not_subject_to_the_command_length_limit() {
 #[test]
 fn the_default_policy_is_approve_mode_with_no_deny_rules_or_hosts() {
     let policy = Policy::default();
-    assert_eq!(policy.evaluate("prod-1", PolicyRequest::Exec("id"), false), Decision::Ask);
+    assert_eq!(
+        policy.evaluate("prod-1", PolicyRequest::Exec("id"), false),
+        Decision::Ask
+    );
 }
 
 #[test]
@@ -389,7 +446,10 @@ fn load_reads_a_policy_file_with_0600_permissions() {
     let home = tempfile::tempdir().unwrap();
     write_policy(home.path(), MINIMAL_APPROVE, 0o600);
     let policy = load(home.path()).unwrap();
-    assert_eq!(policy.evaluate("prod-1", PolicyRequest::Exec("id"), false), Decision::Ask);
+    assert_eq!(
+        policy.evaluate("prod-1", PolicyRequest::Exec("id"), false),
+        Decision::Ask
+    );
 }
 
 #[cfg(unix)]
@@ -408,7 +468,10 @@ fn load_rejects_a_policy_file_readable_by_the_group() {
 fn load_rejects_a_policy_file_readable_by_others() {
     let home = tempfile::tempdir().unwrap();
     write_policy(home.path(), MINIMAL_APPROVE, 0o604);
-    assert!(matches!(load(home.path()).unwrap_err(), PolicyError::Permissions { .. }));
+    assert!(matches!(
+        load(home.path()).unwrap_err(),
+        PolicyError::Permissions { .. }
+    ));
 }
 
 #[cfg(unix)]
@@ -416,5 +479,8 @@ fn load_rejects_a_policy_file_readable_by_others() {
 fn load_propagates_a_parse_error_from_disk() {
     let home = tempfile::tempdir().unwrap();
     write_policy(home.path(), "[defaults]\nmode = \"sometimes\"\n", 0o600);
-    assert!(matches!(load(home.path()).unwrap_err(), PolicyError::Parse(_)));
+    assert!(matches!(
+        load(home.path()).unwrap_err(),
+        PolicyError::Parse(_)
+    ));
 }
