@@ -93,8 +93,7 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
             );
             let mut preview_block = printable(preview);
             if *preview_truncated_lines > 0 {
-                preview_block
-                    .push_str(&format!("\n… {preview_truncated_lines} more lines"));
+                preview_block.push_str(&format!("\n… {preview_truncated_lines} more lines"));
             }
             lines.push(preview_block);
         }
@@ -116,7 +115,9 @@ fn agent_line(agent: Option<&str>) -> String {
 }
 
 fn format_deadline(deadline: SystemTime) -> String {
-    DateTime::<Local>::from(deadline).format("%H:%M").to_string()
+    DateTime::<Local>::from(deadline)
+        .format("%H:%M")
+        .to_string()
 }
 
 pub struct AgentApprovalDialog {
@@ -185,13 +186,17 @@ impl View for AgentApprovalDialog {
             .request_id
             .and_then(|id| AgentBridgeModel::as_ref(app).approval(id));
         // The request can disappear between the toast that opened this dialog and Workspace
-        // acting on `ApprovalsChanged` to close it (mục 3.7 of the O2 plan) — render nothing for
-        // that one frame rather than a dialog with no content.
-        let Some(request) = request else {
-            return Container::new(Stack::new().finish()).finish();
+        // acting on `ApprovalsChanged` to close it (mục 3.7 of the O2 plan) — that one frame
+        // renders empty chrome, the same fallback `WarpSyncConfirmDialog` uses while it has no
+        // request either, rather than an unproven zero-child layout.
+        let (title, body, is_write) = match request {
+            Some(request) => {
+                let (title, body) = content(request);
+                let is_write = matches!(request.subject, ApprovalSubject::Write { .. });
+                (title, body, is_write)
+            }
+            None => (String::new(), String::new(), false),
         };
-        let (title, body) = content(request);
-        let is_write = matches!(request.subject, ApprovalSubject::Write { .. });
 
         let appearance = Appearance::as_ref(app);
         let deny_button = Container::new(ChildView::new(&self.deny_button).finish())

@@ -57,9 +57,9 @@ use crate::ui_components::{blended_colors, icons};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::warp_sync::printable;
 use crate::workspace::WorkspaceAction;
-use crate::workspace::tab_settings::TabSettings;
 #[cfg(target_arch = "wasm32")]
 use crate::workspace::WorkspaceRegistry;
+use crate::workspace::tab_settings::TabSettings;
 
 /// Total size of the agent icon-with-status component rendered in the pane header.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.

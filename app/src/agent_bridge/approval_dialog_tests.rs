@@ -21,7 +21,12 @@ fn command_request(command: &str, cwd: Option<&str>, visible: bool) -> ApprovalR
     }
 }
 
-fn write_request(bytes: u64, creates: bool, preview: &str, truncated_lines: usize) -> ApprovalRequest {
+fn write_request(
+    bytes: u64,
+    creates: bool,
+    preview: &str,
+    truncated_lines: usize,
+) -> ApprovalRequest {
     ApprovalRequest {
         request_id: Uuid::new_v4(),
         session: SessionId::from(1u64),

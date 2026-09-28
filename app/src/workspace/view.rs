@@ -69,6 +69,7 @@ use serde_json;
 use session_sharing_protocol::common::SessionId as SharedSessionId;
 #[cfg(target_family = "wasm")]
 use url::Url;
+use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warp_core::context_flag::ContextFlag;
 use warp_core::execution_mode::AppExecutionMode;
@@ -160,8 +161,6 @@ use super::util::{
     WorkspaceMouseStates, WorkspaceState,
 };
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
-use uuid::Uuid;
-
 use crate::agent_bridge::approval_dialog::{AgentApprovalDialog, AgentApprovalEvent};
 use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
 use crate::agent_bridge::error::AgentBridgeError;
@@ -19292,9 +19291,10 @@ impl Workspace {
                 let toast = DismissibleToast::default(format!(
                     "An agent is waiting for approval on {session_label}"
                 ))
-                .with_link(ToastLink::new("Review".to_owned()).with_onclick_action(
-                    WorkspaceAction::AgentOpsReviewRequest { request_id },
-                ));
+                .with_link(
+                    ToastLink::new("Review".to_owned())
+                        .with_onclick_action(WorkspaceAction::AgentOpsReviewRequest { request_id }),
+                );
                 self.add_agent_bridge_toast(toast, ctx);
             }
             AgentBridgeEvent::ApprovalsChanged => {
@@ -19304,8 +19304,8 @@ impl Workspace {
                 let shown = self
                     .agent_approval_dialog
                     .read(ctx, |dialog, _| dialog.request_id());
-                let still_pending = shown
-                    .is_some_and(|id| AgentBridgeModel::as_ref(ctx).approval(id).is_some());
+                let still_pending =
+                    shown.is_some_and(|id| AgentBridgeModel::as_ref(ctx).approval(id).is_some());
                 if !still_pending {
                     self.current_workspace_state.is_agent_approval_dialog_open = false;
                     ctx.notify();
@@ -19342,8 +19342,9 @@ impl Workspace {
             decision,
         } = event
         {
-            AgentBridgeModel::handle(ctx)
-                .update(ctx, |model, ctx| model.decide_approval(*request_id, *decision, ctx));
+            AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| {
+                model.decide_approval(*request_id, *decision, ctx)
+            });
         }
         self.focus_active_tab(ctx);
         ctx.notify();
@@ -19353,8 +19354,9 @@ impl Workspace {
     /// window, or says there is none.
     fn agent_ops_review_waiting_requests(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let request_id =
-            AgentBridgeModel::as_ref(ctx).oldest_approval_in_window(window_id).map(|request| request.request_id);
+        let request_id = AgentBridgeModel::as_ref(ctx)
+            .oldest_approval_in_window(window_id)
+            .map(|request| request.request_id);
         match request_id {
             Some(request_id) => self.show_agent_approval_dialog(request_id, ctx),
             None => self.add_agent_bridge_toast(
@@ -19366,7 +19368,8 @@ impl Workspace {
 
     /// "Agent Ops: Deny all waiting agent requests".
     fn agent_ops_deny_all_approvals(&mut self, ctx: &mut ViewContext<Self>) {
-        let count = AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.deny_all_approvals(ctx));
+        let count =
+            AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.deny_all_approvals(ctx));
         let toast = DismissibleToast::default(match count {
             0 => "No agent request was waiting".to_owned(),
             1 => "Denied 1 waiting agent request".to_owned(),
@@ -28397,10 +28400,7 @@ impl View for Workspace {
             );
         }
 
-        if self
-            .current_workspace_state
-            .is_agent_approval_dialog_open
-        {
+        if self.current_workspace_state.is_agent_approval_dialog_open {
             stack.add_positioned_overlay_child(
                 ChildView::new(&self.agent_approval_dialog).finish(),
                 OffsetPositioning::offset_from_parent(
