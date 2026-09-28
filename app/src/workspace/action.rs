@@ -506,6 +506,12 @@ pub enum WorkspaceAction {
     AgentBridgeRevokeAll,
     /// Copy the command that adds the Agent Bridge to Claude Code.
     AgentBridgeCopySetupCommand,
+    /// Attaches the active pane's session (any Warpified remote host) with full access, opens a
+    /// new local tab, and lets the person pick a saved workflow to start their agent CLI there.
+    AgentBridgeAttachAndOpenAgentCli,
+    /// Copies the id agent-facing MCP tools use to address the active pane's session, for
+    /// pasting into an agent CLI already running against a different session.
+    AgentBridgeCopySessionId,
     /// Opens the approval dialog for a specific waiting agent request (from a toast's Review
     /// link or a pane header's Review button).
     AgentOpsReviewRequest {
@@ -1298,6 +1304,8 @@ impl WorkspaceAction {
             | AgentBridgeRevoke
             | AgentBridgeRevokeAll
             | AgentBridgeCopySetupCommand
+            | AgentBridgeAttachAndOpenAgentCli
+            | AgentBridgeCopySessionId
             | AgentOpsReviewRequest { .. }
             | AgentOpsReviewWaitingRequests
             | AgentOpsDenyAllApprovals

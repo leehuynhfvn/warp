@@ -446,6 +446,18 @@ pub fn init(app: &mut AppContext) {
                 WorkspaceAction::AgentBridgeCopySetupCommand,
             )
             .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_attach_and_open_agent_cli",
+                "Agent Bridge: Attach and open agent CLI here",
+                WorkspaceAction::AgentBridgeAttachAndOpenAgentCli,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_bridge_copy_session_id",
+                "Agent Bridge: Copy session ID",
+                WorkspaceAction::AgentBridgeCopySessionId,
+            )
+            .with_context_predicate(id!("Workspace")),
         ]);
     }
 

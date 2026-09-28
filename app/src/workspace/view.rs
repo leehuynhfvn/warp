@@ -18968,6 +18968,81 @@ impl Workspace {
         self.add_agent_bridge_toast(toast, ctx);
     }
 
+    /// "Agent Bridge: Attach and open agent CLI here" — works against whatever Warpified remote
+    /// session is active, not a fixed host: attaches it with full access, opens a new tab on the
+    /// local machine (agent CLIs run locally, against the just-attached remote session over the
+    /// Agent Bridge, not inside the remote shell itself), and opens the palette scoped to
+    /// workflows so the person can start whichever agent CLI they have a workflow for.
+    fn agent_bridge_attach_and_open_agent_cli(&mut self, ctx: &mut ViewContext<Self>) {
+        let attached = match self.active_terminal_session(ctx) {
+            Some(session) => ensure_agent_bridge_supported(&session).map(|()| session),
+            None => Err(AgentBridgeError::NotRemoteSession),
+        };
+        let session = match attached {
+            Ok(session) => session,
+            Err(error) => {
+                self.add_agent_bridge_toast(DismissibleToast::error(error.to_string()), ctx);
+                return;
+            }
+        };
+        AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| {
+            model.attach(session.id(), AgentBridgeAccess::Full, ctx)
+        });
+        self.add_terminal_tab(false, ctx);
+        self.palette.update(ctx, |view, ctx| {
+            view.reset(ctx);
+            view.set_active_query_filter(QueryFilter::Workflows, ctx);
+        });
+        ctx.notify();
+        self.add_agent_bridge_toast(
+            DismissibleToast::default(agent_bridge_attached_message(
+                AgentBridgeAccess::Full,
+                &printable(session.user()),
+                &printable(session.hostname()),
+            )),
+            ctx,
+        );
+    }
+
+    /// The `PaneId` of the pane holding the active terminal session — the id agent-facing MCP
+    /// tools address a session by (`SessionEntry::pane_id` in
+    /// `local_control::handlers::metadata`), not the `SessionId` `AgentBridgeModel` tracks
+    /// attachments by.
+    fn active_terminal_pane_id(&self, ctx: &mut ViewContext<Self>) -> Option<PaneId> {
+        self.active_tab_pane_group()
+            .read(ctx, |pane_group, ctx| pane_group.active_session_id(ctx))
+            .map(Into::into)
+    }
+
+    /// "Agent Bridge: Copy session ID" — works against whatever Warpified remote session is
+    /// active. Lets a person using several attached sessions tell an already-running agent CLI
+    /// which one to target next.
+    fn agent_bridge_copy_session_id(&mut self, ctx: &mut ViewContext<Self>) {
+        let session = match self.active_terminal_session(ctx) {
+            Some(session) => session,
+            None => {
+                self.add_agent_bridge_toast(
+                    DismissibleToast::error(AgentBridgeError::NotRemoteSession.to_string()),
+                    ctx,
+                );
+                return;
+            }
+        };
+        if let Err(error) = ensure_agent_bridge_supported(&session) {
+            self.add_agent_bridge_toast(DismissibleToast::error(error.to_string()), ctx);
+            return;
+        }
+        let Some(pane_id) = self.active_terminal_pane_id(ctx) else {
+            return;
+        };
+        ctx.clipboard()
+            .write(ClipboardContent::plain_text(pane_id.to_string()));
+        self.add_agent_bridge_toast(
+            DismissibleToast::default("Copied this session's ID for the Agent Bridge.".to_owned()),
+            ctx,
+        );
+    }
+
     fn add_agent_bridge_toast(
         &mut self,
         toast: DismissibleToast<WorkspaceAction>,
@@ -25745,6 +25820,8 @@ impl TypedActionView for Workspace {
             AgentBridgeRevoke => self.agent_bridge_revoke(ctx),
             AgentBridgeRevokeAll => self.agent_bridge_revoke_all(ctx),
             AgentBridgeCopySetupCommand => self.agent_bridge_copy_setup_command(ctx),
+            AgentBridgeAttachAndOpenAgentCli => self.agent_bridge_attach_and_open_agent_cli(ctx),
+            AgentBridgeCopySessionId => self.agent_bridge_copy_session_id(ctx),
             AgentOpsReviewRequest { request_id } => {
                 self.show_agent_approval_dialog(*request_id, ctx)
             }
