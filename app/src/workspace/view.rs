@@ -161,6 +161,7 @@ use super::util::{
     WorkspaceMouseStates, WorkspaceState,
 };
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
+use crate::agent_bridge::approval::PAIRING_TOAST_ID;
 use crate::agent_bridge::approval_dialog::{AgentApprovalDialog, AgentApprovalEvent};
 use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
 use crate::agent_bridge::error::AgentBridgeError;
@@ -19363,23 +19364,32 @@ impl Workspace {
                 if *window_id != ctx.window_id() {
                     return;
                 }
-                let Some(session_label) = AgentBridgeModel::as_ref(ctx)
+                let Some((message, is_persistent)) = AgentBridgeModel::as_ref(ctx)
                     .approval(*request_id)
-                    .map(|request| request.session_label.clone())
+                    .map(|request| (request.toast_message(), request.toast_is_persistent()))
                 else {
                     return;
                 };
                 let request_id = *request_id;
-                let toast = DismissibleToast::default(format!(
-                    "An agent is waiting for approval on {session_label}"
-                ))
-                .with_link(
-                    ToastLink::new("Review".to_owned())
-                        .with_onclick_action(WorkspaceAction::AgentOpsReviewRequest { request_id }),
-                );
-                self.add_agent_bridge_toast(toast, ctx);
+                let toast = DismissibleToast::default(message)
+                    .with_link(ToastLink::new("Review".to_owned()).with_onclick_action(
+                        WorkspaceAction::AgentOpsReviewRequest { request_id },
+                    ));
+                if is_persistent {
+                    let toast = toast.with_object_id(PAIRING_TOAST_ID.to_owned());
+                    self.toast_stack.update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_persistent_toast(toast, ctx);
+                    });
+                } else {
+                    self.add_agent_bridge_toast(toast, ctx);
+                }
             }
             AgentBridgeEvent::ApprovalsChanged => {
+                if !AgentBridgeModel::as_ref(ctx).has_pending_pairing() {
+                    self.toast_stack.update(ctx, |toast_stack, ctx| {
+                        toast_stack.dismiss_toasts_by_prefix(PAIRING_TOAST_ID, ctx);
+                    });
+                }
                 if !self.current_workspace_state.is_agent_approval_dialog_open {
                     return;
                 }

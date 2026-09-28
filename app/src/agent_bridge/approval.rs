@@ -68,6 +68,32 @@ pub(crate) struct ApprovalRequest {
     pub(crate) window_id: WindowId,
 }
 
+/// `object_id` of the toast announcing a pairing request. Only one pairing request can wait at a
+/// time, so one id is enough to find and dismiss it.
+pub(crate) const PAIRING_TOAST_ID: &str = "agent_ops_pairing_request";
+
+impl ApprovalRequest {
+    /// The toast text announcing this request.
+    pub(crate) fn toast_message(&self) -> String {
+        match &self.subject {
+            ApprovalSubject::Pairing { name } => format!("'{name}' wants to pair with Warp"),
+            ApprovalSubject::Command { .. } | ApprovalSubject::Write { .. } => {
+                format!("An agent is waiting for approval on {}", self.session_label)
+            }
+        }
+    }
+
+    /// Whether the toast announcing this request stays until the request leaves the queue. A
+    /// pairing request needs that: it has no session, so no pane header shows it as waiting once
+    /// a short-lived toast is gone.
+    pub(crate) fn toast_is_persistent(&self) -> bool {
+        match self.subject {
+            ApprovalSubject::Pairing { .. } => true,
+            ApprovalSubject::Command { .. } | ApprovalSubject::Write { .. } => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApprovalDecision {
     // Constructed starting Task 3.3 (the approval dialog's Approve/Deny buttons); remove these

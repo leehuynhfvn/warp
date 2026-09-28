@@ -328,7 +328,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [x] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12; xong 2026-09-27, CHECKPOINT A–D, thêm Phase 5: `exec_visible` + bản release) · [x] gate O1 (CHECKPOINT B đạt gồm 5.B.8 client MCP thứ hai; độ trễ 0,183 s/lệnh ở CHECKPOINT A)
-- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`, v2 đã chốt quyết định P1–P20 ngày 2026-09-27, chưa code)
+- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`; code Phase 0–4 xong, CHECKPOINT P1/P2 đạt, P3 chạy lại sau fix toast pairing P28 ngày 2026-09-29) · [ ] gate O2 (≥ 1 tuần dùng hằng ngày trên host lab, bắt đầu sau P3)
 - [ ] G1 danh bạ server (G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
@@ -351,3 +351,4 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 | AO10 | 2026-09-26 | Host nhập từ ssh config chỉ lưu alias + metadata của Warp; giá trị kết nối luôn lấy từ `ssh -G` | OpenSSH giải `Include`/`Match`/wildcard đúng hơn parser tự viết; không lệch dữ liệu |
 | AO11 | 2026-09-26 | Tag lưu bằng comment `# warp:tags=…` (trong `warp.conf`) hoặc `hosts.toml` (host của user); không dùng `Tag` của OpenSSH | `Tag` chỉ một giá trị và đổi hành vi `Match tagged` |
 | AO12 | 2026-09-26 | Host nối với mirror Warp Sync bằng `mirror_key` + `machine_id` ghi lại sau lần Sync đầu (không suy từ hostname); machine-id đổi → cảnh báo, không dùng mirror cũ; MCP `list_hosts` trả thư mục mirror, không trả bí mật | Warp Sync đặt mirror theo máy (hostname, thêm hậu tố hash machine-id khi trùng tên), không theo alias ssh |
+| AO13 | 2026-09-29 | Người dùng giao Claude quyết định thiết kế và thứ tự roadmap; người dùng giữ các CHECKPOINT test tay và gate có số liệu. Thứ tự sau CHECKPOINT P3: bắt đầu tuần dùng thử gate O2, **song song** viết `G_GATEWAY_PLAN.md` và làm G1 (do người thao tác, không phụ thuộc O2); O3 chạy song song khi người dùng sửa được các MCP `grafana-*` (vẫn `CONNECTION_CLOSED` ngày 2026-09-29); G2+ chỉ sau gate O2 như AO7 | Tuần dùng thử O2 là thời gian chờ, không cần code mới; G1 là việc lớn nhất không bị chặn và là nền của G2–G4; test tay vừa bắt được lỗi toast pairing (P28 của O2) nên không bỏ bước đó |

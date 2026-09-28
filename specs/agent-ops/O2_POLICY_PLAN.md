@@ -672,7 +672,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 **5.P3 — Pairing (CHECKPOINT P3)**
 
 1. Khởi động lại Claude Code (process `warpctrl mcp` mới), gọi `list_sessions`: hộp thoại "Pair an agent
-   with Warp?" (tên `claude-code`) — Pair. `~/.warp/agent-ops/agents.toml` có entry (quyền 0600),
+   with Warp?" (tên `claude-code`) — Approve (P26). `~/.warp/agent-ops/agents.toml` có entry (quyền 0600),
    `~/.warp/agent-ops/agent-tokens/claude-code.token` quyền 0600.
 2. Lệnh cần duyệt từ Claude: hộp thoại ghi "claude-code (paired)"; audit có `agent_id`.
 3. Khởi động lại Warp và Claude Code: **không** hỏi pairing lại.
@@ -685,6 +685,13 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 7. Palette "Agent Ops: Forget all paired agents" → file rỗng; toast báo số agent đã quên.
 8. `grep -r "<nội dung token>" ~/.warp/agent-bridge ~/.local/state/warp* 2>/dev/null` (log của bản
    dev — tìm đường log thật ở nhật ký Bridge) → không thấy token.
+9. (P28) Client MCP thứ hai (Antigravity `agy`, Codex hoặc Gemini CLI — tên khác `claude-code`) gọi
+   tool đầu tiên: toast "'<tên>' wants to pair with Warp" hiện và **không tự tắt** sau vài giây; để
+   yên 30 s rồi bấm Review → hộp thoại pairing; Approve → toast biến mất; `agents.toml` có thêm entry
+   thứ hai, file token riêng `<tên>.token`.
+10. (P28) Lặp lại mục 9 với client đó sau khi "Forget all paired agents" và restart client: lần này
+    Deny → toast biến mất ngay. Một lệnh cần duyệt từ Claude trong lúc đó: toast của lệnh vẫn tự tắt
+    sau ~4 s, header pane vẫn "1 waiting".
 
 ---
 
@@ -744,7 +751,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
 - [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [x] 4.6 docs · [x] 4.7 review + clippy + format
-- [ ] ⛔ CHECKPOINT P3 (đã sẵn sàng — chờ người dùng test tay checklist 5.P3) · [ ] tick O2 trong roadmap
+- [x] P28 toast pairing persistent (lỗi tìm thấy ở lần test tay P3 đầu, 2026-09-29)
+- [ ] ⛔ CHECKPOINT P3 (chạy lại toàn bộ 5.P3 mục 1–10 trên bản build có P28) · [ ] tick O2 trong roadmap
 
 ### Quyết định
 
@@ -777,6 +785,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P25 | 2026-09-28 | `agent.pair` không có subcommand `warpctrl agent pair`; loại hẳn khỏi test bất biến `every_retained_catalog_action_has_a_parseable_cli_example` (không phải carve-out tạm) | Đây là handshake máy-với-máy MCP transport tự gọi lúc tool call đầu (mục 3.11), không phải lệnh người gõ tay như `remote.*`; Task 4.5 của plan cũng chỉ thiết kế phía client MCP, không nhắc CLI trực tiếp |
 | P26 | 2026-09-28 | Hộp thoại pairing dùng chung nhãn nút "Approve"/"Deny" với hộp thoại duyệt lệnh (không đổi thành "Pair"/"Deny" như mục 3.11 gợi ý) | `ActionButton` không hỗ trợ đổi nhãn tại thời điểm mở (chỉ tạo view một lần trong `AgentApprovalDialog::new`, `render()` chỉ đọc `&self`); đổi nhãn theo request cần refactor thêm (đọc model trong `set_request`/nơi mở dialog rồi gọi `set_label`) — chỉ là chữ trên nút, không đổi hành vi/an toàn, hoãn tới khi thật sự cần |
 | P27 | 2026-09-28 | Không audit `agent.pair` vào `~/.warp/agent-bridge/audit.jsonl` | Audit hiện có gắn với `AuditRecord.session_id/host/user` của một remote session; pairing không có session. Task 4.4/checklist 5.P3 không đòi audit cho riêng hành động pair — danh tính đã ghép được audit gián tiếp qua `agent_id` trên audit của các request ghi sau đó (Task 4.3) |
+| P28 | 2026-09-29 | Toast báo request pairing là **persistent** (`object_id` `PAIRING_TOAST_ID`), tự gỡ khi không còn pairing nào chờ (Approve/Deny/hết giờ/revoke, qua `ApprovalsChanged`); nội dung "'<name>' wants to pair with Warp". Toast lệnh/ghi giữ ephemeral 4 s như cũ | Lỗi tìm thấy khi test tay P3 với client thứ hai (Antigravity `agy`): toast pairing chép y mục 3.8 nên (1) hiện câu cụt "An agent is waiting for approval on " vì `session_label` của pairing rỗng, (2) tự tắt sau 4 s — thời lượng mặc định của toast stack Workspace, không ai chọn cho việc duyệt. Lệnh/ghi còn header pane "N waiting" làm tín hiệu bền (P4), pairing không có session nên không có header → toast phải tự làm tín hiệu bền. Palette "Review waiting agent requests" vẫn là đường dự phòng |
 
 ### Nhật ký
 
@@ -1142,28 +1151,15 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   đã viết chung cho mọi lý do từ Task 2.4 rồi, không cần thêm câu riêng cho pairing — không sửa
   `mcp/tools.rs::INSTRUCTIONS` hay `specs/agent-bridge/claude/SKILL.md` (không có gì để thêm mà
   không lặp lại). Bỏ ghi chú "(hoàn thiện ở Task 2.4/4.6)" ở tiêu đề mục 7 vì đã xong hẳn.
-- 2026-09-28 — Task 4.7 (Claude Sonnet 5): tự rà theo đúng danh sách mục 4.7 (không gọi
-  `ecc:rust-reviewer`/`ecc:security-reviewer` riêng, giống cách Task 3.6 đã làm — phiên này giữ
-  toàn bộ ngữ cảnh Phase 4 vừa viết, rà trực tiếp bằng `grep` xác nhận): token không bao giờ vào
-  log/audit/lỗi (`grep` mọi chỗ dùng `.secret()` — chỉ 2 chỗ băm (`bridge.rs`, `agent.rs`), 1 chỗ
-  ghi file token (`pairing.rs`), còn lại là test; `AgentToken`'s `Debug` luôn in `(****)`, không
-  `Display`; `AuditRecord`/`PairingError`/mọi thông báo lỗi chỉ mang `agent_id` (id đã ghép, không
-  phải secret) hoặc đường dẫn file, không mang hash/token); so sánh hash bằng `==` thường (không
-  constant-time) — khớp đúng tiền lệ có sẵn của `AuthToken`/bearer token trong `auth.rs` (cũng
-  `PartialEq` thường), không phải hổng mới; quyền file token đã test 0600/0700 (client) và
-  0600/0700 (`agents.toml` phía app, từ Task 4.2); chống spam pairing hai lớp — phía app
-  `has_pending_pairing()` (một pairing chờ toàn app, test ở Task 4.4) và phía client
-  `pairing_attempted` (một lần thử/process, test ở Task 4.5); không `TerminalModel::lock()` mới
-  nào trong toàn bộ diff Phase 4 (`git diff` từ đầu Phase 4, `grep ".lock()"` — chỉ thấy
-  `io::stdin().lock()` không liên quan); match exhaustive, không `unwrap`/`expect` trên dữ liệu
-  file/request trong code sản xuất (`grep` xác nhận rỗng ở mọi file mới); hộp thoại vẫn không bind
-  Enter (không đụng `init()`). Sửa một chỗ thật: `handlers/agent.rs::respond_immediately`'s nhánh
-  `already_paired` dùng `let _ = sender.send(...)` nuốt lỗi âm thầm — đổi sang
-  `if sender.send(...).is_err() { log::debug!(...) }` đúng khuôn mọi chỗ khác trong `remote.rs`
-  (mục 0.6: không `let _ =` nuốt lỗi). `cargo clippy -p warp -p local_control -p warp_cli
-  --all-targets --tests -- -D warnings`: sạch (0 warning). `./script/format` một lần — chỉ định
-  dạng lại xuống dòng (13 file, `git diff --stat` xác nhận không đổi logic); không chạy lại
-  test/lint sau format theo mục 0.8. **⛔ CHECKPOINT P3 sẵn sàng** — checklist 5.P3 (mục 5) chờ
-  người dùng test tay trên VM có sshd theo đúng môi trường mục 5.A–5.C của plan Bridge; cần build
-  lại với feature `agent_ops_policy` (mục 0.12, không đổi từ P1/P2) để `agent.pair` xuất hiện
-  trong catalog action.
+- 2026-09-29 — Test tay CHECKPOINT P3 (người dùng): mục 1 đạt với Claude Code. Thử thêm ngoài
+  checklist một client MCP thứ hai (Antigravity `agy`, tự khai tên `antigravity-client`):
+  `list_sessions` chạy nhưng người dùng "thấy có cảnh báo hiện lên rồi không tìm lại được". Nguyên
+  nhân (Claude Opus 5.5): Task 4.4 thêm `ApprovalSubject::Pairing` và sửa nội dung hộp thoại, nhưng
+  toast ở `Workspace::handle_agent_bridge_event` (viết từ Task 3.3, trước khi có pairing) vẫn dùng
+  câu cố định theo `session_label` — rỗng với pairing — và `add_ephemeral_toast` 4 s. Lệnh/ghi còn
+  header pane làm tín hiệu bền, pairing thì không. Sửa theo P28: `ApprovalRequest::toast_message` /
+  `toast_is_persistent` (hàm thuần, 2 test mới trong `approval_tests.rs`), Workspace dùng
+  `add_persistent_toast` với `PAIRING_TOAST_ID` cho pairing và gỡ nó ở `ApprovalsChanged` khi
+  `!has_pending_pairing()`. Thêm mục 9–10 vào checklist 5.P3 cho client thứ hai; sửa chữ "Pair" →
+  "Approve" ở mục 1 cho khớp P26. `cargo test -p warp --lib -- agent_bridge::approval`: 35 passed.
+  CHECKPOINT P3 cần chạy lại toàn bộ checklist 5.P3 (mục 1–10) trên bản build mới.

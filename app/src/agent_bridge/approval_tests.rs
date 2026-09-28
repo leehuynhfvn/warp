@@ -268,6 +268,47 @@ fn oldest_in_window_returns_the_first_one_pushed_in_that_window() {
     assert!(queue.oldest_in_window(window(3)).is_none());
 }
 
+// --- toast ---------------------------------------------------------------------
+
+fn pairing_request(name: &str) -> ApprovalRequest {
+    ApprovalRequest {
+        session: None,
+        session_label: String::new(),
+        subject: ApprovalSubject::Pairing {
+            name: name.to_owned(),
+        },
+        ..request(session(1), window(1))
+    }
+}
+
+#[test]
+fn a_command_toast_names_the_session_and_times_out() {
+    let req = request(session(1), window(1));
+
+    assert_eq!(
+        req.toast_message(),
+        "An agent is waiting for approval on root@lab-1"
+    );
+    assert!(
+        !req.toast_is_persistent(),
+        "the pane header keeps showing a waiting command after the toast is gone"
+    );
+}
+
+#[test]
+fn a_pairing_toast_names_the_agent_and_stays() {
+    let req = pairing_request("antigravity-client");
+
+    assert_eq!(
+        req.toast_message(),
+        "'antigravity-client' wants to pair with Warp"
+    );
+    assert!(
+        req.toast_is_persistent(),
+        "nothing else shows a waiting pairing request once the toast is gone"
+    );
+}
+
 // --- wait_for_decision -------------------------------------------------------
 
 #[test]
