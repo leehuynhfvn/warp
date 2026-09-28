@@ -18989,11 +18989,10 @@ impl Workspace {
             model.attach(session.id(), AgentBridgeAccess::Full, ctx)
         });
         self.add_terminal_tab(false, ctx);
-        self.palette.update(ctx, |view, ctx| {
-            view.reset(ctx);
-            view.set_active_query_filter(QueryFilter::Workflows, ctx);
-        });
-        ctx.notify();
+        // Deferred: this action can itself be invoked from inside the palette (picking it from
+        // the command list), and updating the palette view again while it is still mid-update is
+        // a circular view update.
+        ctx.dispatch_typed_action_deferred(WorkspaceAction::OpenWorkflowsPaletteForAgentCli);
         self.add_agent_bridge_toast(
             DismissibleToast::default(agent_bridge_attached_message(
                 AgentBridgeAccess::Full,
@@ -19002,6 +19001,14 @@ impl Workspace {
             )),
             ctx,
         );
+    }
+
+    fn open_workflows_palette_for_agent_cli(&mut self, ctx: &mut ViewContext<Self>) {
+        self.palette.update(ctx, |view, ctx| {
+            view.reset(ctx);
+            view.set_active_query_filter(QueryFilter::Workflows, ctx);
+        });
+        ctx.notify();
     }
 
     /// The `PaneId` of the pane holding the active terminal session — the id agent-facing MCP
@@ -25821,6 +25828,7 @@ impl TypedActionView for Workspace {
             AgentBridgeRevokeAll => self.agent_bridge_revoke_all(ctx),
             AgentBridgeCopySetupCommand => self.agent_bridge_copy_setup_command(ctx),
             AgentBridgeAttachAndOpenAgentCli => self.agent_bridge_attach_and_open_agent_cli(ctx),
+            OpenWorkflowsPaletteForAgentCli => self.open_workflows_palette_for_agent_cli(ctx),
             AgentBridgeCopySessionId => self.agent_bridge_copy_session_id(ctx),
             AgentOpsReviewRequest { request_id } => {
                 self.show_agent_approval_dialog(*request_id, ctx)

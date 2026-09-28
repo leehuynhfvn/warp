@@ -509,6 +509,12 @@ pub enum WorkspaceAction {
     /// Attaches the active pane's session (any Warpified remote host) with full access, opens a
     /// new local tab, and lets the person pick a saved workflow to start their agent CLI there.
     AgentBridgeAttachAndOpenAgentCli,
+    /// Deferred follow-up to `AgentBridgeAttachAndOpenAgentCli`: opens the palette scoped to
+    /// workflows. Dispatched via `dispatch_typed_action_deferred` rather than opened inline,
+    /// since `AgentBridgeAttachAndOpenAgentCli` can itself be invoked from inside the palette
+    /// (picking it from the command list), and updating the palette view again while it is still
+    /// mid-update is a circular view update.
+    OpenWorkflowsPaletteForAgentCli,
     /// Copies the id agent-facing MCP tools use to address the active pane's session, for
     /// pasting into an agent CLI already running against a different session.
     AgentBridgeCopySessionId,
@@ -1305,6 +1311,7 @@ impl WorkspaceAction {
             | AgentBridgeRevokeAll
             | AgentBridgeCopySetupCommand
             | AgentBridgeAttachAndOpenAgentCli
+            | OpenWorkflowsPaletteForAgentCli
             | AgentBridgeCopySessionId
             | AgentOpsReviewRequest { .. }
             | AgentOpsReviewWaitingRequests
