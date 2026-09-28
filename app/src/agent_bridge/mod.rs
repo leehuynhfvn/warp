@@ -10,6 +10,7 @@ pub(crate) mod messages;
 pub(crate) mod model;
 pub(crate) mod operations;
 pub(crate) mod ops;
+pub(crate) mod pairing;
 pub(crate) mod path;
 pub(crate) mod policy;
 pub(crate) mod recent;
@@ -80,8 +81,6 @@ pub(crate) const APPROVAL_PREVIEW_LINES: usize = 40;
 
 /// Relative to the user's home directory.
 pub(crate) const POLICY_FILE: &str = ".warp/agent-ops/policy.toml";
-// Used starting Task 4.2 (the paired-agents store); remove this `allow` there.
-#[allow(dead_code)]
 pub(crate) const AGENTS_FILE: &str = ".warp/agent-ops/agents.toml";
 
 /// Upper bound on how many approval requests a single session may have waiting at once, so a

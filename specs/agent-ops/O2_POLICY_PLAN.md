@@ -732,7 +732,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -1007,3 +1007,14 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `AgentToken`/envelope cũ/`AgentPairParams`/`AgentPairResult`/trạng thái Stub. `cargo test -p
   local_control --lib`: 64 passed (10 test mới). `cargo check -p warp -p local_control -p warp_cli`
   và `cargo check -p warp --features agent_ops_policy`: qua.
+- 2026-09-28 — Task 4.2 (Claude Sonnet 5): `app/src/agent_bridge/pairing.rs` + `pairing_tests.rs`
+  (14 test) đúng mục 3.11: `PairedAgent { id, token_sha256, paired_at }`; hàm thuần `parse`/
+  `serialize`/`find`/`next_id`; I/O `load(home)` (file thiếu/hỏng/đọc lỗi → rỗng + `log::warn!`,
+  không log nội dung — fail *open*, khác `policy::load` fail *closed*, vì pairing không tự cấp
+  quyền gì, mục 2.4 của plan), `add(home, name, token_sha256)` (ghi atomic: file tạm `.agents.toml.tmp`
+  cùng thư mục, `rename` đè; quyền 0600 qua `OpenOptionsExt::mode`, thư mục 0700 qua
+  `create_private_dir_all` có sẵn của Warp Sync), `forget_all(home)`. `hash(secret) -> String`
+  (SHA-256 hex thường, dùng `sha2` đã có sẵn trong `app/Cargo.toml`) đặt luôn trong module này vì
+  Task 4.3 cần gọi nó ngay khi bridge nhận token — không tách file riêng. Đăng ký `pub(crate) mod
+  pairing;` trong `agent_bridge/mod.rs`; bỏ `#[allow(dead_code)]` khỏi `AGENTS_FILE` (P22: hằng số
+  đã có người dùng thật). `cargo test -p warp --lib agent_bridge::pairing`: 14 passed.
