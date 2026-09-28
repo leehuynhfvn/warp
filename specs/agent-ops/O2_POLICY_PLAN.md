@@ -729,7 +729,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 0.1 flag + hằng số
 - [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [x] 1.3 `authorize` Allow/Deny · [x] 1.4 timeout client · [x] clippy + format
 - [x] ⛔ CHECKPOINT P1
-- [ ] 2.1 `approval.rs` · [ ] 2.2 model + allow-in-session · [ ] 2.3 Ask đầy đủ · [ ] 2.4 INSTRUCTIONS/skill · [ ] clippy + format
+- [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
 - [ ] ⛔ CHECKPOINT P2
 - [ ] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
@@ -837,3 +837,74 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   APPROVAL_CLIENT_MARGIN` quá 100 cột); không chạy lại test/lint sau format theo mục 0.8. **⛔
   CHECKPOINT P1 đạt** — checklist 5.P1 sẵn sàng cho người dùng test tay (cần build với feature
   `agent_ops_policy`, xem mục 0.12).
+- 2026-09-28 — Người dùng xác nhận checklist 5.P1 test tay đạt ("tôi test ok").
+- 2026-09-28 — Task 2.1 (Claude Sonnet 5): `app/src/agent_bridge/approval.rs` + `approval_tests.rs`
+  (27 test cộng với model_tests.rs bên dưới) đúng thiết kế mục 3.4: `ApprovalSubject`/
+  `ApprovalRequest`/`ApprovalDecision`/`ApprovalQueue` (push/decide/remove/revoke_session/
+  revoke_all/get/count_for_session/oldest_for_session/oldest_in_window), `wait_for_decision`
+  bằng `futures::future::select(receiver, Timer::after(timeout))` như `visible.rs` — Canceled →
+  `Revoked` theo đúng comment gợi ý trong plan. `revoke_where` dùng `Vec::partition` thay vì
+  `retain` vì `retain` chỉ cho `&T`, không lấy được quyền sở hữu `Sender` để `send()`. Test race
+  "timeout thắng" (mục 3.4): `decide` rồi `remove` trả `false` — không có race thật (single-
+  threaded), chỉ kiểm hành vi khi hai lệnh gọi tới cùng lúc nhau. `agent: Option<String>` (tên tự
+  khai) thay vì kiểu `AgentLabel` đầy đủ của bản vẽ mục 3.4 — đúng ghi chú trong mục 3.4 "trước
+  khi có Phase 5 chỉ có tên"; `AgentLabel` sẽ thêm ở Task 4.3. Mở khoá
+  `MAX_PENDING_APPROVALS_PER_SESSION` (không còn `#[allow(dead_code)]`, theo P22).
+- 2026-09-28 — Task 2.2 (Claude Sonnet 5): `AgentBridgeModel` thêm field `approvals: ApprovalQueue`
+  và `type Event = AgentBridgeEvent` (`ApprovalRequested { request_id, window_id }` /
+  `ApprovalsChanged`) — đổi từ `()`; `ctx.observe` hiện có ở `terminal/view.rs:4227` không phụ
+  thuộc kiểu `Event` (generic trên model, chỉ cần `notify()`) nên không phải sửa gì thêm.
+  `AgentBridgeEvent` phải là `pub` (không phải `pub(crate)`) vì `AgentBridgeModel` là `pub struct`
+  — Rust từ chối leak kiểu `pub(crate)` qua associated type của một struct `pub` (E0446).
+  `detach`/`detach_all` gọi thêm `approvals.revoke_session`/`revoke_all` (mục 2.4: kill switch).
+  `Attachment` thêm `allowed_commands: HashSet<String>` + `Attachments::allow_command`/
+  `is_command_allowed` (mục 3.5); test trong `attachments_tests.rs`. Viết mới
+  `app/src/agent_bridge/model_tests.rs` (chưa có trước đây) theo mẫu `App::test` của
+  `active_agent_views_model_tests.rs` — test các wrapper mới của model
+  (push/decide/remove/deny_all_approvals, pending/oldest theo session và window, detach/
+  detach_all revoke, allow-in-session) thay vì cố chặn bắt sự kiện `emit` (không có helper thu sự
+  kiện sẵn trong repo; gọi từng hàm với assertion trên trạng thái quan sát được là đủ, việc emit
+  thật sẽ được test ở tầng Workspace lúc Phase 3 dùng tới).
+- 2026-09-28 — Task 2.3 (Claude Sonnet 5): nối `Decision::Ask` vào `authorize`
+  (`handlers/remote.rs`) — `ask_authorization` (kiểm allow-in-session trước, rồi `push_approval` +
+  audit `approval_requested` fail-closed trong `ctx.spawn`, rồi `wait_for_decision`) và
+  `finish_ask` (Approve/AllowInSession kiểm lại `check` rồi mới chạy; Deny/TimedOut/Revoked qua
+  `deny_authorization` với nhãn `policy_decision` riêng — `ask_denied`/`ask_timeout`/`revoked`).
+  `deny_authorization`/`ops::audit_policy_denied` thêm tham số `policy_decision: &'static str`
+  (trước đây khoá cứng `"deny"`) để dùng chung cho cả nhánh Deny thẳng lẫn ba nhánh Ask thất bại,
+  đúng danh sách nhãn ở mục 3.10. Thêm `ops::audit_approval_requested` +
+  `AuditOutcome::ApprovalRequested` (`audit.rs`). `AuthorizeInput` thêm `session: SessionId`,
+  `window_id: WindowId` (lấy qua `ViewHandle::window_id(ctx)`, gọi trước khi `snapshot` bị move —
+  `SessionSnapshot` cho phép partial move nên vẫn đọc được `terminal_view` sau khi lấy
+  `snapshot.session`/`.session_id`/`.cwd`). `PolicySubject::Write` thêm `content_base64`/`creates`
+  (chỉ dùng khi dựng `ApprovalSubject::Write` cho hộp thoại — `evaluate_policy`/audit deny vẫn chỉ
+  cần `path`) + hàm thuần `write_preview()` (decode base64, cắt `APPROVAL_PREVIEW_LINES` dòng,
+  UTF-8 lỗi → "(binary, N bytes)"; base64 lỗi → preview rỗng thay vì lỗi cứng, vì `run_write` sẽ tự
+  từ chối nội dung hỏng sau nếu request được duyệt). Không thêm audit riêng cho trường hợp
+  "duyệt rồi nhưng session đã detach lúc đang chờ" (`finish_ask`'s recheck lỗi) — theo đúng cách
+  `check_access` hiện có không audit khi từ chối trước khi chạm server, không phải quyết định mới.
+  Không viết được test qua HTTP harness cho toàn bộ luồng Ask (giống phát hiện ở Task 1.3:
+  `remote_tests.rs` không dựng được session `WarpifiedRemote` thật) — phần thuần/hàng đợi/model đã
+  có 27+15 test ở 2.1/2.2; luồng đầy đủ (Ask → Approve/Deny/Timeout/Revoke → chạy hay không, detach
+  giữa chừng → `session_not_attached`) để checklist 5.P2 test tay xác nhận, đúng như cách 1.3 đã
+  làm với Allow/Deny. `cargo test -p warp -p local_control -p warp_cli --lib -- agent_bridge
+  local_control`: 286 + 104 passed.
+- 2026-09-28 — Task 2.4 (Claude Sonnet 5): thêm 2 câu vào `INSTRUCTIONS` (`mcp/tools.rs`) và
+  `specs/agent-bridge/claude/SKILL.md` đúng nguyên văn mục 3.9. `policy_denied` là `isError` không
+  cần sửa gì: `jsonrpc_tests.rs::a_failed_tool_is_a_result_not_a_protocol_error` đã kiểm chung cho
+  mọi `ToolError` — chỉ xác nhận lại, không thêm test mới (đúng "chỉ kiểm" của mục 3.9).
+- 2026-09-28 — Cuối Phase 2 (Claude Sonnet 5): `cargo clippy -p warp -p local_control -p warp_cli
+  --all-targets --tests -- -D warnings` lần đầu báo `dead_code` cho phần chỉ dùng ở Phase 3 (biến
+  thể/enum của `approval.rs`, wrapper của `model.rs` không ai gọi tới ngoài UI chưa viết) — khác
+  Task 0.1: lần này `cargo check` thường (không `--tests`) đã thấy trước cùng lỗi vì các mục đó chỉ
+  được gọi từ những hàm khác cũng chưa ai gọi (không giống P22, nơi hằng số chỉ chờ 1 task ngay
+  sau); áp `#[allow(dead_code)]` mức field/variant/method (kèm task Phase 3 sẽ dùng, theo đúng tinh
+  thần P22) cho `ApprovalDecision::Approve`/`Deny`, `ApprovalQueue::decide`/`get`/
+  `oldest_for_session`/`oldest_in_window`, và 6 wrapper của `AgentBridgeModel`
+  (`decide_approval`/`deny_all_approvals`/`approval`/`pending_approvals_for_session`/
+  `oldest_approval_for_session`/`oldest_approval_in_window`). Riêng lần thử đầu dùng `let _ = queue
+  .push(...).expect(...)` để im `#[must_use]` của `oneshot::Receiver` bị clippy báo lỗi
+  `let_underscore_future` (`Receiver` là `Future`) — đổi sang `drop(queue.push(...).expect(...))`
+  theo đúng gợi ý của clippy. `cargo clippy ... -D warnings`: sạch (exit 0). `./script/format` một
+  lần; không chạy lại test/lint sau format theo mục 0.8. 4 commit riêng cho 2.1–2.4 (rule 9: mỗi
+  task một commit) + `docs(agent-ops)` này; chưa `git push`.
