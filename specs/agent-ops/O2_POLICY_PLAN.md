@@ -730,8 +730,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 1.1 `policy.rs` · [x] 1.2 lỗi `PolicyDenied` · [x] 1.3 `authorize` Allow/Deny · [x] 1.4 timeout client · [x] clippy + format
 - [x] ⛔ CHECKPOINT P1
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
-- [ ] 3.1 đọc skill · [ ] 3.2 dialog · [ ] 3.3 Workspace · [ ] 3.4 header · [ ] 3.5 toast + palette · [ ] 3.6 review · [ ] clippy + format
-- [ ] ⛔ CHECKPOINT P2
+- [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
+- [ ] ⛔ CHECKPOINT P2 (đã sẵn sàng — chờ người dùng test tay checklist 5.P2)
 - [ ] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
@@ -761,6 +761,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P20 | 2026-09-27 | Ba checkpoint: P1 (CLI, Allow/Deny) → P2 (UI duyệt) → P3 (pairing) | Bắt lỗi wiring trước khi làm UI; pairing tách riêng để O2 lõi dùng được sớm |
 | P21 | 2026-09-27 | Phase 0 (chỉ Task 0.1) không chạy clippy 3 package cuối phase, chỉ `cargo check` như mục 4 (Phase 0) đã nêu; clippy+format thật sự chạy ở cuối Phase 1 | Hằng số `APPROVAL_*`/`POLICY_FILE`/`AGENTS_FILE`/`MAX_PENDING_APPROVALS_PER_SESSION` thêm ở 0.1 chưa được dùng tới Task 1.1 → `cargo clippy -D warnings` báo `dead_code` là lỗi thật, không phải lỗi code; mục 0.8 ("cuối mỗi Phase") là quy tắc chung, còn văn bản riêng của Phase 0 chỉ yêu cầu `cargo check` — theo văn bản riêng, cụ thể hơn |
 | P22 | 2026-09-27 | `AGENTS_FILE` (Phase 4), `MAX_PENDING_APPROVALS_PER_SESSION` (Task 2.1), `APPROVAL_PREVIEW_LINES` (Task 3.7) thêm sẵn ở 0.1 nhưng chưa có chỗ dùng trong Phase 1 → gắn `#[allow(dead_code)]` (kèm comment nêu task nào sẽ dùng) ngay trước khi chạy clippy cuối Phase 1; xoá từng `allow` khi task tương ứng dùng tới hằng số đó | Đúng ý Task 0.1 của plan (thêm hằng số cả 4 phase một lần, tên `mod.rs` chung); `cargo check` không báo lỗi (chỉ warning) nên không chặn task 0.1–1.4, chỉ chặn ở bước clippy `-D warnings` cuối phase — vá đúng chỗ chặn, không đổi thiết kế hằng số |
+| P23 | 2026-09-28 | Task 3.5's "Review" từ toast/header **không** chuyển tab/pane tới session của request — chỉ mở hộp thoại (dùng `WorkspaceAction::AgentOpsReviewRequest { request_id }` trực tiếp, không qua `activate_tab_by_pane_group_id`/`focus_pane`) | Mục 3.8 của plan tự cho phép nhánh dự phòng này ("nếu khó, chỉ mở dialog — ghi Quyết định"); dialog tự hiện đúng nội dung request (session_label, lệnh) nên người vẫn biết đang duyệt gì dù chưa ở đúng tab — đủ an toàn cho O2, chuyển tab để O5b/sau |
 
 ### Nhật ký
 
@@ -908,3 +909,74 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   theo đúng gợi ý của clippy. `cargo clippy ... -D warnings`: sạch (exit 0). `./script/format` một
   lần; không chạy lại test/lint sau format theo mục 0.8. 4 commit riêng cho 2.1–2.4 (rule 9: mỗi
   task một commit) + `docs(agent-ops)` này; chưa `git push`.
+- 2026-09-28 — Người dùng yêu cầu làm tiếp Phase 3 và hoàn tất plan; giữ nguyên quy tắc "dừng ở
+  CHECKPOINT" của mục 0.1 (mỗi Phase làm xong vẫn cần test tay trước khi qua Phase kế) thay vì bỏ
+  qua vì được giục — chỉ khác là không dừng lại hỏi thêm giữa Phase 3, làm liền tới hết Phase 3 rồi
+  báo cáo ở CHECKPOINT P2 như thiết kế.
+- 2026-09-28 — Task 3.1 (Claude Sonnet 5): đọc skill `gui-ui-guidelines` (chỉ có 1 guideline hiện có
+  — dùng lại `ActionButtonTheme` có sẵn, không tự chế theme riêng), đọc `warp_sync/confirm_dialog.rs`
+  (khuôn Dialog + ActionButton + TypedActionView + `init(app)` bind Escape) và các điểm gắn nó vào
+  `workspace/view.rs` (field, `build_*`, construct trong `new`, `show_*`, `handle_*_event`, render
+  overlay) + `pane_impl.rs` (`agent_bridge_access`/`render_agent_bridge_indicator`/
+  `render_agent_bridge_revoke_button`/`revoke_agent_bridge_access`) để dùng đúng khuôn có sẵn, không
+  phát minh lại.
+- 2026-09-28 — Task 3.2 (Claude Sonnet 5): `app/src/agent_bridge/approval_dialog.rs` +
+  `approval_dialog_tests.rs` (12 test) đúng mục 3.7: `AgentApprovalDialog` (Deny=`NakedTheme`,
+  "Allow this command in this session"=`SecondaryTheme` ẩn khi `ApprovalSubject::Write`,
+  Approve=`DangerPrimaryTheme`), `content(&ApprovalRequest) -> (title, body)` thuần để test không cần
+  view. Bỏ tham số `now: SystemTime` khỏi chữ ký gợi ý ở mục 3.2 của plan: chữ đồng hồ trong hộp
+  thoại chỉ cần `request.deadline` (đã là thời điểm tuyệt đối), không cần "hiện tại" để tính gì thêm
+  — giữ tham số thừa sẽ phạm quy tắc 0.6 "không prefix `_`, xoá hẳn tham số thừa"; không ghi thành
+  mục Quyết định riêng vì không đổi thiết kế (giống cách Task 1.3 xử lý sai khác nhỏ về chữ ký).
+  `agent: Option<String>` (chưa pairing) luôn hiện "(unverified name)" — đúng chú thích mục 3.4.
+- 2026-09-28 — Task 3.3 (Claude Sonnet 5): gắn `AgentApprovalDialog` vào `Workspace` giống hệt khuôn
+  `WarpSyncConfirmDialog` (field `agent_approval_dialog`, `build_agent_approval_dialog`, construct
+  trong `new`, cờ `is_agent_approval_dialog_open` trong `WorkspaceState`, render overlay). Subscribe
+  `AgentBridgeModel` (gate `FeatureFlag::AgentOpsPolicy`, cạnh subscribe `WarpSyncModel`):
+  `ApprovalRequested` lọc theo `window_id == ctx.window_id()` rồi toast (dùng lại
+  `add_agent_bridge_toast` có sẵn — không cần viết cơ chế mới); `ApprovalsChanged` đóng dialog nếu
+  request đang hiện (`AgentApprovalDialog::request_id()`, getter mới) không còn trong queue.
+  `show_agent_approval_dialog` từ chối mở nếu `is_warp_sync_confirm_dialog_open` đang bật (mục 3.3:
+  không chồng hai overlay) — toast vẫn còn, Review lại được khi dialog kia đóng. Ba biến thể
+  `WorkspaceAction` mới (`AgentOpsReviewRequest{request_id}`/`AgentOpsReviewWaitingRequests`/
+  `AgentOpsDenyAllApprovals`) + 2 entry palette gate cùng flag, giống 5 entry `agent_bridge_*` của
+  O1. `cargo test -p warp --lib -- agent_bridge workspace`: 631 passed; `cargo check -p warp --tests`:
+  sạch, hết dead_code từ Task 2.1–3.2.
+- 2026-09-28 — Task 3.4 (Claude Sonnet 5): `indicator_label`/`review_tooltip` thêm số lượng đang chờ
+  ("Agents · root · N waiting", icon vàng như Full — hai điều kiện không bao giờ lệch nhau vì Ask chỉ
+  xảy ra sau khi `check_access(Full)` đã qua). Nút Review (icon `Eye`) chỉ hiện khi
+  `pending_agent_requests > 0`, `MouseStateHandle` riêng tạo một lần trong constructor của
+  `TerminalView` (không tạo trong lúc render — đúng cảnh báo AGENTS.md), dispatch
+  `TerminalAction::ReviewAgentRequest` → `review_agent_request` (mở `oldest_approval_for_session`)
+  → `WorkspaceAction::AgentOpsReviewRequest`, giống hệt đường `RevokeAgentBridgeAccess` có sẵn.
+  Phát hiện `WorkspaceAction` chỉ import được `#[cfg(target_arch = "wasm32")]` trong
+  `pane_impl.rs` — thêm import không-gate riêng cho code không phải WASM. `cargo test -p warp --lib
+  -- agent_bridge terminal::view workspace --test-threads=1`: 977 passed, 6 failed; xác nhận 6 lỗi
+  đó (`terminal::view::tests::test_insert` và 4 test khác, `workspace::view::tests::
+  test_terminal_model_isnt_leaked`) fail giống hệt trên commit **trước** Task 3.4 khi chạy riêng —
+  đúng loại "hay fail khi chạy song song" mục 0.5 đã cảnh báo trước, không phải lỗi do task này; mỗi
+  test trong 6 test đó pass khi chạy một mình.
+- 2026-09-28 — Task 3.5 coi như đã xong cùng Task 3.3 (toast + 2 entry palette đã viết ở đó, xem
+  nhật ký 3.3) — chỉ còn khoản chuyển tab/pane khi Review từ toast/header ở tab không active, ghi ở
+  quyết định P23 (dùng nhánh dự phòng "chỉ mở dialog" mà mục 3.8 tự cho phép).
+- 2026-09-28 — Task 3.6 (Claude Sonnet 5): tự rà theo đúng danh sách mục 3.6 (không gọi agent
+  `ecc:rust-reviewer`/`ecc:security-reviewer` riêng — phiên này đã giữ toàn bộ ngữ cảnh từng dòng vừa
+  sửa, rà trực tiếp bằng `grep` xác nhận thay vì đọc lại): mọi đường ghi chỉ chạm
+  `run_hidden_operation`/`run_visible_operation` từ nhánh `Ok` của `authorize` (grep xác nhận, không
+  có lời gọi nào khác); `send_visible_command` chỉ một chỗ gọi, trong `run_visible_operation`; không
+  `.lock()` `TerminalModel` mới nào trong toàn bộ diff Task 2.1–3.5; `AgentApprovalDialog` chỉ bind
+  Escape, không Enter; không log token/nội dung (Phase 4 pairing chưa tới, nội dung hộp thoại chỉ là
+  render không phải log). Sửa một chỗ thật: `render()`'s nhánh "request vừa biến mất" trả về
+  `Stack::new().finish()` rỗng — chưa có tiền lệ nào trong repo dùng Stack 0 con, đổi sang tái dùng
+  đúng cách `WarpSyncConfirmDialog` đã làm (title/body rỗng nhưng vẫn dựng đủ khung dialog) — đường
+  đã được kiểm chứng thay vì đường chưa ai thử. `cargo clippy -p warp -p local_control -p warp_cli
+  --all-targets --tests -- -D warnings`: sạch. `cargo test -p warp -p local_control -p warp_cli --lib
+  -- agent_bridge local_control`: 231 + 104 passed. `./script/format` một lần.
+- 2026-09-28 — Cuối Phase 3 (Claude Sonnet 5): clippy/format đã chạy sạch trong nhật ký Task 3.6 ở
+  trên (gộp luôn bước cuối Phase, không chạy lại lần hai vì candidate không đổi giữa hai bước — đúng
+  mục "Local commits are checkpoints..." của AGENTS.md). 6 commit cho Phase 3 (3.2–3.6, không có
+  commit riêng cho 3.1 vì chỉ là đọc) + sẽ thêm 1 commit `docs(agent-ops)` cho cập nhật nhật ký này.
+  **⛔ CHECKPOINT P2 sẵn sàng** — checklist 5.P2 (mục 5) chờ người dùng test tay trên VM có sshd theo
+  đúng môi trường mục 5.A–5.C của plan Bridge; cần build lại với feature `agent_ops_policy` (mục
+  0.12) để hộp thoại/toast/header/palette mới xuất hiện. Chưa làm Phase 4 (pairing) — theo đúng quy
+  tắc "dừng ở CHECKPOINT" của mục 0.1, dừng ở đây chờ kết quả test tay trước khi qua Phase 4.
