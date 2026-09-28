@@ -2,7 +2,7 @@
 //! tied to a `SessionId`, so leaving the shell it was granted in (for example `exit` from
 //! `sudo -i`) ends it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use instant::Instant;
@@ -34,6 +34,10 @@ pub(crate) struct Attachment {
     access: Access,
     last_used: Instant,
     exec_count: u32,
+    /// Exact commands (already trimmed) a person chose "Allow this command in this session" for.
+    /// Cleared along with the rest of the attachment on detach/expiry/re-attach (mục 3.5 of the O2
+    /// plan).
+    allowed_commands: HashSet<String>,
 }
 
 impl Attachment {
@@ -66,6 +70,7 @@ impl Attachments {
                 access,
                 last_used: now,
                 exec_count: 0,
+                allowed_commands: HashSet::new(),
             },
         );
     }
@@ -129,6 +134,24 @@ impl Attachments {
 
     pub(crate) fn status(&self, id: SessionId, now: Instant) -> Option<AttachmentStatus> {
         self.get(id, now).map(|attachment| attachment.status(now))
+    }
+
+    /// Records that `command` (trimmed) may run without asking again for the rest of this
+    /// attachment ("Allow this command in this session"). Does nothing once the attachment is
+    /// gone.
+    pub(crate) fn allow_command(&mut self, id: SessionId, command: &str) {
+        if let Some(attachment) = self.by_session.get_mut(&id) {
+            attachment
+                .allowed_commands
+                .insert(command.trim().to_owned());
+        }
+    }
+
+    /// Whether `command` (trimmed) was previously allowed for this attachment. `false` once the
+    /// attachment itself has expired, even if the command was allowed before it did.
+    pub(crate) fn is_command_allowed(&self, id: SessionId, command: &str, now: Instant) -> bool {
+        self.get(id, now)
+            .is_some_and(|attachment| attachment.allowed_commands.contains(command.trim()))
     }
 }
 

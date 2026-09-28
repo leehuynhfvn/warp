@@ -170,3 +170,43 @@ fn the_status_says_how_long_the_session_has_been_idle_and_what_is_left() {
     assert_eq!(attachments.status(session(1), expired), None);
     assert_eq!(attachments.status(session(2), start), None);
 }
+
+#[test]
+fn a_command_allowed_in_session_is_recognized_by_its_trimmed_text() {
+    let now = Instant::now();
+    let mut attachments = attached(Access::Full, now);
+
+    assert!(!attachments.is_command_allowed(session(1), "uptime", now));
+    attachments.allow_command(session(1), "uptime");
+    assert!(attachments.is_command_allowed(session(1), "uptime", now));
+    assert!(attachments.is_command_allowed(session(1), "  uptime  ", now));
+    assert!(!attachments.is_command_allowed(session(1), "uptime -p", now));
+}
+
+#[test]
+fn allowing_a_command_for_an_unknown_session_does_nothing() {
+    let now = Instant::now();
+    let mut attachments = Attachments::default();
+    attachments.allow_command(session(1), "uptime");
+    assert!(!attachments.is_command_allowed(session(1), "uptime", now));
+}
+
+#[test]
+fn an_allowed_command_stops_being_allowed_once_the_attachment_expires() {
+    let start = Instant::now();
+    let mut attachments = attached(Access::Full, start);
+    attachments.allow_command(session(1), "uptime");
+
+    let expired = start + ATTACH_IDLE_TTL + Duration::from_secs(1);
+    assert!(!attachments.is_command_allowed(session(1), "uptime", expired));
+}
+
+#[test]
+fn re_attaching_a_session_clears_its_previously_allowed_commands() {
+    let now = Instant::now();
+    let mut attachments = attached(Access::Full, now);
+    attachments.allow_command(session(1), "uptime");
+
+    attachments.attach(session(1), Access::Full, now);
+    assert!(!attachments.is_command_allowed(session(1), "uptime", now));
+}
