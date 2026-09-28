@@ -124,6 +124,30 @@ riêng. Phạm vi dự kiến:
 **Gate → O3/O4:** dùng hằng ngày ≥ 1 tuần trên host lab không có sự cố; mọi lệnh ghi đều đi qua
 hộp thoại hoặc allowlist; audit log đủ.
 
+### E — Sửa file từ xa ngay trong Warp (thêm 2026-09-29, plan: `E_REMOTE_EDIT_PLAN.md`)
+
+Hiện nay sửa một file trên server bằng Warp Sync phải: download → tìm thư mục mirror → mở VS Code →
+sửa → upload bằng extension. Mục tiêu: thấy đường dẫn file ở đâu trong terminal SSH đã Warpify thì
+mở và sửa được **ngay trong editor code của Warp**. Warp tự download vào mirror, Save thì tự upload
+lại (vẫn qua hộp thoại xác nhận của Warp Sync, có backup trên server và kiểm xung đột) và commit vào
+Git của mirror. Không cần O2, vì người thao tác chứ không phải agent. Đây cũng là đường ống mà G4
+(agent sửa file qua mirror) sẽ dùng lại.
+
+- **E1 — Luồng "Edit in Warp".** Palette "Warp Sync: Edit remote file…", chạy download một file →
+  mở trong editor code của Warp (tab/pane) → Save (không tính auto-save) → upload có xác nhận + diff
+  → commit Git mirror.
+- **E2 — Bấm đường dẫn trong output SSH.** Warp hiện tắt nhận diện đường dẫn file cho block của
+  session remote (`link_detection.rs`). Bật lại cho session Warpify: nhận diện theo cú pháp
+  (tuyệt đối hoặc tương đối với `pwd` của block), **không** chạy lệnh nào lúc hover; Cmd/Ctrl-click
+  → luồng E1.
+- **E3 — Tô màu file cấu hình hệ thống.** Editor Warp đã tô màu bằng tree-sitter (crate `arborium`,
+  35 ngôn ngữ nhúng sẵn) nhưng chưa có nginx, ini/systemd, sshd_config… Bật thêm grammar có sẵn
+  trong `arborium`, nhận diện theo đường dẫn + shebang, và cho người dùng tự khai báo ánh xạ
+  `glob → ngôn ngữ` trong settings.
+
+**Gate E:** sửa được `nginx.conf`, một unit systemd và `sshd_config` trên VM lab qua E1 và E2,
+mỗi lần Save có đúng một commit trong mirror và một bản backup trên server, tô màu đúng.
+
 ### G — Warp làm cổng SSH cho agent (thêm 2026-09-25, chưa có plan chi tiết)
 
 Mục tiêu: operator khai báo server **một lần** trong Warp (gồm credential, lưu an toàn); bất kỳ agent
@@ -328,7 +352,8 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [x] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12; xong 2026-09-27, CHECKPOINT A–D, thêm Phase 5: `exec_visible` + bản release) · [x] gate O1 (CHECKPOINT B đạt gồm 5.B.8 client MCP thứ hai; độ trễ 0,183 s/lệnh ở CHECKPOINT A)
-- [ ] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`; code Phase 0–4 xong, CHECKPOINT P1/P2 đạt, P3 chạy lại sau fix toast pairing P28 ngày 2026-09-29) · [ ] gate O2 (≥ 1 tuần dùng hằng ngày trên host lab, bắt đầu sau P3)
+- [x] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`; xong 2026-09-29, CHECKPOINT P1–P3 đạt, gồm fix toast pairing P28) · [ ] gate O2 (≥ 1 tuần dùng hằng ngày trên host lab: 2026-09-29 → sớm nhất 2026-10-06)
+- [ ] E sửa file từ xa ngay trong Warp (plan: `specs/agent-ops/E_REMOTE_EDIT_PLAN.md`) · [ ] E1 luồng Edit in Warp · [ ] E2 bấm đường dẫn trong output SSH · [ ] E3 tô màu file cấu hình hệ thống
 - [ ] G1 danh bạ server (G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
@@ -352,3 +377,5 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 | AO11 | 2026-09-26 | Tag lưu bằng comment `# warp:tags=…` (trong `warp.conf`) hoặc `hosts.toml` (host của user); không dùng `Tag` của OpenSSH | `Tag` chỉ một giá trị và đổi hành vi `Match tagged` |
 | AO12 | 2026-09-26 | Host nối với mirror Warp Sync bằng `mirror_key` + `machine_id` ghi lại sau lần Sync đầu (không suy từ hostname); machine-id đổi → cảnh báo, không dùng mirror cũ; MCP `list_hosts` trả thư mục mirror, không trả bí mật | Warp Sync đặt mirror theo máy (hostname, thêm hậu tố hash machine-id khi trùng tên), không theo alias ssh |
 | AO13 | 2026-09-29 | Người dùng giao Claude quyết định thiết kế và thứ tự roadmap; người dùng giữ các CHECKPOINT test tay và gate có số liệu. Thứ tự sau CHECKPOINT P3: bắt đầu tuần dùng thử gate O2, **song song** viết `G_GATEWAY_PLAN.md` và làm G1 (do người thao tác, không phụ thuộc O2); O3 chạy song song khi người dùng sửa được các MCP `grafana-*` (vẫn `CONNECTION_CLOSED` ngày 2026-09-29); G2+ chỉ sau gate O2 như AO7 | Tuần dùng thử O2 là thời gian chờ, không cần code mới; G1 là việc lớn nhất không bị chặn và là nền của G2–G4; test tay vừa bắt được lỗi toast pairing (P28 của O2) nên không bỏ bước đó |
+| AO14 | 2026-09-29 | Thêm phase **E** (sửa file từ xa ngay trong Warp) và làm **trước G1**; sau E mới tới G1. Gate O2 (tuần dùng thử) chạy song song | Người dùng yêu cầu; E là thao tác của người nên không phụ thuộc O2; E xây đường ống download → sửa → upload → commit mà G4 dùng lại cho agent |
+| AO15 | 2026-09-29 | Tô màu cú pháp giữ **cục bộ** bằng tree-sitter có sẵn (`arborium`), mở rộng bằng grammar nhúng + ánh xạ `glob → ngôn ngữ` trong settings. **Không** dùng "syntax server công khai" | Tô màu không cần mạng và đã nhanh; gửi nội dung file `/etc` (mật khẩu, khoá) lên dịch vụ công khai là lộ bí mật; LSP là việc khác (chẩn đoán lỗi, gợi ý), không cần cho file cấu hình |

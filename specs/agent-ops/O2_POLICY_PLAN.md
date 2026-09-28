@@ -752,7 +752,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
 - [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [x] 4.6 docs · [x] 4.7 review + clippy + format
 - [x] P28 toast pairing persistent (lỗi tìm thấy ở lần test tay P3 đầu, 2026-09-29)
-- [ ] ⛔ CHECKPOINT P3 (chạy lại toàn bộ 5.P3 mục 1–10 trên bản build có P28) · [ ] tick O2 trong roadmap
+- [x] ⛔ CHECKPOINT P3 (người dùng xác nhận đạt 2026-09-29, trên bản build có P28) · [x] tick O2 trong roadmap
 
 ### Quyết định
 
@@ -1188,3 +1188,6 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `!has_pending_pairing()`. Thêm mục 9–10 vào checklist 5.P3 cho client thứ hai; sửa chữ "Pair" →
   "Approve" ở mục 1 cho khớp P26. `cargo test -p warp --lib -- agent_bridge::approval`: 35 passed.
   CHECKPOINT P3 cần chạy lại toàn bộ checklist 5.P3 (mục 1–10) trên bản build mới.
+- 2026-09-29 — Người dùng xác nhận CHECKPOINT P3 đạt ("đánh dấu O2 đạt"). Tick O2 trong roadmap.
+  Gate O2 (≥ 1 tuần dùng hằng ngày trên host lab, mục O2 của ROADMAP.md) bắt đầu từ hôm nay, sớm
+  nhất đạt 2026-10-06; G2+ vẫn chờ gate đó (AO7). Kết thúc plan O2.
