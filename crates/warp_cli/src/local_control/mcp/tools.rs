@@ -5,10 +5,10 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
-    ActionKind, ControlError, RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams,
-    RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams,
-    RemoteFileWriteResult, RemoteOutputRecentParams, RemoteOutputRecentResult,
-    RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
+    APPROVAL_TIMEOUT_SECS, ActionKind, AgentToken, ControlError, RemoteExecParams,
+    RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams,
+    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
+    RemoteOutputRecentResult, RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -75,6 +75,12 @@ pub(super) trait ControlTransport {
         session: Option<&str>,
         timeout: Duration,
     ) -> Result<Value, ControlError>;
+
+    /// Sends `agent.pair`'s handshake with `token` under `name`. On success or failure, a
+    /// conforming implementation remembers `token` for every later `call` (mục 3.11 of the O2
+    /// agent-ops policy plan) — Warp simply treats an unrecognized token as an unpaired client.
+    fn pair(&mut self, name: &str, token: &AgentToken, timeout: Duration)
+    -> Result<Value, ControlError>;
 }
 
 /// A failed tool call: the message the model reads.
@@ -87,6 +93,12 @@ pub(super) struct Tools<T> {
     /// SHA-256 of each file as the model last saw it, by session id and absolute path. Files are
     /// only overwritten or edited in that state.
     seen_versions: HashMap<(String, String), String>,
+    /// `--no-pair`: never attempt pairing, so `agent_token` never leaves this process (mục 3.11 of
+    /// the O2 agent-ops policy plan).
+    no_pair: bool,
+    /// Whether pairing has already been attempted this process — tried at most once, on the first
+    /// tool call, regardless of whether it succeeds.
+    pairing_attempted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,12 +166,42 @@ struct RawFile {
 }
 
 impl<T: ControlTransport> Tools<T> {
-    pub fn new(transport: T, redactor: Redactor) -> Self {
+    pub fn new(transport: T, redactor: Redactor, no_pair: bool) -> Self {
         Self {
             transport,
             redactor,
             agent: UNKNOWN_AGENT.to_owned(),
             seen_versions: HashMap::new(),
+            no_pair,
+            pairing_attempted: false,
+        }
+    }
+
+    /// Pairs with Warp once per process, on the first tool call, using a token persisted under
+    /// this client's name (mục 3.11 of the O2 agent-ops policy plan). A failure or denial is not
+    /// retried in this process — it just prints why, and leaves the token attached to every later
+    /// call anyway, since Warp treats an unrecognized token the same as no token at all.
+    fn maybe_pair(&mut self) {
+        if self.pairing_attempted || self.no_pair {
+            return;
+        }
+        self.pairing_attempted = true;
+        let token = match crate::local_control::pairing::token_for(&self.agent) {
+            Ok(token) => token,
+            Err(err) => {
+                eprintln!(
+                    "warpctrl: could not prepare a pairing token for '{}': {err}",
+                    self.agent
+                );
+                return;
+            }
+        };
+        let timeout = Duration::from_secs(APPROVAL_TIMEOUT_SECS) + Duration::from_secs(30);
+        if let Err(err) = self.transport.pair(&self.agent, &token, timeout) {
+            eprintln!(
+                "warpctrl: pairing with Warp did not complete: {}",
+                control_error_text(&err)
+            );
         }
     }
 
@@ -492,6 +534,7 @@ impl<T: ControlTransport> McpHandler for Tools<T> {
     }
 
     fn call_tool(&mut self, name: &str, arguments: Value) -> Option<ToolResult> {
+        self.maybe_pair();
         let outcome = match name {
             "list_sessions" => self.list_sessions(arguments),
             "exec" => self.exec(arguments),

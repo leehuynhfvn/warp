@@ -12,12 +12,21 @@ use super::*;
 struct FakeTransport {
     answers: VecDeque<(ActionKind, Result<Value, ControlError>)>,
     calls: Vec<Call>,
+    pair_calls: Vec<PairCall>,
+    pair_answers: VecDeque<Result<Value, ControlError>>,
 }
 
 #[derive(Debug, Clone)]
 struct Call {
     params: Value,
     session: Option<String>,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct PairCall {
+    name: String,
+    token: AgentToken,
     timeout: Duration,
 }
 
@@ -41,10 +50,51 @@ impl ControlTransport for FakeTransport {
         assert_eq!(action, expected, "calls came in another order");
         answer
     }
+
+    fn pair(
+        &mut self,
+        name: &str,
+        token: &AgentToken,
+        timeout: Duration,
+    ) -> Result<Value, ControlError> {
+        self.pair_calls.push(PairCall {
+            name: name.to_owned(),
+            token: token.clone(),
+            timeout,
+        });
+        self.pair_answers
+            .pop_front()
+            .unwrap_or_else(|| panic!("unexpected call to agent.pair"))
+    }
 }
 
+/// Pairing off, as almost every test here wants: it would otherwise touch the real
+/// `~/.warp/agent-ops/agent-tokens/` on the first tool call. Tests of pairing itself use
+/// [`tools_with_pairing`].
 fn tools() -> Tools<FakeTransport> {
-    Tools::new(FakeTransport::default(), Redactor::with_default_patterns())
+    Tools::new(FakeTransport::default(), Redactor::with_default_patterns(), true)
+}
+
+fn tools_with_pairing() -> Tools<FakeTransport> {
+    Tools::new(FakeTransport::default(), Redactor::with_default_patterns(), false)
+}
+
+/// Points `$HOME` at a temporary, empty directory for `body`, so a pairing test's token file
+/// never touches the real `~/.warp/agent-ops/agent-tokens/`, then restores `$HOME`. `#[serial]`
+/// on the caller keeps this from racing another test's `$HOME`.
+fn with_temp_home(body: impl FnOnce()) {
+    let home = tempfile::tempdir().unwrap();
+    let previous_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", home.path());
+    }
+    body();
+    unsafe {
+        match &previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
 }
 
 fn answer(tools: &mut Tools<FakeTransport>, action: ActionKind, data: impl serde::Serialize) {
@@ -889,4 +939,66 @@ fn exec_visible_passes_a_busy_shell_through_as_an_error() {
         "{}",
         result.text
     );
+}
+
+#[test]
+#[serial_test::serial]
+fn the_first_tool_call_pairs_once_and_sends_the_token_on_later_calls() {
+    with_temp_home(|| {
+        let mut tools = tools_with_pairing();
+        tools.set_client_name("claude-code");
+        tools
+            .transport
+            .pair_answers
+            .push_back(Ok(json!({ "agent_id": "claude-code", "status": "paired" })));
+        answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
+
+        call(&mut tools, "list_sessions", json!({}));
+        assert_eq!(tools.transport.pair_calls.len(), 1);
+        let pair_call = &tools.transport.pair_calls[0];
+        assert_eq!(pair_call.name, "claude-code");
+        assert_eq!(pair_call.token.secret().len(), 43);
+        assert_eq!(
+            pair_call.timeout,
+            Duration::from_secs(APPROVAL_TIMEOUT_SECS + 30)
+        );
+
+        // A second tool call does not pair again.
+        answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
+        call(&mut tools, "list_sessions", json!({}));
+        assert_eq!(tools.transport.pair_calls.len(), 1);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn a_failed_pairing_attempt_is_not_retried_in_the_same_process() {
+    with_temp_home(|| {
+        let mut tools = tools_with_pairing();
+        tools.set_client_name("claude-code");
+        tools.transport.pair_answers.push_back(Err(ControlError::new(
+            ErrorCode::PolicyDenied,
+            "Denied by Warp's agent policy: the user did not pair this agent",
+        )));
+        answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
+        call(&mut tools, "list_sessions", json!({}));
+        assert_eq!(tools.transport.pair_calls.len(), 1);
+
+        answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
+        call(&mut tools, "list_sessions", json!({}));
+        assert_eq!(
+            tools.transport.pair_calls.len(),
+            1,
+            "a denied pairing attempt must not be retried"
+        );
+    });
+}
+
+#[test]
+fn no_pair_never_attempts_pairing() {
+    let mut tools = tools();
+    tools.set_client_name("claude-code");
+    answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
+    call(&mut tools, "list_sessions", json!({}));
+    assert!(tools.transport.pair_calls.is_empty());
 }

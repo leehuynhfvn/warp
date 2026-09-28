@@ -11,6 +11,7 @@ base64.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 cfg-if = { workspace = true }
+dirs.workspace = true
 humantime.workspace = true
 jaq-all.workspace = true
 regex.workspace = true
@@ -18,6 +19,7 @@ secret_redaction.workspace = true
 serde = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
 warp_core = { path = "../warp_core" }
@@ -41,4 +43,5 @@ integration_tests = []
 
 [dev-dependencies]
 serial_test = "0.8.0"
+tempfile.workspace = true
 warp_core = { workspace = true, features = ["test-util"] }

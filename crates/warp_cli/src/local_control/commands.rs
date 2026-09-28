@@ -787,12 +787,25 @@ fn run_action_with_params<T: Serialize>(
 }
 
 /// Sends one action to the selected Warp instance and returns its data, waiting up to `timeout`
-/// for the answer.
+/// for the answer. A plain `warpctrl` invocation is the "agent" here, so it never carries an
+/// `agent_token` — see [`send_action_with_token`] for the MCP transport, which does.
 pub(super) fn send_action<T: Serialize>(
     args: &TargetArgs,
     action: ActionKind,
     params: T,
     timeout: Duration,
+) -> Result<serde_json::Value, ControlError> {
+    send_action_with_token(args, action, params, timeout, None)
+}
+
+/// Like [`send_action`], but carries `agent_token` in the envelope when given one (mục 3.11 of the
+/// O2 agent-ops policy plan) — used by the MCP transport once it has paired, or while pairing.
+pub(super) fn send_action_with_token<T: Serialize>(
+    args: &TargetArgs,
+    action: ActionKind,
+    params: T,
+    timeout: Duration,
+    agent_token: Option<&local_control::protocol::AgentToken>,
 ) -> Result<serde_json::Value, ControlError> {
     let selector = instance_selector(args);
     let records = local_control::discovery::list_instances(&ChannelState::channel().to_string());
@@ -800,6 +813,7 @@ pub(super) fn send_action<T: Serialize>(
     let instance = select_instance(&records, &selector)?;
     let mut request = RequestEnvelope::new(Action::with_params(action, params)?);
     request.target = target;
+    request.agent_token = agent_token.cloned();
     let response = local_control::client::send_request_with_timeout(&instance, &request, timeout)?;
     match response.response {
         local_control::protocol::ControlResponse::Ok { data } => Ok(data),

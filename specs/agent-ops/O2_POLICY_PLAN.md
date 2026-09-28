@@ -732,7 +732,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -1090,3 +1090,33 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `cargo test -p warp --lib -- agent_bridge local_control workspace`: 731 passed; `cargo test -p
   local_control --lib`: 63 passed (−1 đúng vì gỡ test tạm P24). `cargo check -p warp -p local_control
   -p warp_cli --tests`: qua.
+- 2026-09-28 — Task 4.5 (Claude Sonnet 5): phía client (`crates/warp_cli/src/local_control/`) đúng
+  mục 3.11. `pairing.rs` (mới) + `pairing_tests.rs` (6 test): `token_for(name) -> AgentToken` —
+  đọc `~/.warp/agent-ops/agent-tokens/<name>.token` nếu có (từ chối quyền rộng hơn 0600, từ chối nội
+  dung không parse được thành `AgentToken` — không âm thầm ghi đè file hỏng); không có thì
+  `AgentToken::generate()` + ghi bằng `create_new` (không đè) vào thư mục 0700/file 0600, thua race
+  hiếm (hai process cùng tạo) thì đọc lại file vừa thắng thay vì lỗi cứng. `name` dùng thẳng
+  `self.agent` đã được `agent_name()` làm sạch ký tự (D24) sẵn trong `Tools`, không sanitize lần hai.
+  Thêm `dirs`/`thiserror` vào `warp_cli/Cargo.toml` (đã có sẵn ở workspace, dùng lại, không phải
+  dependency mới cho repo); `tempfile` vào `[dev-dependencies]`.
+  `commands.rs::send_action` giữ **nguyên chữ ký** (đúng mục 3.11: "không đổi chữ ký hàm của crate
+  local_control::client" — áp dụng luôn cho `send_action` của `warp_cli` vì nó cũng được gọi từ
+  nhiều lệnh `warpctrl` khác không nên đổi), chuyển thành gọi `send_action_with_token(..., None)`
+  mới (tham số `agent_token: Option<&AgentToken>` thêm vào `RequestEnvelope` trước khi gửi).
+  `mcp/tools.rs::ControlTransport` thêm phương thức `pair(name, token, timeout) -> Result<Value,
+  ControlError>` (tách khỏi `call` vì bản thân cuộc gọi `agent.pair` phải **mang đúng token cụ thể**
+  trước khi transport "nhớ" token đó cho các cuộc gọi sau — không thể tái dùng `call`'s luồng token-
+  đã-lưu cho chính yêu cầu xác lập token đó). `Tools` thêm `no_pair`/`pairing_attempted`;
+  `maybe_pair()` chạy ở đầu `call_tool` (chỉ 1 lần/process dù thành công hay không — lỗi/bị từ chối
+  chỉ in stderr, không thử lại, **vẫn** gắn token vào mọi cuộc gọi sau vì Warp coi token lạ như chưa
+  ghép, không có gì mất khi cứ gửi). `mcp/mod.rs::LocalControlTransport` thêm field `agent_token`
+  (gán trong `pair()`, đọc trong `call()`), cờ `--no-pair` (`McpArgs.no_pair`) tắt hẳn `maybe_pair`.
+  `warpctrl remote …` (người dùng gõ tay) không đụng tới `pairing.rs`/token — giữ nguyên `send_action`
+  không tham số token, đúng "CLI người là agent ở đây, không cần pairing". Test: `pairing_tests.rs`
+  (đĩa, `$HOME` tạm) + `tools_tests.rs` thêm `FakeTransport::pair`, helper `tools_with_pairing()`
+  (no_pair=false) tách khỏi `tools()` mặc định (no_pair=true, giữ nguyên toàn bộ ~30 test cũ không
+  bị pairing xen vào) — 3 test mới: pair đúng 1 lần + không lặp lại ở lần gọi tool thứ hai, pairing
+  bị từ chối không thử lại trong cùng process, `--no-pair` không bao giờ gọi `agent.pair`.
+  `cargo test -p warp -p local_control -p warp_cli --lib -- agent_bridge local_control`: 113 passed;
+  `cargo test -p warp --lib -- agent_bridge local_control workspace`: 731 passed; `cargo test -p
+  local_control --lib`: 63 passed. `cargo check -p warp -p local_control -p warp_cli --tests`: qua.

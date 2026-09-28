@@ -3,6 +3,7 @@ mod commands;
 mod completions;
 mod mcp;
 mod output;
+mod pairing;
 mod remote;
 mod selectors;
 mod sync;
