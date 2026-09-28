@@ -4,7 +4,7 @@ use futures::executor::block_on;
 use warpui::{App, ModelHandle, WindowId};
 
 use super::*;
-use crate::agent_bridge::approval::{ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use crate::agent_bridge::approval::{AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject};
 
 fn setup(app: &mut App) -> ModelHandle<AgentBridgeModel> {
     app.add_singleton_model(|_| AgentBridgeModel::default())
@@ -23,7 +23,10 @@ fn request(session: SessionId, window_id: WindowId) -> ApprovalRequest {
         request_id: Uuid::new_v4(),
         session,
         session_label: "root@lab-1".to_owned(),
-        agent: Some("claude-code".to_owned()),
+        agent: AgentLabel {
+            claimed: Some("claude-code".to_owned()),
+            agent_id: None,
+        },
         subject: ApprovalSubject::Command {
             command: "uptime".to_owned(),
             cwd: None,

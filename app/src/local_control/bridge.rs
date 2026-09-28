@@ -11,6 +11,7 @@ use futures::channel::oneshot;
 use uuid::Uuid;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
+use crate::agent_bridge::pairing;
 use crate::local_control::handlers::sync::{self, PathOperation, SyncReceiver};
 use crate::local_control::handlers::{
     agent, app_state, close, metadata, metadata_config, remote, settings_surfaces,
@@ -209,13 +210,18 @@ impl LocalControlBridge {
             ActionKind::PaneClose => close::pane_close(&self.instance_id, &request, ctx),
             ActionKind::RemoteSessionList => remote::session_list(ctx),
             ActionKind::RemoteExec | ActionKind::RemoteFileRead | ActionKind::RemoteFileWrite => {
-                return pending(request.request_id, remote::start(&request, ctx));
+                let token_sha256 = agent_token_sha256(&request);
+                return pending(request.request_id, remote::start(&request, token_sha256, ctx));
             }
             ActionKind::RemoteOutputRecent => {
                 return pending(request.request_id, remote::output_recent(&request, ctx));
             }
             ActionKind::RemoteExecVisible => {
-                return pending(request.request_id, remote::exec_visible(&request, ctx));
+                let token_sha256 = agent_token_sha256(&request);
+                return pending(
+                    request.request_id,
+                    remote::exec_visible(&request, token_sha256, ctx),
+                );
             }
             ActionKind::AgentPair => agent::pair(&request, ctx),
             ActionKind::SyncStatus => {
@@ -269,6 +275,15 @@ impl LocalControlBridge {
             Err(error) => ResponseEnvelope::error(request.request_id, error),
         })
     }
+}
+
+/// Hashes `request`'s `agent_token`, once, so every handler that needs to recognize a paired agent
+/// (mục 3.11 of the O2 plan) shares the same hash instead of each hashing it again.
+fn agent_token_sha256(request: &RequestEnvelope) -> Option<String> {
+    request
+        .agent_token
+        .as_ref()
+        .map(|token| pairing::hash(token.secret()))
 }
 
 fn pending(request_id: Uuid, receiver: Result<SyncReceiver, ControlError>) -> BridgeResult {

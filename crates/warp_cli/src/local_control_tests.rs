@@ -248,7 +248,14 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
         assert_eq!(parsed_action_kind(&args.command), Some(kind));
         covered.insert(kind);
     }
-    let expected = ActionKind::ALL.iter().copied().collect::<HashSet<_>>();
+    // `agent.pair` (mục 3.11 of the O2 agent-ops policy plan) is driven by the MCP transport's
+    // pairing handshake, not typed by a person, so `warpctrl` gives it no subcommand — see the
+    // O2 plan's Task 4.5 decision log if that changes.
+    let expected = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| *kind != ActionKind::AgentPair)
+        .collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)
         .map(|kind| kind.as_str())

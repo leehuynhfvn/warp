@@ -732,7 +732,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -763,6 +763,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P22 | 2026-09-27 | `AGENTS_FILE` (Phase 4), `MAX_PENDING_APPROVALS_PER_SESSION` (Task 2.1), `APPROVAL_PREVIEW_LINES` (Task 3.7) thêm sẵn ở 0.1 nhưng chưa có chỗ dùng trong Phase 1 → gắn `#[allow(dead_code)]` (kèm comment nêu task nào sẽ dùng) ngay trước khi chạy clippy cuối Phase 1; xoá từng `allow` khi task tương ứng dùng tới hằng số đó | Đúng ý Task 0.1 của plan (thêm hằng số cả 4 phase một lần, tên `mod.rs` chung); `cargo check` không báo lỗi (chỉ warning) nên không chặn task 0.1–1.4, chỉ chặn ở bước clippy `-D warnings` cuối phase — vá đúng chỗ chặn, không đổi thiết kế hằng số |
 | P23 | 2026-09-28 | Task 3.5's "Review" từ toast/header **không** chuyển tab/pane tới session của request — chỉ mở hộp thoại (dùng `WorkspaceAction::AgentOpsReviewRequest { request_id }` trực tiếp, không qua `activate_tab_by_pane_group_id`/`focus_pane`) | Mục 3.8 của plan tự cho phép nhánh dự phòng này ("nếu khó, chỉ mở dialog — ghi Quyết định"); dialog tự hiện đúng nội dung request (session_label, lệnh) nên người vẫn biết đang duyệt gì dù chưa ở đúng tab — đủ an toàn cho O2, chuyển tab để O5b/sau |
 | P24 | 2026-09-28 | `ActionKind::AgentPair` vào catalog ở Task 4.1 với `status: Stub` (đúng mục 4.1 của plan) tạm thời phá 2 test bất biến có sẵn từ trước O2 (`catalog_actions_share_uniform_authorization`, `implemented_catalog_contains_all_retained_actions` — cả hai giả định mọi action trong `ActionKind::ALL` đều `Implemented`, viết trước khi `ActionImplementationStatus::Stub` được dùng thật lần đầu); sửa cả hai để loại trừ đúng một action này (kèm test mới `agent_pair_is_a_stub_until_its_handler_lands` xác nhận trạng thái đó), thay vì né bằng cách đặt `agent.pair` thẳng `Implemented` từ Task 4.1 | Giữ đúng ranh giới 4.1 (chỉ protocol) → 4.4 (handler thật) của plan; loại trừ sẽ tự hết khi Task 4.4 đổi `status` sang `Implemented` — gỡ carve-out đó lúc đó, không phải giữ mãi |
+| P25 | 2026-09-28 | `agent.pair` không có subcommand `warpctrl agent pair`; loại hẳn khỏi test bất biến `every_retained_catalog_action_has_a_parseable_cli_example` (không phải carve-out tạm) | Đây là handshake máy-với-máy MCP transport tự gọi lúc tool call đầu (mục 3.11), không phải lệnh người gõ tay như `remote.*`; Task 4.5 của plan cũng chỉ thiết kế phía client MCP, không nhắc CLI trực tiếp |
 
 ### Nhật ký
 
@@ -1018,3 +1019,35 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   Task 4.3 cần gọi nó ngay khi bridge nhận token — không tách file riêng. Đăng ký `pub(crate) mod
   pairing;` trong `agent_bridge/mod.rs`; bỏ `#[allow(dead_code)]` khỏi `AGENTS_FILE` (P22: hằng số
   đã có người dùng thật). `cargo test -p warp --lib agent_bridge::pairing`: 14 passed.
+- 2026-09-28 — Task 4.3 (Claude Sonnet 5): danh tính vào luồng `authorize` (`handlers/remote.rs`)
+  đúng mục 3.11. `AgentLabel { claimed: Option<String>, agent_id: Option<String> }` (mới, trong
+  `agent_bridge/approval.rs` — `ApprovalRequest.agent` đổi từ `Option<String>` sang kiểu này).
+  `AuthorizeInput` thêm `token_sha256: Option<String>` (bridge băm `request.agent_token` **một lần**
+  ở `bridge.rs::agent_token_sha256`, truyền xuống `remote::start`/`remote::exec_visible` — cả hai
+  đổi chữ ký nhận thêm tham số này). `authorize`'s tầng nền giờ tra cả `pairing::load` lẫn
+  `policy::load` cùng lúc (`resolve_agent_id(home, token_sha256)`), rồi gán `input.agent.agent_id`
+  **và** `input.target.agent_id` trước khi rẽ nhánh Allow/Ask/Deny — hai chỗ vì `Target` (đọc bởi
+  audit của chính `authorize`, qua `ops::audit_policy_denied`/`audit_approval_requested`) và
+  `AgentLabel` (đọc bởi hộp thoại, qua `ApprovalRequest.agent`) là hai bản sao độc lập của cùng
+  thông tin. `continue_with`'s kiểu đổi từ `Result<Option<&'static str>, _>` sang
+  `Result<AuthorizedOutcome, _>` (struct mới, `{ policy_decision, agent_id }`) để `agent_id` cũng
+  đi tiếp được tới `Target` mà `start`/`exec_visible` tự dựng lại sau khi `authorize` xong (biến
+  `target` gốc, không phải `input.target`, vì `continue_with` đóng lại `target` từ trước khi
+  `authorize` chạy — không sửa hình dạng đó, chỉ thêm trường). `evaluate_policy` thêm tham số
+  `home: Option<&Path>` (gọi `dirs::home_dir()` một lần ở tầng nền thay vì hai lần) và `paired: bool`
+  (không còn hardcode `false`). `ops::Target`/`AuditRecord` thêm `agent_id: Option<String>`, threading
+  giống hệt `policy_decision` có sẵn. `approval_dialog.rs`'s `agent_line`: đã ghép cặp (`agent_id`
+  có) → `"{agent_id} (paired)"` (hiện đúng id đã ghép, không phải tên tự khai — có thể khác nhau sau
+  khi `next_id` thêm hậu tố); chưa ghép → như cũ `"{claimed} (unverified name)"` / tên trống. Sửa 4
+  test helper dựng `ApprovalRequest` (`approval_tests.rs`, `model_tests.rs`, `approval_dialog_tests.rs`
+  × 2 hàm) sang `AgentLabel`; thêm test hộp thoại "paired" mới; test `resolve_agent_id` (không
+  token/không khớp/khớp) trong `remote_tests.rs`; sửa 2 test `evaluate_policy` cũ theo chữ ký mới.
+  Phát hiện ngoài kế hoạch: test bất biến có sẵn `every_retained_catalog_action_has_a_parseable_cli_example`
+  (`crates/warp_cli/src/local_control_tests.rs`) đòi **mọi** `ActionKind::ALL` có ví dụ CLI — `agent.pair`
+  chưa có subcommand `warpctrl` nào (Task 4.5 chỉ nói tới client MCP, không nói CLI); loại trừ hẳn
+  `AgentPair` khỏi tập kỳ vọng của test đó (không phải carve-out tạm như P24 — quyết định thật: agent.pair
+  là handshake máy-với-máy do MCP transport tự gọi lúc tool call đầu tiên, không phải lệnh người gõ tay,
+  nên **không** cần subcommand `warpctrl agent pair`) — ghi P25. `cargo test -p warp --lib agent_bridge`:
+  255 passed; `cargo test -p local_control --lib`: 64 passed; `cargo test -p warp -p local_control -p
+  warp_cli --lib -- agent_bridge local_control`: 104 passed (warp_cli slice) + không lỗi. `cargo check
+  -p warp -p local_control -p warp_cli --tests`: qua.

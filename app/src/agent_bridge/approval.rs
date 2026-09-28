@@ -34,15 +34,26 @@ pub(crate) enum ApprovalSubject {
     },
 }
 
-/// One write waiting for a person to decide on it. `agent` is the name the client claimed at
-/// connect time; pairing (Phase 4) adds a verified identity alongside it.
+/// Who a request claims to be from: the name a client gave itself, and — once pairing resolves the
+/// envelope's `agent_token` against `~/.warp/agent-ops/agents.toml` — a verified id alongside it.
+/// `claimed` never grants anything on its own (it is not even validated the same way twice: the
+/// `remote.*` actions' own `agent` field is checked by `ops::validate_agent`, this is just what an
+/// approval dialog or audit line shows); only `agent_id` means the policy actually recognized the
+/// caller.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct AgentLabel {
+    pub(crate) claimed: Option<String>,
+    pub(crate) agent_id: Option<String>,
+}
+
+/// One write waiting for a person to decide on it.
 #[derive(Debug, Clone)]
 pub(crate) struct ApprovalRequest {
     pub(crate) request_id: Uuid,
     pub(crate) session: SessionId,
     /// How the session is named to a person, e.g. "root@draff3".
     pub(crate) session_label: String,
-    pub(crate) agent: Option<String>,
+    pub(crate) agent: AgentLabel,
     pub(crate) subject: ApprovalSubject,
     /// Wall-clock time the request is auto-denied at, shown to the person reviewing it. The
     /// actual timeout is enforced by the `Timer` in [`wait_for_decision`], not by comparing

@@ -57,6 +57,10 @@ pub(crate) struct AuditRecord {
     pub policy_decision: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_reason: Option<String>,
+    /// The paired identity the request's `agent_token` resolved to, once pairing (Task 4.3 of the
+    /// O2 plan) is wired up. Absent for an unpaired or untokened client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     pub duration_ms: u64,
     /// Bytes read or written.
     #[serde(skip_serializing_if = "Option::is_none")]

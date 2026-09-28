@@ -19,7 +19,7 @@ use warpui::{
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
-use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use super::approval::{AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject};
 use super::model::AgentBridgeModel;
 use crate::appearance::Appearance;
 use crate::ui_components::dialog::{Dialog, dialog_styles};
@@ -54,7 +54,7 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
         ApprovalSubject::Write { .. } => format!("Write a file on {}?", request.session_label),
     };
 
-    let mut lines = vec![agent_line(request.agent.as_deref())];
+    let mut lines = vec![agent_line(&request.agent)];
     match &request.subject {
         ApprovalSubject::Command {
             command,
@@ -105,10 +105,15 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
     (title, lines.join("\n\n"))
 }
 
-/// "Agent: claude-code (unverified name)" — pairing (Task 4.3) will add "(paired)" once a
-/// verified `agent_id` exists; until then every claimed name is unverified.
-fn agent_line(agent: Option<&str>) -> String {
-    match agent {
+/// "Agent: claude-code (paired)" once pairing resolved a verified `agent_id` — that name is the
+/// paired identity, not necessarily what the request's own `agent` field claims, since the two can
+/// differ once the id has been disambiguated with a "-2" suffix. Otherwise "Agent: claude-code
+/// (unverified name)" for a self-reported name, or a name-less fallback for neither.
+fn agent_line(agent: &AgentLabel) -> String {
+    if let Some(agent_id) = &agent.agent_id {
+        return format!("Agent: {} (paired)", printable(agent_id));
+    }
+    match &agent.claimed {
         Some(name) => format!("Agent: {} (unverified name)", printable(name)),
         None => "Agent: an agent that did not give its name".to_owned(),
     }

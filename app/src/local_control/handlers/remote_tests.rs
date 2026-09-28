@@ -14,7 +14,8 @@ use settings::Setting as _;
 use warp_core::features::FeatureFlag;
 use warpui::SingletonEntity as _;
 
-use super::{Decision, Operation, PolicyRequest, PolicySubject, evaluate_policy};
+use super::{Decision, Operation, PolicyRequest, PolicySubject, evaluate_policy, resolve_agent_id};
+use crate::agent_bridge::pairing;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::local_control::{
     ControlServerState, LocalControlBridge, handle_control_request, issue_credential,
@@ -340,7 +341,12 @@ fn with_temp_home_policy(text: &str, body: impl FnOnce()) {
 #[serial_test::serial]
 fn evaluate_policy_reads_the_real_policy_file_under_home() {
     with_temp_home_policy("[defaults]\nmode = \"read_only\"\n", || {
-        let decision = evaluate_policy("prod-1", PolicyRequest::Exec("id"));
+        let decision = evaluate_policy(
+            dirs::home_dir().as_deref(),
+            "prod-1",
+            PolicyRequest::Exec("id"),
+            false,
+        );
         match decision {
             Decision::Deny(reason) => assert!(reason.contains("read-only"), "{reason}"),
             other => panic!("expected Deny, got {other:?}"),
@@ -352,7 +358,12 @@ fn evaluate_policy_reads_the_real_policy_file_under_home() {
 #[serial_test::serial]
 fn evaluate_policy_denies_everything_when_the_policy_file_is_invalid() {
     with_temp_home_policy("[defaults]\nmode = \"sometimes\"\n", || {
-        let decision = evaluate_policy("prod-1", PolicyRequest::Exec("id"));
+        let decision = evaluate_policy(
+            dirs::home_dir().as_deref(),
+            "prod-1",
+            PolicyRequest::Exec("id"),
+            false,
+        );
         match decision {
             Decision::Deny(reason) => {
                 assert!(reason.contains("policy file"), "{reason}");
@@ -360,6 +371,32 @@ fn evaluate_policy_denies_everything_when_the_policy_file_is_invalid() {
             other => panic!("expected Deny, got {other:?}"),
         }
     });
+}
+
+#[test]
+fn resolve_agent_id_is_none_without_a_token() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(resolve_agent_id(home.path(), None), None);
+}
+
+#[test]
+fn resolve_agent_id_is_none_for_an_unpaired_token() {
+    let home = tempfile::tempdir().unwrap();
+    pairing::add(home.path(), "claude-code", pairing::hash("token-a")).unwrap();
+    assert_eq!(
+        resolve_agent_id(home.path(), Some(&pairing::hash("token-b"))),
+        None
+    );
+}
+
+#[test]
+fn resolve_agent_id_returns_the_paired_id_for_a_matching_token() {
+    let home = tempfile::tempdir().unwrap();
+    pairing::add(home.path(), "claude-code", pairing::hash("token-a")).unwrap();
+    assert_eq!(
+        resolve_agent_id(home.path(), Some(&pairing::hash("token-a"))),
+        Some("claude-code".to_owned())
+    );
 }
 
 #[test]

@@ -10,7 +10,10 @@ fn command_request(command: &str, cwd: Option<&str>, visible: bool) -> ApprovalR
         request_id: Uuid::new_v4(),
         session: SessionId::from(1u64),
         session_label: "root@lab-1".to_owned(),
-        agent: Some("claude-code".to_owned()),
+        agent: AgentLabel {
+            claimed: Some("claude-code".to_owned()),
+            agent_id: None,
+        },
         subject: ApprovalSubject::Command {
             command: command.to_owned(),
             cwd: cwd.map(str::to_owned),
@@ -31,7 +34,10 @@ fn write_request(
         request_id: Uuid::new_v4(),
         session: SessionId::from(1u64),
         session_label: "root@lab-1".to_owned(),
-        agent: Some("claude-code".to_owned()),
+        agent: AgentLabel {
+            claimed: Some("claude-code".to_owned()),
+            agent_id: None,
+        },
         subject: ApprovalSubject::Write {
             path: "/etc/nginx/nginx.conf".to_owned(),
             bytes,
@@ -118,16 +124,28 @@ fn a_write_preview_with_nothing_cut_mentions_no_more_lines() {
 #[test]
 fn an_agent_that_gave_no_name_is_labeled_generically() {
     let mut request = command_request("uptime", None, false);
-    request.agent = None;
+    request.agent = AgentLabel::default();
     let (_, body) = content(&request);
     assert!(body.contains("Agent: an agent that did not give its name"));
 }
 
 #[test]
-fn a_claimed_agent_name_is_marked_unverified_before_pairing_exists() {
+fn a_claimed_agent_name_is_marked_unverified_when_not_paired() {
     let request = command_request("uptime", None, false);
     let (_, body) = content(&request);
     assert!(body.contains("Agent: claude-code (unverified name)"));
+}
+
+#[test]
+fn a_paired_agent_is_shown_by_its_paired_id_instead_of_its_claimed_name() {
+    let mut request = command_request("uptime", None, false);
+    request.agent = AgentLabel {
+        claimed: Some("some-other-claimed-name".to_owned()),
+        agent_id: Some("claude-code".to_owned()),
+    };
+    let (_, body) = content(&request);
+    assert!(body.contains("Agent: claude-code (paired)"));
+    assert!(!body.contains("some-other-claimed-name"));
 }
 
 #[test]

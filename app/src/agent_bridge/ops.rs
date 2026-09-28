@@ -134,6 +134,10 @@ pub(crate) struct Target {
     /// Set once `authorize` has decided to let the request run, so the "started" audit record
     /// says why. `None` when the `AgentOpsPolicy` flag is off, matching O1's audit shape exactly.
     pub policy_decision: Option<&'static str>,
+    /// The paired identity `authorize` resolved the request's `agent_token` to, if any (mục 3.11
+    /// of the O2 plan). Threaded the same way as `policy_decision`, so every audit record for a
+    /// request — not just its approval line — carries it once known.
+    pub agent_id: Option<String>,
 }
 
 pub(crate) async fn exec(
@@ -621,6 +625,7 @@ impl Audit {
             error_code: None,
             policy_decision: target.policy_decision,
             policy_reason: None,
+            agent_id: target.agent_id.clone(),
             duration_ms: 0,
             bytes: None,
             still_running: false,

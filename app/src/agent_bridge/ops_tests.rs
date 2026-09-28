@@ -83,6 +83,7 @@ fn target(audit_dir: Option<&Path>, cwd: Option<&str>) -> Target {
         request_id: Uuid::from_u128(7),
         audit_dir: audit_dir.map(Path::to_path_buf),
         policy_decision: None,
+        agent_id: None,
     }
 }
 

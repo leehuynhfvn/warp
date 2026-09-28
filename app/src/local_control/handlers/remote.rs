@@ -5,6 +5,7 @@
 //! pane happens to be focused. What may be done in it is decided by the user's attachment, not by
 //! the client.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -23,13 +24,16 @@ use serde_json::Value;
 use warpui::{ModelContext, SingletonEntity, ViewHandle, WindowId};
 
 use super::metadata::{SessionEntry, session_entries};
-use crate::agent_bridge::approval::{self, ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use crate::agent_bridge::approval::{
+    self, AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject,
+};
 use crate::agent_bridge::attachments::{Access, AttachmentStatus};
 use crate::agent_bridge::audit::audit_dir;
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::operations::OperationKind;
 use crate::agent_bridge::ops::{self, SessionRunner, Target, VisibleAudit};
+use crate::agent_bridge::pairing;
 use crate::agent_bridge::policy::{self, Decision, PolicyRequest};
 use crate::agent_bridge::visible::{self, CommandWatch};
 use crate::agent_bridge::{APPROVAL_PREVIEW_LINES, recent};
@@ -139,9 +143,11 @@ pub(crate) fn session_list(
 
 /// Starts an operation in an attached session. The answer arrives on the returned receiver so
 /// that the main thread is not held up while the server works. A write (`Exec`/`Write`) is gated
-/// on the agent-ops policy first; a read runs unchanged from O1.
+/// on the agent-ops policy first; a read runs unchanged from O1. `token_sha256` is the hash of the
+/// envelope's `agent_token`, already computed once by the caller (mục 3.11 of the O2 plan).
 pub(crate) fn start(
     request: &RequestEnvelope,
+    token_sha256: Option<String>,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<RemoteReceiver, ControlError> {
     let kind = request.action.kind;
@@ -167,15 +173,20 @@ pub(crate) fn start(
         window_id,
         subject,
         action: kind,
-        agent: operation.agent().map(str::to_owned),
+        agent: AgentLabel {
+            claimed: operation.agent().map(str::to_owned),
+            agent_id: None,
+        },
+        token_sha256,
         target: target.clone(),
     };
     authorize(
         input,
         move |result, ctx| match result {
-            Ok(policy_decision) => {
+            Ok(outcome) => {
                 let target = Target {
-                    policy_decision,
+                    policy_decision: outcome.policy_decision,
+                    agent_id: outcome.agent_id,
                     ..target
                 };
                 run_hidden_operation(id, operation, runner, target, is_exec, sender, ctx);
@@ -270,6 +281,7 @@ pub(crate) fn output_recent(
 /// (mục 2.4 P14 of the plan).
 pub(crate) fn exec_visible(
     request: &RequestEnvelope,
+    token_sha256: Option<String>,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) -> Result<RemoteReceiver, ControlError> {
     let kind = request.action.kind;
@@ -296,15 +308,20 @@ pub(crate) fn exec_visible(
         window_id,
         subject: PolicySubject::ExecVisible(params.command.clone()),
         action: kind,
-        agent: params.agent.clone(),
+        agent: AgentLabel {
+            claimed: params.agent.clone(),
+            agent_id: None,
+        },
+        token_sha256,
         target: target.clone(),
     };
     authorize(
         input,
         move |result, ctx| match result {
-            Ok(policy_decision) => {
+            Ok(outcome) => {
                 let target = Target {
-                    policy_decision,
+                    policy_decision: outcome.policy_decision,
+                    agent_id: outcome.agent_id,
                     ..target
                 };
                 run_visible_operation(id, snapshot, params, target, sender, ctx);
@@ -473,6 +490,7 @@ fn target(
         request_id: request.request_id,
         audit_dir: audit_dir(),
         policy_decision: None,
+        agent_id: None,
     }
 }
 
@@ -578,8 +596,20 @@ struct AuthorizeInput {
     window_id: WindowId,
     subject: PolicySubject,
     action: ActionKind,
-    agent: Option<String>,
+    /// `agent_id` starts `None` and is filled in by `authorize` once it has resolved
+    /// `token_sha256` against the paired-agents store, on the same background turn that loads the
+    /// policy (mục 3.11 of the plan).
+    agent: AgentLabel,
+    /// Hash of the envelope's `agent_token`, already computed once by the caller.
+    token_sha256: Option<String>,
     target: Target,
+}
+
+/// What `authorize` decided once a request is allowed to run: the label its "started" audit record
+/// gets, and the paired identity (if any) every audit record for the request should carry.
+struct AuthorizedOutcome {
+    policy_decision: Option<&'static str>,
+    agent_id: Option<String>,
 }
 
 /// Decides whether an agent may perform `input.subject`, per the fixed rule order in mục 2.2 of
@@ -592,24 +622,51 @@ struct AuthorizeInput {
 fn authorize(
     input: AuthorizeInput,
     continue_with: impl FnOnce(
-        Result<Option<&'static str>, AgentBridgeError>,
+        Result<AuthorizedOutcome, AgentBridgeError>,
         &mut ModelContext<LocalControlBridge>,
     ) + 'static,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) {
     if !FeatureFlag::AgentOpsPolicy.is_enabled() {
-        continue_with(Ok(None), ctx);
+        continue_with(
+            Ok(AuthorizedOutcome {
+                policy_decision: None,
+                agent_id: None,
+            }),
+            ctx,
+        );
         return;
     }
     ctx.spawn(
         async move {
-            let decision = evaluate_policy(&input.hostname, input.subject.as_policy_request());
-            (input, decision)
+            let home = dirs::home_dir();
+            let agent_id = home
+                .as_deref()
+                .and_then(|home| resolve_agent_id(home, input.token_sha256.as_deref()));
+            let decision = evaluate_policy(
+                home.as_deref(),
+                &input.hostname,
+                input.subject.as_policy_request(),
+                agent_id.is_some(),
+            );
+            (input, decision, agent_id)
         },
-        move |_, (input, decision), ctx| match decision {
-            Decision::Allow => continue_with(Ok(Some("allow")), ctx),
-            Decision::Ask => ask_authorization(input, continue_with, ctx),
-            Decision::Deny(reason) => deny_authorization(input, "deny", reason, continue_with, ctx),
+        move |_, (mut input, decision, agent_id), ctx| {
+            input.agent.agent_id = agent_id.clone();
+            input.target.agent_id = agent_id;
+            match decision {
+                Decision::Allow => continue_with(
+                    Ok(AuthorizedOutcome {
+                        policy_decision: Some("allow"),
+                        agent_id: input.agent.agent_id,
+                    }),
+                    ctx,
+                ),
+                Decision::Ask => ask_authorization(input, continue_with, ctx),
+                Decision::Deny(reason) => {
+                    deny_authorization(input, "deny", reason, continue_with, ctx)
+                }
+            }
         },
     );
 }
@@ -623,7 +680,7 @@ fn authorize(
 fn ask_authorization(
     input: AuthorizeInput,
     continue_with: impl FnOnce(
-        Result<Option<&'static str>, AgentBridgeError>,
+        Result<AuthorizedOutcome, AgentBridgeError>,
         &mut ModelContext<LocalControlBridge>,
     ) + 'static,
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -631,7 +688,13 @@ fn ask_authorization(
     let trusted =
         AgentBridgeModel::handle(ctx).read(ctx, |model, _| model.is_session_trusted(input.session));
     if trusted {
-        continue_with(Ok(Some("session_trusted")), ctx);
+        continue_with(
+            Ok(AuthorizedOutcome {
+                policy_decision: Some("session_trusted"),
+                agent_id: input.agent.agent_id,
+            }),
+            ctx,
+        );
         return;
     }
 
@@ -640,7 +703,13 @@ fn ask_authorization(
             model.is_command_allowed_in_session(input.session, command)
         });
         if allowed {
-            continue_with(Ok(Some("session_rule")), ctx);
+            continue_with(
+                Ok(AuthorizedOutcome {
+                    policy_decision: Some("session_rule"),
+                    agent_id: input.agent.agent_id,
+                }),
+                ctx,
+            );
             return;
         }
     }
@@ -678,7 +747,7 @@ fn ask_authorization(
             let audited = ops::audit_approval_requested(
                 &input.target,
                 input.action,
-                input.agent.as_deref(),
+                input.agent.claimed.as_deref(),
                 input.subject.command(),
                 input.subject.path(),
             );
@@ -714,7 +783,7 @@ fn finish_ask(
     input: AuthorizeInput,
     decision: ApprovalDecision,
     continue_with: impl FnOnce(
-        Result<Option<&'static str>, AgentBridgeError>,
+        Result<AuthorizedOutcome, AgentBridgeError>,
         &mut ModelContext<LocalControlBridge>,
     ) + 'static,
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -745,7 +814,13 @@ fn finish_ask(
             } else {
                 "approved"
             };
-            continue_with(Ok(Some(label)), ctx);
+            continue_with(
+                Ok(AuthorizedOutcome {
+                    policy_decision: Some(label),
+                    agent_id: input.agent.agent_id,
+                }),
+                ctx,
+            );
         }
         ApprovalDecision::Deny => deny_authorization(
             input,
@@ -781,7 +856,7 @@ fn deny_authorization(
     policy_decision: &'static str,
     reason: String,
     continue_with: impl FnOnce(
-        Result<Option<&'static str>, AgentBridgeError>,
+        Result<AuthorizedOutcome, AgentBridgeError>,
         &mut ModelContext<LocalControlBridge>,
     ),
     ctx: &mut ModelContext<LocalControlBridge>,
@@ -789,7 +864,7 @@ fn deny_authorization(
     ops::audit_policy_denied(
         &input.target,
         input.action,
-        input.agent.as_deref(),
+        input.agent.claimed.as_deref(),
         input.subject.command(),
         input.subject.path(),
         policy_decision,
@@ -801,17 +876,31 @@ fn deny_authorization(
 /// Loads `~/.warp/agent-ops/policy.toml` and evaluates `request` against it. A policy that cannot
 /// be loaded, or a home directory that cannot be found, denies every write (fail-closed, mục 2.3
 /// of the plan).
-fn evaluate_policy(hostname: &str, request: PolicyRequest<'_>) -> Decision {
-    let Some(home) = dirs::home_dir() else {
+fn evaluate_policy(
+    home: Option<&Path>,
+    hostname: &str,
+    request: PolicyRequest<'_>,
+    paired: bool,
+) -> Decision {
+    let Some(home) = home else {
         return Decision::Deny("the user's home directory could not be found.".to_owned());
     };
-    match policy::load(&home) {
-        Ok(policy) => policy.evaluate(hostname, request, false),
+    match policy::load(home) {
+        Ok(policy) => policy.evaluate(hostname, request, paired),
         Err(error) => Decision::Deny(format!(
             "the policy file ~/.warp/agent-ops/policy.toml is invalid ({error}). Ask the user to \
              fix it."
         )),
     }
+}
+
+/// Resolves `token_sha256` (the hash of a request's `agent_token`, if it had one) against
+/// `~/.warp/agent-ops/agents.toml`, giving the paired agent's id (mục 3.11 of the plan). `None` for
+/// an untokened or unpaired client — that is not an error, just an unverified caller.
+fn resolve_agent_id(home: &Path, token_sha256: Option<&str>) -> Option<String> {
+    let token_sha256 = token_sha256?;
+    let agents = pairing::load(home);
+    pairing::find(&agents, token_sha256).map(|agent| agent.id.clone())
 }
 
 fn ensure_enabled(kind: ActionKind) -> Result<(), ControlError> {
