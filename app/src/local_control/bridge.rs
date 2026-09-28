@@ -13,7 +13,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::local_control::handlers::sync::{self, PathOperation, SyncReceiver};
 use crate::local_control::handlers::{
-    app_state, close, metadata, metadata_config, remote, settings_surfaces,
+    agent, app_state, close, metadata, metadata_config, remote, settings_surfaces,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -217,6 +217,7 @@ impl LocalControlBridge {
             ActionKind::RemoteExecVisible => {
                 return pending(request.request_id, remote::exec_visible(&request, ctx));
             }
+            ActionKind::AgentPair => agent::pair(&request, ctx),
             ActionKind::SyncStatus => {
                 return pending(
                     request.request_id,

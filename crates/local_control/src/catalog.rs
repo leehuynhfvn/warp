@@ -36,6 +36,7 @@ pub enum ActionImplementationStatus {
 pub enum ActionParameterSpec {
     None,
     ActionName,
+    AgentPair,
     BindingName,
     BooleanValue,
     ColorValue,
@@ -69,6 +70,7 @@ pub enum ActionParameterSpec {
 pub enum ActionResultSpec {
     Acknowledgement,
     ActiveTarget,
+    AgentPair,
     AppearanceState,
     CapabilityList,
     CapabilityMetadata,
@@ -321,6 +323,10 @@ define_action_catalog! {
         RemoteFileRead => { name: "remote.file.read", status: Implemented, target: Session, params: RemoteFileRead, result: RemoteFileContent },
         RemoteFileWrite => { name: "remote.file.write", status: Implemented, target: Session, params: RemoteFileWrite, result: RemoteFileWriteResult },
         RemoteOutputRecent => { name: "remote.output.recent", status: Implemented, target: Session, params: RemoteOutputRecent, result: RemoteOutputRecent },
+    }
+
+    agent {
+        AgentPair => { name: "agent.pair", status: Stub, target: Instance, params: AgentPair, result: AgentPair },
     }
 
     file {

@@ -1,12 +1,12 @@
 //! Target resolution and parameter validation for retained local-control actions.
 use ::local_control::protocol::{
-    ActionNameParams, ActionParameterSpec, BindingNameParams, BooleanValueParams, ColorValueParams,
-    DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams, NamespaceParams,
-    PageQueryParams, PaneTarget, QueryParams, RemoteExecParams, RemoteExecVisibleParams,
-    RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams, RenameParams,
-    ResizeParams, SessionTarget, SyncPathParams, SyncPendingParams, SyncStatusParams,
-    TabActivateParams, TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams,
-    ThemeNameParams, WindowTarget,
+    ActionNameParams, ActionParameterSpec, AgentPairParams, BindingNameParams, BooleanValueParams,
+    ColorValueParams, DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams,
+    NamespaceParams, PageQueryParams, PaneTarget, QueryParams, RemoteExecParams,
+    RemoteExecVisibleParams, RemoteFileReadParams, RemoteFileWriteParams,
+    RemoteOutputRecentParams, RenameParams, ResizeParams, SessionTarget, SyncPathParams,
+    SyncPendingParams, SyncStatusParams, TabActivateParams, TabCloseParams, TabCreateParams,
+    TabTarget, TargetSelector, TextParams, ThemeNameParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, TypedActionView, ViewHandle, WindowId};
@@ -36,6 +36,7 @@ pub(crate) fn validate_action_params(action: &::local_control::Action) -> Result
             let params = action.params_as::<ActionNameParams>()?;
             action_metadata_for_name(&params.action).map(|_| ())
         }
+        ActionParameterSpec::AgentPair => parse_params::<AgentPairParams>(action),
         ActionParameterSpec::BindingName => parse_params::<BindingNameParams>(action),
         ActionParameterSpec::BooleanValue => parse_params::<BooleanValueParams>(action),
         ActionParameterSpec::ColorValue => parse_params::<ColorValueParams>(action),

@@ -19,6 +19,64 @@ pub use crate::selectors::{
 /// their own request timeout so they don't give up before the user has a chance to answer.
 pub const APPROVAL_TIMEOUT_SECS: u64 = 300;
 
+/// Length of an [`AgentToken`]'s secret: 32 bytes of CSPRNG output, base64url-encoded without
+/// padding (the same shape as `local_control::auth::AuthToken::generate`).
+const AGENT_TOKEN_LEN: usize = 43;
+
+/// Bearer-style secret a paired agent client presents in every [`RequestEnvelope`] so Warp can
+/// recognize it across restarts once the user has approved pairing it (`agent.pair`). Warp never
+/// stores the secret itself, only its SHA-256 hash, so this type hides it from `Debug` too.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AgentToken(String);
+
+impl AgentToken {
+    /// Generates a token from 32 bytes of operating-system CSPRNG output, the same construction
+    /// as `AuthToken::generate`: this is authentication material, so it uses `OsRng`.
+    pub fn generate() -> Self {
+        use base64::Engine as _;
+        use rand::RngCore as _;
+
+        let mut bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        Self(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    pub fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AgentToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AgentToken(****)")
+    }
+}
+
+impl TryFrom<String> for AgentToken {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let is_valid = value.len() == AGENT_TOKEN_LEN
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+        if is_valid {
+            Ok(Self(value))
+        } else {
+            Err(format!(
+                "an agent token must be {AGENT_TOKEN_LEN} base64url characters"
+            ))
+        }
+    }
+}
+
+impl From<AgentToken> for String {
+    fn from(token: AgentToken) -> Self {
+        token.0
+    }
+}
+
 /// Common layout direction values accepted by pane and tab mutations.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -252,6 +310,30 @@ pub struct RemoteOutputRecentParams {
     pub count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+}
+
+/// Parameters for `agent.pair`. `name` is validated the same way as the `agent` field on the
+/// `remote.*` actions (1-64 characters of letters, digits, `.`, `_`, or `-`); the request must also
+/// carry an `agent_token` in its envelope, or the action fails with `InvalidParams`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPairParams {
+    pub name: String,
+}
+
+/// Whether `agent.pair` asked the user to approve pairing or found the token already paired.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPairStatus {
+    Paired,
+    AlreadyPaired,
+}
+
+/// Result of `agent.pair`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentPairResult {
+    pub agent_id: String,
+    pub status: AgentPairStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,6 +813,11 @@ pub struct RequestEnvelope {
     #[serde(default)]
     pub target: TargetSelector,
     pub action: Action,
+    /// Identifies a paired agent client across every action, not just `agent.pair`, so a request's
+    /// audit trail and approval dialog can show a verified identity instead of a self-reported
+    /// name. Absent for an unpaired client or one that predates pairing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_token: Option<AgentToken>,
 }
 
 impl RequestEnvelope {
@@ -740,6 +827,7 @@ impl RequestEnvelope {
             request_id: Uuid::new_v4(),
             target: TargetSelector::default(),
             action,
+            agent_token: None,
         }
     }
 }

@@ -731,8 +731,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] ⛔ CHECKPOINT P1
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
-- [ ] ⛔ CHECKPOINT P2 (đã sẵn sàng — chờ người dùng test tay checklist 5.P2)
-- [ ] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
+- [x] 4.1 protocol · [ ] 4.2 `agents.toml` · [ ] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -762,6 +762,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P21 | 2026-09-27 | Phase 0 (chỉ Task 0.1) không chạy clippy 3 package cuối phase, chỉ `cargo check` như mục 4 (Phase 0) đã nêu; clippy+format thật sự chạy ở cuối Phase 1 | Hằng số `APPROVAL_*`/`POLICY_FILE`/`AGENTS_FILE`/`MAX_PENDING_APPROVALS_PER_SESSION` thêm ở 0.1 chưa được dùng tới Task 1.1 → `cargo clippy -D warnings` báo `dead_code` là lỗi thật, không phải lỗi code; mục 0.8 ("cuối mỗi Phase") là quy tắc chung, còn văn bản riêng của Phase 0 chỉ yêu cầu `cargo check` — theo văn bản riêng, cụ thể hơn |
 | P22 | 2026-09-27 | `AGENTS_FILE` (Phase 4), `MAX_PENDING_APPROVALS_PER_SESSION` (Task 2.1), `APPROVAL_PREVIEW_LINES` (Task 3.7) thêm sẵn ở 0.1 nhưng chưa có chỗ dùng trong Phase 1 → gắn `#[allow(dead_code)]` (kèm comment nêu task nào sẽ dùng) ngay trước khi chạy clippy cuối Phase 1; xoá từng `allow` khi task tương ứng dùng tới hằng số đó | Đúng ý Task 0.1 của plan (thêm hằng số cả 4 phase một lần, tên `mod.rs` chung); `cargo check` không báo lỗi (chỉ warning) nên không chặn task 0.1–1.4, chỉ chặn ở bước clippy `-D warnings` cuối phase — vá đúng chỗ chặn, không đổi thiết kế hằng số |
 | P23 | 2026-09-28 | Task 3.5's "Review" từ toast/header **không** chuyển tab/pane tới session của request — chỉ mở hộp thoại (dùng `WorkspaceAction::AgentOpsReviewRequest { request_id }` trực tiếp, không qua `activate_tab_by_pane_group_id`/`focus_pane`) | Mục 3.8 của plan tự cho phép nhánh dự phòng này ("nếu khó, chỉ mở dialog — ghi Quyết định"); dialog tự hiện đúng nội dung request (session_label, lệnh) nên người vẫn biết đang duyệt gì dù chưa ở đúng tab — đủ an toàn cho O2, chuyển tab để O5b/sau |
+| P24 | 2026-09-28 | `ActionKind::AgentPair` vào catalog ở Task 4.1 với `status: Stub` (đúng mục 4.1 của plan) tạm thời phá 2 test bất biến có sẵn từ trước O2 (`catalog_actions_share_uniform_authorization`, `implemented_catalog_contains_all_retained_actions` — cả hai giả định mọi action trong `ActionKind::ALL` đều `Implemented`, viết trước khi `ActionImplementationStatus::Stub` được dùng thật lần đầu); sửa cả hai để loại trừ đúng một action này (kèm test mới `agent_pair_is_a_stub_until_its_handler_lands` xác nhận trạng thái đó), thay vì né bằng cách đặt `agent.pair` thẳng `Implemented` từ Task 4.1 | Giữ đúng ranh giới 4.1 (chỉ protocol) → 4.4 (handler thật) của plan; loại trừ sẽ tự hết khi Task 4.4 đổi `status` sang `Implemented` — gỡ carve-out đó lúc đó, không phải giữ mãi |
 
 ### Nhật ký
 
@@ -980,3 +981,29 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   đúng môi trường mục 5.A–5.C của plan Bridge; cần build lại với feature `agent_ops_policy` (mục
   0.12) để hộp thoại/toast/header/palette mới xuất hiện. Chưa làm Phase 4 (pairing) — theo đúng quy
   tắc "dừng ở CHECKPOINT" của mục 0.1, dừng ở đây chờ kết quả test tay trước khi qua Phase 4.
+- 2026-09-28 — Người dùng xác nhận checklist 5.P2 test tay đạt toàn bộ ("ĐẠT — tất cả các mục đều
+  đúng"). Bắt đầu Phase 4 (pairing token), tuân thủ quy tắc "dừng ở CHECKPOINT" — làm hết Phase 4 rồi
+  dừng ở CHECKPOINT P3, không tự ý qua các phase G/O3 của ROADMAP.md.
+- 2026-09-28 — Task 4.1 (Claude Sonnet 5): `crates/local_control/src/protocol.rs`: `AgentToken`
+  (newtype `String`, `#[serde(try_from = "String", into = "String")]` để validate độ dài/ký tự lúc
+  deserialize thay vì sau đó, `Debug` in `AgentToken(****)`, không `Display`; `generate()` giống hệt
+  `AuthToken::generate` — CSPRNG `OsRng`, base64url không đệm, 43 ký tự); `RequestEnvelope.agent_token:
+  Option<AgentToken>` (`#[serde(default, skip_serializing_if = "Option::is_none")]` → envelope cũ
+  không có trường vẫn parse); `AgentPairParams { name: String }` (`deny_unknown_fields`; validate ký
+  tự/độ dài ở handler qua `ops::validate_agent` có sẵn ở Task 4.3/4.4, không lặp lại rule ở protocol);
+  `AgentPairStatus` (`Paired`/`AlreadyPaired`, snake_case) + `AgentPairResult { agent_id, status }`.
+  `crates/local_control/src/catalog.rs`: `ActionParameterSpec::AgentPair`, `ActionResultSpec::AgentPair`,
+  nhóm `agent { AgentPair => { name: "agent.pair", status: Stub, target: Instance, params: AgentPair,
+  result: AgentPair } }` (đúng mục 4.1: Stub, Task 4.4 mới đổi `Implemented`). `resolver.rs`: thêm
+  arm `ActionParameterSpec::AgentPair` (bắt buộc vì match theo enum, dù `validate_action_params` đã
+  return sớm `Ok(())` cho action `!is_implemented()` nên nhánh này chưa chạy thật tới Task 4.4).
+  `bridge.rs`: arm `ActionKind::AgentPair => agent::pair(&request, ctx)` (bắt buộc vì match theo
+  `ActionKind`, dù không bao giờ chạy tới vì `validate_request_authority` đã chặn action Stub trước
+  khi tới match — xác nhận bằng test `agent_pair_is_a_stub_until_its_handler_lands`). `handlers/agent.rs`
+  (module mới, `pub(super) mod agent;` trong `handlers.rs`): hàm `pair` tạm trả `UnsupportedAction`
+  — placeholder rõ ràng (comment nêu Task 4.4 sẽ thay), **không** dùng hình dạng `Pending`/
+  `oneshot::Receiver` vì chưa cần (dead code cho tới 4.4); Task 4.4 sẽ đổi sang `Pending` giống
+  `remote::start` khi thật sự chờ duyệt. Sửa 2 test bất biến có sẵn theo P24, thêm test mới cho
+  `AgentToken`/envelope cũ/`AgentPairParams`/`AgentPairResult`/trạng thái Stub. `cargo test -p
+  local_control --lib`: 64 passed (10 test mới). `cargo check -p warp -p local_control -p warp_cli`
+  và `cargo check -p warp --features agent_ops_policy`: qua.

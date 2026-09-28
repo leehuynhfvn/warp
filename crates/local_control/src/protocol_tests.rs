@@ -6,6 +6,38 @@ fn request_envelope_serializes_stable_action_names() {
     let value = serde_json::to_value(&request).expect("request serializes");
     assert_eq!(value["protocol_version"], PROTOCOL_VERSION);
     assert_eq!(value["action"]["kind"], "window.focus");
+    assert!(value.get("agent_token").is_none());
+}
+
+#[test]
+fn an_envelope_from_before_pairing_still_parses_without_a_token() {
+    let value = serde_json::json!({
+        "protocol_version": PROTOCOL_VERSION,
+        "request_id": Uuid::nil(),
+        "action": { "kind": "window.focus" },
+    });
+    let request: RequestEnvelope = serde_json::from_value(value).expect("envelope parses");
+    assert!(request.agent_token.is_none());
+}
+
+#[test]
+fn agent_token_round_trips_and_hides_its_secret_from_debug() {
+    let token = AgentToken::generate();
+    assert_eq!(token.secret().len(), 43);
+    let value = serde_json::to_value(&token).expect("token serializes");
+    assert_eq!(value, serde_json::Value::String(token.secret().to_owned()));
+    let parsed: AgentToken = serde_json::from_value(value).expect("token parses back");
+    assert_eq!(parsed, token);
+    assert_eq!(format!("{token:?}"), "AgentToken(****)");
+}
+
+#[test]
+fn agent_token_rejects_the_wrong_length() {
+    for bad in ["", "short", &"a".repeat(44)] {
+        let error = serde_json::from_value::<AgentToken>(serde_json::Value::String(bad.to_owned()))
+            .expect_err("wrong-length token is rejected");
+        assert!(error.to_string().contains("43 base64url characters"));
+    }
 }
 
 #[test]
@@ -167,9 +199,10 @@ fn catalog_has_exactly_the_retained_and_sync_actions() {
     const RETAINED_ACTIONS: usize = 84;
     const SYNC_ACTIONS: usize = 6;
     const REMOTE_ACTIONS: usize = 6;
+    const AGENT_ACTIONS: usize = 1;
     assert_eq!(
         ActionKind::ALL.len(),
-        RETAINED_ACTIONS + SYNC_ACTIONS + REMOTE_ACTIONS
+        RETAINED_ACTIONS + SYNC_ACTIONS + REMOTE_ACTIONS + AGENT_ACTIONS
     );
 }
 
@@ -221,6 +254,11 @@ fn direct_surface_actions_have_stable_names() {
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
+        if metadata.kind == ActionKind::AgentPair {
+            // Stub until Task 4.4 of the O2 agent-ops policy plan wires its handler; see
+            // `agent_pair_is_a_stub_until_its_handler_lands` below.
+            continue;
+        }
         assert_eq!(
             metadata.implementation_status,
             ActionImplementationStatus::Implemented,
@@ -236,7 +274,21 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    assert_eq!(actions, ActionKind::ALL);
+    let expected: Vec<ActionKind> = ActionKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| *kind != ActionKind::AgentPair)
+        .collect();
+    assert_eq!(actions, expected);
+}
+
+#[test]
+fn agent_pair_is_a_stub_until_its_handler_lands() {
+    assert_eq!(
+        ActionKind::AgentPair.metadata().implementation_status,
+        ActionImplementationStatus::Stub
+    );
+    assert!(!ActionKind::AgentPair.is_implemented());
 }
 
 #[test]
@@ -747,5 +799,41 @@ fn visible_exec_result_has_no_exit_code_while_running() {
     assert_eq!(value["host"], "prod-1");
     assert!(value.get("cwd").is_none());
     let parsed: RemoteExecVisibleResult = serde_json::from_value(value).expect("round trips");
+    assert_eq!(parsed, result);
+}
+
+#[test]
+fn agent_pair_action_is_named_and_targets_the_instance() {
+    assert_eq!(ActionKind::AgentPair.as_str(), "agent.pair");
+    assert_eq!(
+        ActionKind::AgentPair.metadata().target_scope,
+        TargetScope::Instance
+    );
+}
+
+#[test]
+fn agent_pair_params_deny_unknown_fields() {
+    let params = AgentPairParams {
+        name: "claude-code".to_owned(),
+    };
+    let value = serde_json::to_value(&params).expect("serializes");
+    assert_eq!(value, serde_json::json!({ "name": "claude-code" }));
+    assert!(
+        serde_json::from_value::<AgentPairParams>(
+            serde_json::json!({ "name": "claude-code", "extra": true })
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn agent_pair_result_serializes_its_status_as_a_string() {
+    let result = AgentPairResult {
+        agent_id: "claude-code".to_owned(),
+        status: AgentPairStatus::AlreadyPaired,
+    };
+    let value = serde_json::to_value(&result).expect("serializes");
+    assert_eq!(value["status"], "already_paired");
+    let parsed: AgentPairResult = serde_json::from_value(value).expect("round trips");
     assert_eq!(parsed, result);
 }
