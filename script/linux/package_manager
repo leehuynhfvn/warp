@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+linux_distro_family() {
+  local os_release_file="${1:-/etc/os-release}"
+  local ID=""
+  local ID_LIKE=""
+
+  if [[ ! -r "${os_release_file}" ]]; then
+    echo "unknown"
+    return
+  fi
+
+  # shellcheck disable=SC1090
+  source "${os_release_file}"
+
+  if [[ "${ID}" = "fedora" ]]; then
+    echo "fedora"
+  elif [[ " ${ID} ${ID_LIKE} " = *debian* ]]; then
+    echo "debian"
+  else
+    echo "unknown"
+  fi
+}
+
+linux_update_package_metadata() {
+  case "$(linux_distro_family)" in
+    debian) warp_sudo apt-get update -y ;;
+    fedora) warp_sudo dnf makecache --refresh ;;
+    *)
+      echo "error: unsupported Linux distribution; unable to update package metadata." >&2
+      return 1
+      ;;
+  esac
+}

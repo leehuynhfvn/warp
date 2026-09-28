@@ -5,38 +5,56 @@
 set -e
 
 . "$PWD/script/warp_sudo"
-
-# Define some control sequences for text formatting.
-red="\033[0;31m"
-reset="\033[0m"
+. "$PWD/script/linux/package_manager"
 
 # Install runtime dependencies.
 "$PWD"/script/linux/install_runtime_deps
 
 # Install additional testing dependencies.
-UNAME="$(uname -a)"
-if [[ "$(source /etc/os-release; echo $ID $ID_LIKE)" = *"debian"* ]]; then
-  echo "⬇️  Installing test dependencies..."
-  # Define the packages to install as a bash array so we can include
-  # comments between lines.
-  PACKAGES=(
-    # Install the zsh and fish shells.
-    zsh fish
-    # We run vim in some integration tests to test the altscreen.
-    vim
-  )
-  warp_sudo apt-get install -y "${PACKAGES[@]}"
+echo "⬇️  Installing test dependencies..."
+case "$(linux_distro_family)" in
+  debian)
+    warp_sudo apt-get install -y zsh fish vim
+    ;;
+  fedora)
+    warp_sudo dnf install -y zsh fish vim-enhanced
+    ;;
+  *)
+    echo "error: unsupported Linux distribution; test dependencies were not installed." >&2
+    exit 1
+    ;;
+esac
 
-  # If gcloud is not already installed, install it so that we can run SSH integration tests.
-  if [[ ! -x "$(command -v gcloud)" ]]; then
-    echo "⬇️  Installing the gcloud CLI..."
-    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | warp_sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
-    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | warp_sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/cloud.google.gpg
-    warp_sudo apt-get update -y
-    warp_sudo apt-get install google-cloud-cli -y
-  fi
-else
-  echo -e "⚠️  ${red}Unknown Linux distribution; necessary test dependencies may not be installed!${reset}"
+# If gcloud is not already installed, install it so that we can run SSH integration tests.
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "⬇️  Installing the gcloud CLI..."
+  case "$(linux_distro_family)" in
+    debian)
+      echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+        | warp_sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | warp_sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/cloud.google.gpg
+      warp_sudo apt-get update -y
+      warp_sudo apt-get install google-cloud-cli -y
+      ;;
+    fedora)
+      case "$(uname -m)" in
+        x86_64|aarch64) GCLOUD_ARCH="$(uname -m)" ;;
+        *) echo "Unsupported architecture for gcloud: $(uname -m)"; exit 1 ;;
+      esac
+      printf '%s\n' \
+        '[google-cloud-cli]' \
+        'name=Google Cloud CLI' \
+        "baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-${GCLOUD_ARCH}" \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'repo_gpgcheck=0' \
+        'gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg' \
+        | warp_sudo tee /etc/yum.repos.d/google-cloud-sdk.repo
+      warp_sudo dnf install -y libxcrypt-compat google-cloud-cli
+      ;;
+    *) exit 1 ;;
+  esac
 fi
 
 # Install various testing dependencies through cargo.

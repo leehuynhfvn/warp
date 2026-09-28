@@ -59,7 +59,7 @@ print_bootstrap_preview() {
     echo "  - Install or update Cargo, Homebrew, PowerShell, Docker, gcloud, and related development tools."
     echo "  - Add the aarch64-apple-darwin Rust target."
   elif [[ "${platform}" = "Linux" ]]; then
-    echo "  - Update apt package metadata."
+    echo "  - Update package metadata with the distribution's package manager."
     echo "  - Install dependencies needed to build, run, and test Warp."
     echo "  - Install linuxdeploy and check gcloud authentication."
   fi
@@ -153,7 +153,13 @@ ensure_git_lfs() {
     echo "warning: git-lfs is not installed. Install it before continuing:"
     case "${OS_TYPE}" in
       Darwin)               echo "  brew install git-lfs" ;;
-      Linux)                echo "  sudo apt-get install -y git-lfs   # or your distro's package manager" ;;
+      Linux)
+        if command -v dnf >/dev/null 2>&1; then
+          echo "  sudo dnf install -y git-lfs"
+        else
+          echo "  sudo apt-get install -y git-lfs   # or your distro's package manager"
+        fi
+        ;;
       MINGW64_NT*|MSYS_NT*)  echo "  choco install git-lfs            # or: winget install GitHub.GitLFS" ;;
       *)                    echo "  See https://git-lfs.com for install instructions." ;;
     esac
