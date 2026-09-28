@@ -171,14 +171,10 @@ impl AgentBridgeModel {
         self.approvals.get(request_id)
     }
 
-    // Used starting Task 3.4 (the header's "N waiting"); remove this `allow` there.
-    #[allow(dead_code)]
     pub(crate) fn pending_approvals_for_session(&self, id: SessionId) -> usize {
         self.approvals.count_for_session(id)
     }
 
-    // Used starting Task 3.4 (the header's Review button); remove this `allow` there.
-    #[allow(dead_code)]
     pub(crate) fn oldest_approval_for_session(&self, id: SessionId) -> Option<&ApprovalRequest> {
         self.approvals.oldest_for_session(id)
     }

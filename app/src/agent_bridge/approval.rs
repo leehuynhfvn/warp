@@ -147,9 +147,6 @@ impl ApprovalQueue {
     }
 
     /// The longest-waiting request of `id`, if any (FIFO: entries stay in push order).
-    // Used starting Task 3.4 (the header's "N waiting"/Review, via
-    // `AgentBridgeModel::oldest_approval_for_session`); remove this `allow` there.
-    #[allow(dead_code)]
     pub(crate) fn oldest_for_session(&self, id: SessionId) -> Option<&ApprovalRequest> {
         self.pending
             .iter()

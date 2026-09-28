@@ -300,6 +300,8 @@ pub enum TerminalAction {
     },
     /// Withdraws the permission the user gave agents to use the active session.
     RevokeAgentBridgeAccess,
+    /// Opens the approval dialog for the oldest agent request waiting on the active session.
+    ReviewAgentRequest,
     OpenSharedSessionOnDesktop {
         source: SharedSessionActionSource,
     },
@@ -633,6 +635,7 @@ impl fmt::Debug for TerminalAction {
                 write!(f, "StopSharingCurrentSession({source:?})")
             }
             RevokeAgentBridgeAccess => f.write_str("RevokeAgentBridgeAccess"),
+            ReviewAgentRequest => f.write_str("ReviewAgentRequest"),
             OpenSharedSessionOnDesktop { source } => {
                 write!(f, "OpenSharedSessionOnDesktop({source:?})")
             }

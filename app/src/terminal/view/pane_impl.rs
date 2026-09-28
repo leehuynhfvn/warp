@@ -56,9 +56,10 @@ use crate::ui_components::icon_with_status::render_icon_with_status;
 use crate::ui_components::{blended_colors, icons};
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::warp_sync::printable;
+use crate::workspace::WorkspaceAction;
 use crate::workspace::tab_settings::TabSettings;
 #[cfg(target_arch = "wasm32")]
-use crate::workspace::{WorkspaceAction, WorkspaceRegistry};
+use crate::workspace::WorkspaceRegistry;
 
 /// Total size of the agent icon-with-status component rendered in the pane header.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.
@@ -446,6 +447,14 @@ impl TerminalView {
         } else {
             None
         };
+
+        if let Some(button) = self.render_agent_bridge_review_button(app) {
+            icon_button_count += 1;
+            left_of_overflow = Some(match left_of_overflow {
+                Some(existing) => Flex::row().with_child(existing).with_child(button).finish(),
+                None => button,
+            });
+        }
 
         if let Some(button) = self.render_agent_bridge_revoke_button(app) {
             icon_button_count += 1;
@@ -1014,20 +1023,32 @@ impl TerminalView {
             .map(|status| status.access)
     }
 
+    /// How many of the active session's agent requests are waiting for approval.
+    fn pending_agent_requests(&self, app: &AppContext) -> usize {
+        let Some(session) = self.active_session().as_ref(app).session(app) else {
+            return 0;
+        };
+        AgentBridgeModel::as_ref(app).pending_approvals_for_session(session.id())
+    }
+
     /// An icon and the session's user, so that the user can tell at a glance that agents may act
-    /// in this pane and as whom.
+    /// in this pane and as whom — plus how many of its requests are waiting, if any.
     fn render_agent_bridge_indicator(&self, app: &AppContext) -> Option<Box<dyn Element>> {
         let access = self.agent_bridge_access(app)?;
         let session = self.active_session().as_ref(app).session(app)?;
         let appearance = Appearance::as_ref(app);
         let theme = appearance.theme();
-        // Full access can change the server, so it is shown in the warning color.
-        let color = match access {
-            AgentBridgeAccess::Full => theme.terminal_colors().normal.yellow.into(),
-            AgentBridgeAccess::ReadOnly => theme.sub_text_color(theme.background()).into_solid(),
+        let pending = self.pending_agent_requests(app);
+        // Full access can change the server, so it is shown in the warning color; a waiting
+        // request does too, the same way Full access itself does (mục 3.8 of the O2 plan).
+        let color = if access == AgentBridgeAccess::Full || pending > 0 {
+            theme.terminal_colors().normal.yellow.into()
+        } else {
+            theme.sub_text_color(theme.background()).into_solid()
         };
         let icon_size = appearance.ui_font_size();
-        let label = agent_bridge_messages::indicator_label(access, &printable(session.user()));
+        let label =
+            agent_bridge_messages::indicator_label(access, &printable(session.user()), pending);
         Some(
             Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -1087,6 +1108,49 @@ impl TerminalView {
         AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| {
             model.detach(session.id(), ctx);
         });
+    }
+
+    /// A small button next to the indicator once at least one of the session's requests is
+    /// waiting for approval. Header rows are too narrow to show the command itself (P4 of the O2
+    /// plan), so this only opens the dialog; the text lives there.
+    fn render_agent_bridge_review_button(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let pending = self.pending_agent_requests(app);
+        if pending == 0 {
+            return None;
+        }
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let ui_builder = appearance.ui_builder().clone();
+        let tooltip = agent_bridge_messages::review_tooltip(pending);
+        Some(
+            icon_button_with_color(
+                appearance,
+                icons::Icon::Eye,
+                false,
+                self.agent_bridge_review_mouse_state.clone(),
+                theme.terminal_colors().normal.yellow.into(),
+            )
+            .with_tooltip(move || ui_builder.tool_tip(tooltip.clone()).build().finish())
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action::<PaneHeaderAction<TerminalAction, TerminalAction>>(
+                    PaneHeaderAction::CustomAction(TerminalAction::ReviewAgentRequest),
+                );
+            })
+            .finish(),
+        )
+    }
+
+    pub(super) fn review_agent_request(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(session) = self.active_session().as_ref(ctx).session(ctx) else {
+            return;
+        };
+        let request_id = AgentBridgeModel::as_ref(ctx)
+            .oldest_approval_for_session(session.id())
+            .map(|request| request.request_id);
+        if let Some(request_id) = request_id {
+            ctx.dispatch_typed_action(&WorkspaceAction::AgentOpsReviewRequest { request_id });
+        }
     }
 
     pub fn is_ambient_agent_session(&self, ctx: &AppContext) -> bool {

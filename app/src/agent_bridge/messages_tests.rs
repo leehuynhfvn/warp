@@ -29,8 +29,10 @@ fn the_messages_do_not_name_a_particular_agent() {
         revoked_message(true).to_owned(),
         revoked_message(false).to_owned(),
         revoked_all_message(2),
-        indicator_label(Access::Full, "root"),
+        indicator_label(Access::Full, "root", 0),
+        indicator_label(Access::Full, "root", 2),
         revoke_tooltip("root", "h"),
+        review_tooltip(2),
     ];
     for text in texts {
         assert!(!text.to_lowercase().contains("claude"), "{text}");
@@ -39,15 +41,29 @@ fn the_messages_do_not_name_a_particular_agent() {
 
 #[test]
 fn the_indicator_names_the_user_and_says_when_access_is_read_only() {
-    assert_eq!(indicator_label(Access::Full, "root"), "Agents · root");
+    assert_eq!(indicator_label(Access::Full, "root", 0), "Agents · root");
     assert_eq!(
-        indicator_label(Access::ReadOnly, "deploy"),
+        indicator_label(Access::ReadOnly, "deploy", 0),
         "Agents · deploy · read-only"
     );
     assert_eq!(
         revoke_tooltip("root", "prod-1"),
         "Revoke agent access to root@prod-1"
     );
+}
+
+#[test]
+fn the_indicator_and_tooltip_say_how_many_requests_are_waiting() {
+    assert_eq!(
+        indicator_label(Access::Full, "root", 1),
+        "Agents · root · 1 waiting"
+    );
+    assert_eq!(
+        indicator_label(Access::Full, "root", 3),
+        "Agents · root · 3 waiting"
+    );
+    assert_eq!(review_tooltip(1), "Review the waiting agent request");
+    assert_eq!(review_tooltip(3), "Review the 3 waiting agent requests");
 }
 
 #[test]

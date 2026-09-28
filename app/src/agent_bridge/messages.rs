@@ -37,16 +37,29 @@ pub(crate) fn revoked_all_message(count: usize) -> String {
     }
 }
 
-/// Label next to the title of a pane whose session agents may use.
-pub(crate) fn indicator_label(access: Access, user: &str) -> String {
-    match access {
+/// Label next to the title of a pane whose session agents may use. `pending` is how many of the
+/// session's requests are waiting for approval.
+pub(crate) fn indicator_label(access: Access, user: &str, pending: usize) -> String {
+    let base = match access {
         Access::Full => format!("Agents · {user}"),
         Access::ReadOnly => format!("Agents · {user} · read-only"),
+    };
+    match pending {
+        0 => base,
+        1 => format!("{base} · 1 waiting"),
+        pending => format!("{base} · {pending} waiting"),
     }
 }
 
 pub(crate) fn revoke_tooltip(user: &str, host: &str) -> String {
     format!("Revoke agent access to {user}@{host}")
+}
+
+pub(crate) fn review_tooltip(pending: usize) -> String {
+    match pending {
+        1 => "Review the waiting agent request".to_owned(),
+        pending => format!("Review the {pending} waiting agent requests"),
+    }
 }
 
 /// The executable the MCP client should start. Inside an AppImage, `current_exe` is under a mount

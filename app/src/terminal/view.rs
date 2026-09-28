@@ -2817,6 +2817,7 @@ pub struct TerminalView {
     pending_share_source: Option<SharedSessionActionSource>,
 
     agent_bridge_revoke_mouse_state: MouseStateHandle,
+    agent_bridge_review_mouse_state: MouseStateHandle,
 
     /// When true, automatically stop the shared session when the CLI agent session ends.
     /// Set when sharing is started from the remote control entrypoint.
@@ -4503,6 +4504,7 @@ impl TerminalView {
             get_relevant_files_controller,
             shared_session: None,
             agent_bridge_revoke_mouse_state: Default::default(),
+            agent_bridge_review_mouse_state: Default::default(),
             pending_share_source: None,
             auto_stop_sharing_on_cli_end: false,
             conversation_ended_tombstone_view_id: None,
@@ -27529,6 +27531,7 @@ impl TypedActionView for TerminalView {
             | InsertMostRecentCommandCorrection
             | StopSharingCurrentSession { .. }
             | RevokeAgentBridgeAccess
+            | ReviewAgentRequest
             | RequestSharedSessionRole(_)
             | OnboardingFlow(_)
             | ImportSettings
@@ -28075,6 +28078,7 @@ impl TypedActionView for TerminalView {
             OpenShareSessionModal { source } => self.open_share_session_modal(*source, ctx),
             StopSharingCurrentSession { source } => self.stop_sharing_session(*source, ctx),
             RevokeAgentBridgeAccess => self.revoke_agent_bridge_access(ctx),
+            ReviewAgentRequest => self.review_agent_request(ctx),
             ToggleBlockFilterOnSelectedOrLastBlock(source) => {
                 self.toggle_block_filter_on_selected_or_last_block(*source, ctx);
             }
