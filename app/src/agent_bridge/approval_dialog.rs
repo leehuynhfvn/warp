@@ -159,6 +159,12 @@ impl AgentApprovalDialog {
         self.request_id = Some(request_id);
         ctx.notify();
     }
+
+    /// The request currently shown, if any — so Workspace can tell whether it is still in
+    /// [`AgentBridgeModel`]'s queue after an `ApprovalsChanged` event.
+    pub fn request_id(&self) -> Option<Uuid> {
+        self.request_id
+    }
 }
 
 impl Entity for AgentApprovalDialog {

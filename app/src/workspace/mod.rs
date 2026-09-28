@@ -86,6 +86,7 @@ pub fn init(app: &mut AppContext) {
     rewind_confirmation_dialog::init(app);
     delete_conversation_confirmation_dialog::init(app);
     crate::warp_sync::confirm_dialog::init(app);
+    crate::agent_bridge::approval_dialog::init(app);
     crate::tab_configs::remove_confirmation_dialog::init(app);
     hoa_onboarding::init(app);
     tab_configs::session_config_modal::init(app);
@@ -443,6 +444,23 @@ pub fn init(app: &mut AppContext) {
                 "workspace:agent_bridge_copy_setup_command",
                 "Agent Bridge: Copy Claude Code setup command",
                 WorkspaceAction::AgentBridgeCopySetupCommand,
+            )
+            .with_context_predicate(id!("Workspace")),
+        ]);
+    }
+
+    if FeatureFlag::AgentOpsPolicy.is_enabled() {
+        app.register_editable_bindings([
+            EditableBinding::new(
+                "workspace:agent_ops_review_waiting_requests",
+                "Agent Ops: Review waiting agent requests",
+                WorkspaceAction::AgentOpsReviewWaitingRequests,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_ops_deny_all_approvals",
+                "Agent Ops: Deny all waiting agent requests",
+                WorkspaceAction::AgentOpsDenyAllApprovals,
             )
             .with_context_predicate(id!("Workspace")),
         ]);

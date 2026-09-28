@@ -506,6 +506,16 @@ pub enum WorkspaceAction {
     AgentBridgeRevokeAll,
     /// Copy the command that adds the Agent Bridge to Claude Code.
     AgentBridgeCopySetupCommand,
+    /// Opens the approval dialog for a specific waiting agent request (from a toast's Review
+    /// link or a pane header's Review button).
+    AgentOpsReviewRequest {
+        request_id: uuid::Uuid,
+    },
+    /// "Agent Ops: Review waiting agent requests" — opens the oldest request waiting in this
+    /// window, or says there is none.
+    AgentOpsReviewWaitingRequests,
+    /// "Agent Ops: Deny all waiting agent requests".
+    AgentOpsDenyAllApprovals,
     /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
     WarpSyncOpenMirror,
     /// Open the Warp Sync mirror of the active remote session's host in the external editor.
@@ -1283,7 +1293,10 @@ impl WorkspaceAction {
             AgentBridgeAttach { .. }
             | AgentBridgeRevoke
             | AgentBridgeRevokeAll
-            | AgentBridgeCopySetupCommand => false,
+            | AgentBridgeCopySetupCommand
+            | AgentOpsReviewRequest { .. }
+            | AgentOpsReviewWaitingRequests
+            | AgentOpsDenyAllApprovals => false,
             #[cfg(feature = "local_fs")]
             FileRenamed { .. } => false, // File rename doesn't change workspace state
             #[cfg(feature = "local_fs")]

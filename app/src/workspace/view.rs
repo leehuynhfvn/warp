@@ -160,9 +160,12 @@ use super::util::{
     WorkspaceMouseStates, WorkspaceState,
 };
 use super::{ActiveSession, TabBarDropTargetData, TabBarLocation, WorkspaceRegistry, util};
+use uuid::Uuid;
+
+use crate::agent_bridge::approval_dialog::{AgentApprovalDialog, AgentApprovalEvent};
 use crate::agent_bridge::attachments::Access as AgentBridgeAccess;
 use crate::agent_bridge::error::AgentBridgeError;
-use crate::agent_bridge::model::AgentBridgeModel;
+use crate::agent_bridge::model::{AgentBridgeEvent, AgentBridgeModel};
 use crate::agent_bridge::ops::ensure_supported as ensure_agent_bridge_supported;
 use crate::agent_bridge::{
     attached_message as agent_bridge_attached_message,
@@ -1134,6 +1137,7 @@ pub struct Workspace {
     rewind_confirmation_dialog: ViewHandle<RewindConfirmationDialog>,
     delete_conversation_confirmation_dialog: ViewHandle<DeleteConversationConfirmationDialog>,
     warp_sync_confirm_dialog: ViewHandle<WarpSyncConfirmDialog>,
+    agent_approval_dialog: ViewHandle<AgentApprovalDialog>,
     warp_sync_path_prompt: ViewHandle<WarpSyncPathPrompt>,
     resource_center_view: ViewHandle<ResourceCenterView>,
     command_search_view: ViewHandle<CommandSearchView>,
@@ -2033,6 +2037,14 @@ impl Workspace {
         let dialog = ctx.add_typed_action_view(WarpSyncConfirmDialog::new);
         ctx.subscribe_to_view(&dialog, move |me, _, event, ctx| {
             me.handle_warp_sync_confirm_event(event, ctx);
+        });
+        dialog
+    }
+
+    fn build_agent_approval_dialog(ctx: &mut ViewContext<Self>) -> ViewHandle<AgentApprovalDialog> {
+        let dialog = ctx.add_typed_action_view(AgentApprovalDialog::new);
+        ctx.subscribe_to_view(&dialog, move |me, _, event, ctx| {
+            me.handle_agent_approval_event(event, ctx);
         });
         dialog
     }
@@ -3135,6 +3147,7 @@ impl Workspace {
         let delete_conversation_confirmation_dialog =
             Self::build_delete_conversation_confirmation_dialog(ctx);
         let warp_sync_confirm_dialog = Self::build_warp_sync_confirm_dialog(ctx);
+        let agent_approval_dialog = Self::build_agent_approval_dialog(ctx);
         let warp_sync_path_prompt = Self::build_warp_sync_path_prompt(ctx);
         let command_search_view =
             ctx.add_typed_action_view(|ctx| CommandSearchView::new(ai_client.clone(), ctx));
@@ -3253,6 +3266,11 @@ impl Workspace {
         if FeatureFlag::WarpSync.is_enabled() {
             ctx.subscribe_to_model(&WarpSyncModel::handle(ctx), |me, _, event, ctx| {
                 me.handle_warp_sync_event(event, ctx);
+            });
+        }
+        if FeatureFlag::AgentOpsPolicy.is_enabled() {
+            ctx.subscribe_to_model(&AgentBridgeModel::handle(ctx), |me, _, event, ctx| {
+                me.handle_agent_bridge_event(event, ctx);
             });
         }
 
@@ -3535,6 +3553,7 @@ impl Workspace {
             rewind_confirmation_dialog,
             delete_conversation_confirmation_dialog,
             warp_sync_confirm_dialog,
+            agent_approval_dialog,
             warp_sync_path_prompt,
             resource_center_view,
             command_search_view,
@@ -19254,6 +19273,108 @@ impl Workspace {
         ctx.notify();
     }
 
+    fn handle_agent_bridge_event(&mut self, event: &AgentBridgeEvent, ctx: &mut ViewContext<Self>) {
+        match event {
+            AgentBridgeEvent::ApprovalRequested {
+                request_id,
+                window_id,
+            } => {
+                if *window_id != ctx.window_id() {
+                    return;
+                }
+                let Some(session_label) = AgentBridgeModel::as_ref(ctx)
+                    .approval(*request_id)
+                    .map(|request| request.session_label.clone())
+                else {
+                    return;
+                };
+                let request_id = *request_id;
+                let toast = DismissibleToast::default(format!(
+                    "An agent is waiting for approval on {session_label}"
+                ))
+                .with_link(ToastLink::new("Review".to_owned()).with_onclick_action(
+                    WorkspaceAction::AgentOpsReviewRequest { request_id },
+                ));
+                self.add_agent_bridge_toast(toast, ctx);
+            }
+            AgentBridgeEvent::ApprovalsChanged => {
+                if !self.current_workspace_state.is_agent_approval_dialog_open {
+                    return;
+                }
+                let shown = self
+                    .agent_approval_dialog
+                    .read(ctx, |dialog, _| dialog.request_id());
+                let still_pending = shown
+                    .is_some_and(|id| AgentBridgeModel::as_ref(ctx).approval(id).is_some());
+                if !still_pending {
+                    self.current_workspace_state.is_agent_approval_dialog_open = false;
+                    ctx.notify();
+                }
+            }
+        }
+    }
+
+    /// Opens the approval dialog for `request_id`, unless another confirmation dialog is already
+    /// showing — the toast stays and the person can Review again once it closes (mục 3.3 of the
+    /// O2 plan: never stack two overlays).
+    fn show_agent_approval_dialog(&mut self, request_id: Uuid, ctx: &mut ViewContext<Self>) {
+        if self
+            .current_workspace_state
+            .is_warp_sync_confirm_dialog_open
+        {
+            return;
+        }
+        self.agent_approval_dialog
+            .update(ctx, |dialog, ctx| dialog.set_request(request_id, ctx));
+        self.current_workspace_state.is_agent_approval_dialog_open = true;
+        ctx.focus(&self.agent_approval_dialog);
+        ctx.notify();
+    }
+
+    fn handle_agent_approval_event(
+        &mut self,
+        event: &AgentApprovalEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.current_workspace_state.is_agent_approval_dialog_open = false;
+        if let AgentApprovalEvent::Decided {
+            request_id,
+            decision,
+        } = event
+        {
+            AgentBridgeModel::handle(ctx)
+                .update(ctx, |model, ctx| model.decide_approval(*request_id, *decision, ctx));
+        }
+        self.focus_active_tab(ctx);
+        ctx.notify();
+    }
+
+    /// "Agent Ops: Review waiting agent requests" — opens the oldest request waiting in this
+    /// window, or says there is none.
+    fn agent_ops_review_waiting_requests(&mut self, ctx: &mut ViewContext<Self>) {
+        let window_id = ctx.window_id();
+        let request_id =
+            AgentBridgeModel::as_ref(ctx).oldest_approval_in_window(window_id).map(|request| request.request_id);
+        match request_id {
+            Some(request_id) => self.show_agent_approval_dialog(request_id, ctx),
+            None => self.add_agent_bridge_toast(
+                DismissibleToast::default("No agent request is waiting".to_owned()),
+                ctx,
+            ),
+        }
+    }
+
+    /// "Agent Ops: Deny all waiting agent requests".
+    fn agent_ops_deny_all_approvals(&mut self, ctx: &mut ViewContext<Self>) {
+        let count = AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.deny_all_approvals(ctx));
+        let toast = DismissibleToast::default(match count {
+            0 => "No agent request was waiting".to_owned(),
+            1 => "Denied 1 waiting agent request".to_owned(),
+            count => format!("Denied {count} waiting agent requests"),
+        });
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
     pub fn show_delete_conversation_confirmation_dialog(
         &mut self,
         source: DeleteConversationDialogSource,
@@ -25608,6 +25729,11 @@ impl TypedActionView for Workspace {
             AgentBridgeRevoke => self.agent_bridge_revoke(ctx),
             AgentBridgeRevokeAll => self.agent_bridge_revoke_all(ctx),
             AgentBridgeCopySetupCommand => self.agent_bridge_copy_setup_command(ctx),
+            AgentOpsReviewRequest { request_id } => {
+                self.show_agent_approval_dialog(*request_id, ctx)
+            }
+            AgentOpsReviewWaitingRequests => self.agent_ops_review_waiting_requests(ctx),
+            AgentOpsDenyAllApprovals => self.agent_ops_deny_all_approvals(ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
             WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),
@@ -28262,6 +28388,21 @@ impl View for Workspace {
         {
             stack.add_positioned_overlay_child(
                 ChildView::new(&self.warp_sync_confirm_dialog).finish(),
+                OffsetPositioning::offset_from_parent(
+                    Vector2F::zero(),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                ),
+            );
+        }
+
+        if self
+            .current_workspace_state
+            .is_agent_approval_dialog_open
+        {
+            stack.add_positioned_overlay_child(
+                ChildView::new(&self.agent_approval_dialog).finish(),
                 OffsetPositioning::offset_from_parent(
                     Vector2F::zero(),
                     ParentOffsetBounds::WindowByPosition,
