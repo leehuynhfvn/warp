@@ -167,8 +167,6 @@ impl AgentBridgeModel {
         count
     }
 
-    // Used starting Task 3.2 (the approval dialog's content); remove this `allow` there.
-    #[allow(dead_code)]
     pub(crate) fn approval(&self, request_id: Uuid) -> Option<&ApprovalRequest> {
         self.approvals.get(request_id)
     }

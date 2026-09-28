@@ -2,6 +2,7 @@
 //! remote session that the user explicitly attached, with the privileges of that session's shell.
 
 pub(crate) mod approval;
+pub(crate) mod approval_dialog;
 pub(crate) mod attachments;
 pub(crate) mod audit;
 pub(crate) mod error;

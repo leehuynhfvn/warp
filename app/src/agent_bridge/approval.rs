@@ -41,17 +41,12 @@ pub(crate) struct ApprovalRequest {
     pub(crate) request_id: Uuid,
     pub(crate) session: SessionId,
     /// How the session is named to a person, e.g. "root@draff3".
-    // Read starting Task 3.2 (the approval dialog's `content()`); remove this `allow` there.
-    #[allow(dead_code)]
     pub(crate) session_label: String,
-    #[allow(dead_code)]
     pub(crate) agent: Option<String>,
-    #[allow(dead_code)]
     pub(crate) subject: ApprovalSubject,
     /// Wall-clock time the request is auto-denied at, shown to the person reviewing it. The
     /// actual timeout is enforced by the `Timer` in [`wait_for_decision`], not by comparing
     /// against this.
-    #[allow(dead_code)]
     pub(crate) deadline: SystemTime,
     /// The window whose pane holds the session, so the right window shows a toast for it.
     pub(crate) window_id: WindowId,
@@ -137,9 +132,6 @@ impl ApprovalQueue {
         self.revoke_where(|_| true)
     }
 
-    // Used starting Task 3.2 (via `AgentBridgeModel::approval`, the dialog's content); remove this
-    // `allow` there.
-    #[allow(dead_code)]
     pub(crate) fn get(&self, request_id: Uuid) -> Option<&ApprovalRequest> {
         self.pending
             .iter()
