@@ -79,8 +79,12 @@ pub(super) trait ControlTransport {
     /// Sends `agent.pair`'s handshake with `token` under `name`. On success or failure, a
     /// conforming implementation remembers `token` for every later `call` (mục 3.11 of the O2
     /// agent-ops policy plan) — Warp simply treats an unrecognized token as an unpaired client.
-    fn pair(&mut self, name: &str, token: &AgentToken, timeout: Duration)
-    -> Result<Value, ControlError>;
+    fn pair(
+        &mut self,
+        name: &str,
+        token: &AgentToken,
+        timeout: Duration,
+    ) -> Result<Value, ControlError>;
 }
 
 /// A failed tool call: the message the model reads.

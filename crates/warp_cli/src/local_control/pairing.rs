@@ -44,7 +44,9 @@ pub(super) fn token_for(name: &str) -> Result<AgentToken, PairingTokenError> {
     match write_token(&dir, &path, &token) {
         Ok(()) => Ok(token),
         // Another process created it between our read and our write; use what it wrote.
-        Err(PairingTokenError::Write { source, .. }) if source.kind() == io::ErrorKind::AlreadyExists => {
+        Err(PairingTokenError::Write { source, .. })
+            if source.kind() == io::ErrorKind::AlreadyExists =>
+        {
             read_token(&path)?.ok_or(PairingTokenError::Invalid { path })
         }
         Err(err) => Err(err),
@@ -101,10 +103,12 @@ fn write_token(dir: &Path, path: &Path, token: &AgentToken) -> Result<(), Pairin
         use std::os::unix::fs::DirBuilderExt as _;
         builder.mode(0o700);
     }
-    builder.create(dir).map_err(|source| PairingTokenError::CreateDir {
-        path: dir.to_owned(),
-        source,
-    })?;
+    builder
+        .create(dir)
+        .map_err(|source| PairingTokenError::CreateDir {
+            path: dir.to_owned(),
+            source,
+        })?;
 
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -113,10 +117,12 @@ fn write_token(dir: &Path, path: &Path, token: &AgentToken) -> Result<(), Pairin
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|source| PairingTokenError::Write {
-        path: path.to_owned(),
-        source,
-    })?;
+    let mut file = options
+        .open(path)
+        .map_err(|source| PairingTokenError::Write {
+            path: path.to_owned(),
+            source,
+        })?;
     file.write_all(token.secret().as_bytes())
         .map_err(|source| PairingTokenError::Write {
             path: path.to_owned(),

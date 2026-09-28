@@ -3,10 +3,10 @@ use ::local_control::protocol::{
     ActionNameParams, ActionParameterSpec, AgentPairParams, BindingNameParams, BooleanValueParams,
     ColorValueParams, DirectionParams, EmptyParams, FileOpenParams, KeyParams, KeyValueParams,
     NamespaceParams, PageQueryParams, PaneTarget, QueryParams, RemoteExecParams,
-    RemoteExecVisibleParams, RemoteFileReadParams, RemoteFileWriteParams,
-    RemoteOutputRecentParams, RenameParams, ResizeParams, SessionTarget, SyncPathParams,
-    SyncPendingParams, SyncStatusParams, TabActivateParams, TabCloseParams, TabCreateParams,
-    TabTarget, TargetSelector, TextParams, ThemeNameParams, WindowTarget,
+    RemoteExecVisibleParams, RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams,
+    RenameParams, ResizeParams, SessionTarget, SyncPathParams, SyncPendingParams, SyncStatusParams,
+    TabActivateParams, TabCloseParams, TabCreateParams, TabTarget, TargetSelector, TextParams,
+    ThemeNameParams, WindowTarget,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode, TargetScope};
 use warpui::{AppContext, ModelContext, TypedActionView, ViewHandle, WindowId};

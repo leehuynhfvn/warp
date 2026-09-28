@@ -19478,9 +19478,7 @@ impl Workspace {
     fn agent_ops_forget_all_paired_agents(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(home) = dirs::home_dir() else {
             self.add_agent_bridge_toast(
-                DismissibleToast::default(
-                    "Could not find the user's home directory".to_owned(),
-                ),
+                DismissibleToast::default("Could not find the user's home directory".to_owned()),
                 ctx,
             );
             return;

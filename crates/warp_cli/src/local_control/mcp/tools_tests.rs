@@ -72,11 +72,19 @@ impl ControlTransport for FakeTransport {
 /// `~/.warp/agent-ops/agent-tokens/` on the first tool call. Tests of pairing itself use
 /// [`tools_with_pairing`].
 fn tools() -> Tools<FakeTransport> {
-    Tools::new(FakeTransport::default(), Redactor::with_default_patterns(), true)
+    Tools::new(
+        FakeTransport::default(),
+        Redactor::with_default_patterns(),
+        true,
+    )
 }
 
 fn tools_with_pairing() -> Tools<FakeTransport> {
-    Tools::new(FakeTransport::default(), Redactor::with_default_patterns(), false)
+    Tools::new(
+        FakeTransport::default(),
+        Redactor::with_default_patterns(),
+        false,
+    )
 }
 
 /// Points `$HOME` at a temporary, empty directory for `body`, so a pairing test's token file
@@ -976,10 +984,13 @@ fn a_failed_pairing_attempt_is_not_retried_in_the_same_process() {
     with_temp_home(|| {
         let mut tools = tools_with_pairing();
         tools.set_client_name("claude-code");
-        tools.transport.pair_answers.push_back(Err(ControlError::new(
-            ErrorCode::PolicyDenied,
-            "Denied by Warp's agent policy: the user did not pair this agent",
-        )));
+        tools
+            .transport
+            .pair_answers
+            .push_back(Err(ControlError::new(
+                ErrorCode::PolicyDenied,
+                "Denied by Warp's agent policy: the user did not pair this agent",
+            )));
         answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
         call(&mut tools, "list_sessions", json!({}));
         assert_eq!(tools.transport.pair_calls.len(), 1);

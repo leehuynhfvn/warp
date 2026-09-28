@@ -47,7 +47,8 @@ pub(crate) fn hash(secret: &str) -> String {
 
 /// Parses `agents.toml`'s contents.
 pub(crate) fn parse(text: &str) -> Result<Vec<PairedAgent>, PairingError> {
-    let file: AgentsFile = toml::from_str(text).map_err(|err| PairingError::Parse(err.to_string()))?;
+    let file: AgentsFile =
+        toml::from_str(text).map_err(|err| PairingError::Parse(err.to_string()))?;
     Ok(file.agents)
 }
 
@@ -108,7 +109,11 @@ pub(crate) fn load(home: &Path) -> Vec<PairedAgent> {
 /// existing file is treated as empty (mục of [`load`]) rather than blocking the new pairing, so a
 /// corrupt file's previous entries would be lost on the next `add` — an accepted trade-off, since
 /// forgetting a pairing is exactly what "Agent Ops: Forget all paired agents" is for anyway.
-pub(crate) fn add(home: &Path, name: &str, token_sha256: String) -> Result<PairedAgent, PairingError> {
+pub(crate) fn add(
+    home: &Path,
+    name: &str,
+    token_sha256: String,
+) -> Result<PairedAgent, PairingError> {
     let mut agents = load(home);
     let agent = PairedAgent {
         id: next_id(&agents, name),
@@ -142,11 +147,12 @@ fn write(home: &Path, agents: &[PairedAgent]) -> Result<(), PairingError> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options
-        .open(&tmp_path)
-        .map_err(|err| PairingError::Io(format!("could not create {}: {err}", tmp_path.display())))?;
-    file.write_all(text.as_bytes())
-        .map_err(|err| PairingError::Io(format!("could not write {}: {err}", tmp_path.display())))?;
+    let mut file = options.open(&tmp_path).map_err(|err| {
+        PairingError::Io(format!("could not create {}: {err}", tmp_path.display()))
+    })?;
+    file.write_all(text.as_bytes()).map_err(|err| {
+        PairingError::Io(format!("could not write {}: {err}", tmp_path.display()))
+    })?;
     drop(file);
     fs::rename(&tmp_path, &path)
         .map_err(|err| PairingError::Io(format!("could not replace {}: {err}", path.display())))

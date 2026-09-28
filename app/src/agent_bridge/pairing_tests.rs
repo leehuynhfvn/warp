@@ -117,7 +117,11 @@ fn add_writes_the_file_with_0600_permissions() {
 
     let home = tempfile::tempdir().unwrap();
     add(home.path(), "claude-code", "a".repeat(64)).unwrap();
-    let path = home.path().join(".warp").join("agent-ops").join("agents.toml");
+    let path = home
+        .path()
+        .join(".warp")
+        .join("agent-ops")
+        .join("agents.toml");
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }

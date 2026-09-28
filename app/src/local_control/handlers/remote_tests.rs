@@ -15,8 +15,8 @@ use warp_core::features::FeatureFlag;
 use warpui::SingletonEntity as _;
 
 use super::{Decision, Operation, PolicyRequest, PolicySubject, evaluate_policy, resolve_agent_id};
-use crate::agent_bridge::pairing;
 use crate::agent_bridge::model::AgentBridgeModel;
+use crate::agent_bridge::pairing;
 use crate::local_control::{
     ControlServerState, LocalControlBridge, handle_control_request, issue_credential,
 };

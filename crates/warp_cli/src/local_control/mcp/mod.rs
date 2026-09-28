@@ -104,7 +104,8 @@ impl ControlTransport for LocalControlTransport {
         let params = local_control::protocol::AgentPairParams {
             name: name.to_owned(),
         };
-        let result = send_action_with_token(&target, ActionKind::AgentPair, params, timeout, Some(token));
+        let result =
+            send_action_with_token(&target, ActionKind::AgentPair, params, timeout, Some(token));
         // Sent on every later call regardless of outcome: an agent.pair that failed or was denied
         // still leaves the token attached, so Warp simply sees it as unrecognized (mục 3.11) —
         // and so it will be tried again, and can succeed, the next time this token is paired.

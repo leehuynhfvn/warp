@@ -4,7 +4,9 @@ use futures::executor::block_on;
 use warpui::{App, ModelHandle, WindowId};
 
 use super::*;
-use crate::agent_bridge::approval::{AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use crate::agent_bridge::approval::{
+    AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject,
+};
 
 fn setup(app: &mut App) -> ModelHandle<AgentBridgeModel> {
     app.add_singleton_model(|_| AgentBridgeModel::default())

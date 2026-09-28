@@ -211,7 +211,10 @@ impl LocalControlBridge {
             ActionKind::RemoteSessionList => remote::session_list(ctx),
             ActionKind::RemoteExec | ActionKind::RemoteFileRead | ActionKind::RemoteFileWrite => {
                 let token_sha256 = agent_token_sha256(&request);
-                return pending(request.request_id, remote::start(&request, token_sha256, ctx));
+                return pending(
+                    request.request_id,
+                    remote::start(&request, token_sha256, ctx),
+                );
             }
             ActionKind::RemoteOutputRecent => {
                 return pending(request.request_id, remote::output_recent(&request, ctx));
