@@ -326,7 +326,7 @@ define_action_catalog! {
     }
 
     agent {
-        AgentPair => { name: "agent.pair", status: Stub, target: Instance, params: AgentPair, result: AgentPair },
+        AgentPair => { name: "agent.pair", status: Implemented, target: Instance, params: AgentPair, result: AgentPair },
     }
 
     file {

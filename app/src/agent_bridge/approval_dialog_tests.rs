@@ -8,7 +8,7 @@ use crate::terminal::model::session::SessionId;
 fn command_request(command: &str, cwd: Option<&str>, visible: bool) -> ApprovalRequest {
     ApprovalRequest {
         request_id: Uuid::new_v4(),
-        session: SessionId::from(1u64),
+        session: Some(SessionId::from(1u64)),
         session_label: "root@lab-1".to_owned(),
         agent: AgentLabel {
             claimed: Some("claude-code".to_owned()),
@@ -32,7 +32,7 @@ fn write_request(
 ) -> ApprovalRequest {
     ApprovalRequest {
         request_id: Uuid::new_v4(),
-        session: SessionId::from(1u64),
+        session: Some(SessionId::from(1u64)),
         session_label: "root@lab-1".to_owned(),
         agent: AgentLabel {
             claimed: Some("claude-code".to_owned()),
@@ -48,6 +48,33 @@ fn write_request(
         deadline: SystemTime::now() + Duration::from_secs(300),
         window_id: WindowId::from_usize(1),
     }
+}
+
+fn pairing_request(name: &str) -> ApprovalRequest {
+    ApprovalRequest {
+        request_id: Uuid::new_v4(),
+        session: None,
+        session_label: String::new(),
+        agent: AgentLabel {
+            claimed: Some(name.to_owned()),
+            agent_id: None,
+        },
+        subject: ApprovalSubject::Pairing {
+            name: name.to_owned(),
+        },
+        deadline: SystemTime::now() + Duration::from_secs(300),
+        window_id: WindowId::from_usize(1),
+    }
+}
+
+#[test]
+fn a_pairing_request_is_titled_without_a_session() {
+    let request = pairing_request("claude-code");
+    let (title, body) = content(&request);
+    assert_eq!(title, "Pair an agent with Warp?");
+    assert!(body.contains("Agent: claude-code"));
+    assert!(body.contains("Pairing lets Warp show which agent sends each request."));
+    assert!(!body.contains("(unverified name)"));
 }
 
 #[test]

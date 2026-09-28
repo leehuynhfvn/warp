@@ -32,6 +32,9 @@ pub(crate) enum ApprovalSubject {
         preview: String,
         preview_truncated_lines: usize,
     },
+    /// `agent.pair`: not tied to any session, so [`ApprovalRequest::session`] is `None` for this
+    /// subject (mục 3.11 of the O2 plan).
+    Pairing { name: String },
 }
 
 /// Who a request claims to be from: the name a client gave itself, and — once pairing resolves the
@@ -50,8 +53,10 @@ pub(crate) struct AgentLabel {
 #[derive(Debug, Clone)]
 pub(crate) struct ApprovalRequest {
     pub(crate) request_id: Uuid,
-    pub(crate) session: SessionId,
-    /// How the session is named to a person, e.g. "root@draff3".
+    /// `None` for a pairing request ([`ApprovalSubject::Pairing`]), which is not tied to any
+    /// session.
+    pub(crate) session: Option<SessionId>,
+    /// How the session is named to a person, e.g. "root@draff3". Empty for a pairing request.
     pub(crate) session_label: String,
     pub(crate) agent: AgentLabel,
     pub(crate) subject: ApprovalSubject,
@@ -88,12 +93,16 @@ pub(crate) struct ApprovalQueue {
 impl ApprovalQueue {
     /// Queues `request`. Fails once its session already has
     /// `MAX_PENDING_APPROVALS_PER_SESSION` requests waiting, so a misbehaving agent cannot flood
-    /// the queue while a person is away.
+    /// the queue while a person is away. A pairing request (no session) has no such limit here —
+    /// the caller enforces its own "one pairing request at a time" rule instead
+    /// (`AgentBridgeModel::has_pending_pairing`).
     pub(crate) fn push(
         &mut self,
         request: ApprovalRequest,
     ) -> Result<oneshot::Receiver<ApprovalDecision>, AgentBridgeError> {
-        if self.count_for_session(request.session) >= MAX_PENDING_APPROVALS_PER_SESSION {
+        if let Some(session) = request.session
+            && self.count_for_session(session) >= MAX_PENDING_APPROVALS_PER_SESSION
+        {
             return Err(AgentBridgeError::PolicyDenied(
                 "too many requests are waiting for approval in this session.".to_owned(),
             ));
@@ -134,7 +143,7 @@ impl ApprovalQueue {
 
     /// Denies every request of `id` and removes them. Used when the user detaches the session.
     pub(crate) fn revoke_session(&mut self, id: SessionId) -> usize {
-        self.revoke_where(|request| request.session == id)
+        self.revoke_where(|request| request.session == Some(id))
     }
 
     /// Denies every pending request and removes them. Used by "Revoke all" and the palette's
@@ -153,7 +162,7 @@ impl ApprovalQueue {
     pub(crate) fn count_for_session(&self, id: SessionId) -> usize {
         self.pending
             .iter()
-            .filter(|(request, _)| request.session == id)
+            .filter(|(request, _)| request.session == Some(id))
             .count()
     }
 
@@ -161,8 +170,17 @@ impl ApprovalQueue {
     pub(crate) fn oldest_for_session(&self, id: SessionId) -> Option<&ApprovalRequest> {
         self.pending
             .iter()
-            .find(|(request, _)| request.session == id)
+            .find(|(request, _)| request.session == Some(id))
             .map(|(request, _)| request)
+    }
+
+    /// Whether a pairing request ([`ApprovalSubject::Pairing`]) is already waiting — `agent.pair`
+    /// allows only one at a time, across the whole app, so a paired-or-not-yet-answered client
+    /// cannot spam the pairing dialog (mục 3.11 of the plan).
+    pub(crate) fn has_pending_pairing(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|(request, _)| matches!(request.subject, ApprovalSubject::Pairing { .. }))
     }
 
     /// The longest-waiting request whose session's pane is in `window_id`.

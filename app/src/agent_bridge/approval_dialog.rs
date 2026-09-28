@@ -52,15 +52,17 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
     let title = match &request.subject {
         ApprovalSubject::Command { .. } => format!("Run on {}?", request.session_label),
         ApprovalSubject::Write { .. } => format!("Write a file on {}?", request.session_label),
+        ApprovalSubject::Pairing { .. } => "Pair an agent with Warp?".to_owned(),
     };
 
-    let mut lines = vec![agent_line(&request.agent)];
+    let mut lines = Vec::new();
     match &request.subject {
         ApprovalSubject::Command {
             command,
             cwd,
             visible,
         } => {
+            lines.push(agent_line(&request.agent));
             lines.push(
                 if *visible {
                     "Runs visibly in the terminal"
@@ -81,6 +83,7 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
             preview,
             preview_truncated_lines,
         } => {
+            lines.push(agent_line(&request.agent));
             lines.push(format!("Path: {}", printable(path)));
             lines.push(format!("Size: {bytes} bytes"));
             lines.push(
@@ -96,6 +99,14 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
                 preview_block.push_str(&format!("\n… {preview_truncated_lines} more lines"));
             }
             lines.push(preview_block);
+        }
+        ApprovalSubject::Pairing { name } => {
+            lines.push(format!("Agent: {}", printable(name)));
+            lines.push(
+                "Pairing lets Warp show which agent sends each request. It does not stop \
+                 other programs running as your user."
+                    .to_owned(),
+            );
         }
     }
     lines.push(format!(
@@ -194,11 +205,12 @@ impl View for AgentApprovalDialog {
         // acting on `ApprovalsChanged` to close it (mục 3.7 of the O2 plan) — that one frame
         // renders empty chrome, the same fallback `WarpSyncConfirmDialog` uses while it has no
         // request either, rather than an unproven zero-child layout.
-        let (title, body, is_write) = match request {
+        let (title, body, shows_allow_in_session) = match request {
             Some(request) => {
                 let (title, body) = content(request);
-                let is_write = matches!(request.subject, ApprovalSubject::Write { .. });
-                (title, body, is_write)
+                let shows_allow_in_session =
+                    matches!(request.subject, ApprovalSubject::Command { .. });
+                (title, body, shows_allow_in_session)
             }
             None => (String::new(), String::new(), false),
         };
@@ -217,7 +229,7 @@ impl View for AgentApprovalDialog {
             },
         )
         .with_bottom_row_child(deny_button);
-        if !is_write {
+        if shows_allow_in_session {
             dialog = dialog.with_bottom_row_child(
                 Container::new(ChildView::new(&self.allow_in_session_button).finish())
                     .with_margin_right(12.)

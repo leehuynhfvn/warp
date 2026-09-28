@@ -16,7 +16,7 @@ fn window(id: usize) -> WindowId {
 fn request(session: SessionId, window_id: WindowId) -> ApprovalRequest {
     ApprovalRequest {
         request_id: Uuid::new_v4(),
-        session,
+        session: Some(session),
         session_label: "root@lab-1".to_owned(),
         agent: AgentLabel {
             claimed: Some("claude-code".to_owned()),

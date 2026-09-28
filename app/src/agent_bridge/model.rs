@@ -175,6 +175,10 @@ impl AgentBridgeModel {
         self.approvals.count_for_session(id)
     }
 
+    pub(crate) fn has_pending_pairing(&self) -> bool {
+        self.approvals.has_pending_pairing()
+    }
+
     pub(crate) fn oldest_approval_for_session(&self, id: SessionId) -> Option<&ApprovalRequest> {
         self.approvals.oldest_for_session(id)
     }

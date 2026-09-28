@@ -254,11 +254,6 @@ fn direct_surface_actions_have_stable_names() {
 fn catalog_actions_share_uniform_authorization() {
     for kind in ActionKind::ALL {
         let metadata = kind.metadata();
-        if metadata.kind == ActionKind::AgentPair {
-            // Stub until Task 4.4 of the O2 agent-ops policy plan wires its handler; see
-            // `agent_pair_is_a_stub_until_its_handler_lands` below.
-            continue;
-        }
         assert_eq!(
             metadata.implementation_status,
             ActionImplementationStatus::Implemented,
@@ -274,21 +269,7 @@ fn implemented_catalog_contains_all_retained_actions() {
         .into_iter()
         .map(|metadata| metadata.kind)
         .collect::<Vec<_>>();
-    let expected: Vec<ActionKind> = ActionKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| *kind != ActionKind::AgentPair)
-        .collect();
-    assert_eq!(actions, expected);
-}
-
-#[test]
-fn agent_pair_is_a_stub_until_its_handler_lands() {
-    assert_eq!(
-        ActionKind::AgentPair.metadata().implementation_status,
-        ActionImplementationStatus::Stub
-    );
-    assert!(!ActionKind::AgentPair.is_implemented());
+    assert_eq!(actions, ActionKind::ALL);
 }
 
 #[test]

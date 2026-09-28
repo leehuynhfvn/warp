@@ -481,6 +481,12 @@ pub fn init(app: &mut AppContext) {
                 WorkspaceAction::AgentOpsTrustSession,
             )
             .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_ops_forget_all_paired_agents",
+                "Agent Ops: Forget all paired agents",
+                WorkspaceAction::AgentOpsForgetAllPairedAgents,
+            )
+            .with_context_predicate(id!("Workspace")),
         ]);
     }
 

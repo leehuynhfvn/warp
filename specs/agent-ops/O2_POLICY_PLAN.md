@@ -732,7 +732,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [ ] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [ ] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -764,6 +764,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 | P23 | 2026-09-28 | Task 3.5's "Review" từ toast/header **không** chuyển tab/pane tới session của request — chỉ mở hộp thoại (dùng `WorkspaceAction::AgentOpsReviewRequest { request_id }` trực tiếp, không qua `activate_tab_by_pane_group_id`/`focus_pane`) | Mục 3.8 của plan tự cho phép nhánh dự phòng này ("nếu khó, chỉ mở dialog — ghi Quyết định"); dialog tự hiện đúng nội dung request (session_label, lệnh) nên người vẫn biết đang duyệt gì dù chưa ở đúng tab — đủ an toàn cho O2, chuyển tab để O5b/sau |
 | P24 | 2026-09-28 | `ActionKind::AgentPair` vào catalog ở Task 4.1 với `status: Stub` (đúng mục 4.1 của plan) tạm thời phá 2 test bất biến có sẵn từ trước O2 (`catalog_actions_share_uniform_authorization`, `implemented_catalog_contains_all_retained_actions` — cả hai giả định mọi action trong `ActionKind::ALL` đều `Implemented`, viết trước khi `ActionImplementationStatus::Stub` được dùng thật lần đầu); sửa cả hai để loại trừ đúng một action này (kèm test mới `agent_pair_is_a_stub_until_its_handler_lands` xác nhận trạng thái đó), thay vì né bằng cách đặt `agent.pair` thẳng `Implemented` từ Task 4.1 | Giữ đúng ranh giới 4.1 (chỉ protocol) → 4.4 (handler thật) của plan; loại trừ sẽ tự hết khi Task 4.4 đổi `status` sang `Implemented` — gỡ carve-out đó lúc đó, không phải giữ mãi |
 | P25 | 2026-09-28 | `agent.pair` không có subcommand `warpctrl agent pair`; loại hẳn khỏi test bất biến `every_retained_catalog_action_has_a_parseable_cli_example` (không phải carve-out tạm) | Đây là handshake máy-với-máy MCP transport tự gọi lúc tool call đầu (mục 3.11), không phải lệnh người gõ tay như `remote.*`; Task 4.5 của plan cũng chỉ thiết kế phía client MCP, không nhắc CLI trực tiếp |
+| P26 | 2026-09-28 | Hộp thoại pairing dùng chung nhãn nút "Approve"/"Deny" với hộp thoại duyệt lệnh (không đổi thành "Pair"/"Deny" như mục 3.11 gợi ý) | `ActionButton` không hỗ trợ đổi nhãn tại thời điểm mở (chỉ tạo view một lần trong `AgentApprovalDialog::new`, `render()` chỉ đọc `&self`); đổi nhãn theo request cần refactor thêm (đọc model trong `set_request`/nơi mở dialog rồi gọi `set_label`) — chỉ là chữ trên nút, không đổi hành vi/an toàn, hoãn tới khi thật sự cần |
+| P27 | 2026-09-28 | Không audit `agent.pair` vào `~/.warp/agent-bridge/audit.jsonl` | Audit hiện có gắn với `AuditRecord.session_id/host/user` của một remote session; pairing không có session. Task 4.4/checklist 5.P3 không đòi audit cho riêng hành động pair — danh tính đã ghép được audit gián tiếp qua `agent_id` trên audit của các request ghi sau đó (Task 4.3) |
 
 ### Nhật ký
 
@@ -1051,3 +1053,40 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   255 passed; `cargo test -p local_control --lib`: 64 passed; `cargo test -p warp -p local_control -p
   warp_cli --lib -- agent_bridge local_control`: 104 passed (warp_cli slice) + không lỗi. `cargo check
   -p warp -p local_control -p warp_cli --tests`: qua.
+- 2026-09-28 — Task 4.4 (Claude Sonnet 5): `agent.pair` chuyển từ Stub sang Implemented (catalog.rs),
+  gỡ carve-out P24 trong `protocol_tests.rs` (hai test bất biến trở lại nguyên bản, không loại trừ
+  action nào nữa). `ApprovalSubject::Pairing { name }` (mới, `approval.rs`); `ApprovalRequest.session`
+  đổi từ `SessionId` sang `Option<SessionId>` (`None` cho pairing — không gắn session nào); sửa
+  `ApprovalQueue::count_for_session`/`oldest_for_session`/`revoke_session`/`push`'s giới hạn theo đó
+  (giới hạn `MAX_PENDING_APPROVALS_PER_SESSION` chỉ áp khi có session); thêm
+  `ApprovalQueue::has_pending_pairing()` + `AgentBridgeModel::has_pending_pairing()` (một pairing chờ
+  tại một thời điểm, toàn app — mục 3.11 điểm 2). `approval_dialog.rs`: `content()` thêm nhánh
+  `Pairing` (title "Pair an agent with Warp?", body "Agent: {name}" + câu cảnh báo nguyên văn mục
+  3.11); nút "Allow this command in this session" giờ chỉ hiện cho `Command` (đổi từ điều kiện
+  `!is_write` sang `matches!(Command)` — rõ ràng hơn khi có 3 loại subject thay vì 2). Nhãn nút vẫn
+  "Approve"/"Deny" cho pairing thay vì "Pair"/"Deny" như mục 3.11 gợi ý — xem P26.
+  `app/src/local_control/handlers/agent.rs::pair` (thay hẳn placeholder Task 4.1): kiểm
+  `agent_token` có trong envelope (thiếu → `InvalidParams`) → băm → tra `pairing::find` (đã ghép →
+  trả `already_paired` ngay, không hỏi) → kiểm `has_pending_pairing` (đang có cái khác chờ →
+  `SessionBusy` "another agent is waiting to be paired") → `target_window_id_for_target` (dùng lại
+  hàm `pub(super)` có sẵn của `resolver.rs`, tái dùng thay vì viết lại "cửa sổ đang active") → push
+  `ApprovalRequest` → `ctx.spawn` chờ quyết định như `remote.rs`'s `ask_authorization` (dọn hàng đợi
+  chỉ khi `TimedOut`, giống hệt `finish_ask`'s nhánh đó — `decide`/`revoke_*` đã tự dọn cho mọi quyết
+  định khác) → Approve/AllowInSession → `pairing::add`; Deny/TimedOut/Revoked →
+  `PolicyDenied("the user did not pair this agent")`. `remote::ensure_enabled` đổi `pub(super)` để
+  `agent.rs` dùng lại (không viết lại kiểm tra flag `AgentBridge`). Không audit riêng `agent.pair`
+  vào `audit.jsonl` — xem P27. `bridge.rs`'s dispatch đổi từ gọi đồng bộ (Task 4.1) sang
+  `pending(...)` như `remote::start`, vì giờ có thể phải chờ người duyệt. Palette "Agent Ops: Forget
+  all paired agents" (`WorkspaceAction::AgentOpsForgetAllPairedAgents`, `workspace/action.rs` +
+  `mod.rs` binding + `view.rs` handler chạy `pairing::forget_all` trong `ctx.spawn` giống các thao
+  tác CLI cài đặt khác của Workspace, không đồng bộ trên main thread) — không cần hộp thoại xác nhận
+  (mục 3.11: chỉ giảm quyền). Test: `agent_tests.rs` mới (3 test qua HTTP harness thật — không token
+  → `InvalidParams`; đã ghép → `already_paired` ngay; đang chờ pairing khác → `SessionBusy` — khả thi
+  hơn `remote_tests.rs`'s Ask flow vì pairing không cần dựng session `WarpifiedRemote`); test hộp
+  thoại "paired" mới trong `approval_dialog_tests.rs`. Phát hiện ngoài kế hoạch: hằng số
+  `capabilities().len()` trong `mod_tests.rs::capabilities_advertises_the_complete_catalog` (96 →
+  97) — sửa theo action mới, không phải lỗi. `cargo test -p warp --lib agent_bridge`: 256 passed;
+  `cargo test -p warp --lib -- local_control::handlers::agent`: 3 passed;
+  `cargo test -p warp --lib -- agent_bridge local_control workspace`: 731 passed; `cargo test -p
+  local_control --lib`: 63 passed (−1 đúng vì gỡ test tạm P24). `cargo check -p warp -p local_control
+  -p warp_cli --tests`: qua.

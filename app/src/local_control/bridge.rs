@@ -223,7 +223,9 @@ impl LocalControlBridge {
                     remote::exec_visible(&request, token_sha256, ctx),
                 );
             }
-            ActionKind::AgentPair => agent::pair(&request, ctx),
+            ActionKind::AgentPair => {
+                return pending(request.request_id, agent::pair(&request, ctx));
+            }
             ActionKind::SyncStatus => {
                 return pending(
                     request.request_id,

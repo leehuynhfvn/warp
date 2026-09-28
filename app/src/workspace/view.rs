@@ -19472,6 +19472,36 @@ impl Workspace {
         self.add_agent_bridge_toast(toast, ctx);
     }
 
+    /// "Agent Ops: Forget all paired agents" — empties `agents.toml`. Only removes identities; it
+    /// does not need confirmation the way a destructive Revoke does, since it only ever *reduces*
+    /// what a request can claim (mục 3.11 of the O2 plan).
+    fn agent_ops_forget_all_paired_agents(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(home) = dirs::home_dir() else {
+            self.add_agent_bridge_toast(
+                DismissibleToast::default(
+                    "Could not find the user's home directory".to_owned(),
+                ),
+                ctx,
+            );
+            return;
+        };
+        let count = crate::agent_bridge::pairing::load(&home).len();
+        ctx.spawn(
+            async move { crate::agent_bridge::pairing::forget_all(&home) },
+            move |view, result, ctx| {
+                let message = match result {
+                    Ok(()) => match count {
+                        0 => "No paired agents to forget".to_owned(),
+                        1 => "Forgot 1 paired agent".to_owned(),
+                        count => format!("Forgot {count} paired agents"),
+                    },
+                    Err(err) => format!("Could not forget paired agents: {err}"),
+                };
+                view.add_agent_bridge_toast(DismissibleToast::default(message), ctx);
+            },
+        );
+    }
+
     pub fn show_delete_conversation_confirmation_dialog(
         &mut self,
         source: DeleteConversationDialogSource,
@@ -25835,6 +25865,7 @@ impl TypedActionView for Workspace {
             AgentOpsReviewWaitingRequests => self.agent_ops_review_waiting_requests(ctx),
             AgentOpsDenyAllApprovals => self.agent_ops_deny_all_approvals(ctx),
             AgentOpsTrustSession => self.agent_ops_trust_session(ctx),
+            AgentOpsForgetAllPairedAgents => self.agent_ops_forget_all_paired_agents(ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
             WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),

@@ -532,6 +532,9 @@ pub enum WorkspaceAction {
     /// `Decision::Ask` request of the active session's attachment is allowed without asking
     /// again, until it detaches or expires. A `[deny]` policy rule still always wins.
     AgentOpsTrustSession,
+    /// "Agent Ops: Forget all paired agents" — empties `~/.warp/agent-ops/agents.toml`. This only
+    /// removes identities; it grants nothing and revokes nothing on its own.
+    AgentOpsForgetAllPairedAgents,
     /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
     WarpSyncOpenMirror,
     /// Open the Warp Sync mirror of the active remote session's host in the external editor.
@@ -1316,7 +1319,8 @@ impl WorkspaceAction {
             | AgentOpsReviewRequest { .. }
             | AgentOpsReviewWaitingRequests
             | AgentOpsDenyAllApprovals
-            | AgentOpsTrustSession => false,
+            | AgentOpsTrustSession
+            | AgentOpsForgetAllPairedAgents => false,
             #[cfg(feature = "local_fs")]
             FileRenamed { .. } => false, // File rename doesn't change workspace state
             #[cfg(feature = "local_fs")]

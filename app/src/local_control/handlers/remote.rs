@@ -716,7 +716,7 @@ fn ask_authorization(
 
     let request = ApprovalRequest {
         request_id: input.target.request_id,
-        session: input.session,
+        session: Some(input.session),
         session_label: format!(
             "{}@{}",
             input.target.session.user, input.target.session.host
@@ -903,7 +903,7 @@ fn resolve_agent_id(home: &Path, token_sha256: Option<&str>) -> Option<String> {
     pairing::find(&agents, token_sha256).map(|agent| agent.id.clone())
 }
 
-fn ensure_enabled(kind: ActionKind) -> Result<(), ControlError> {
+pub(super) fn ensure_enabled(kind: ActionKind) -> Result<(), ControlError> {
     if FeatureFlag::AgentBridge.is_enabled() {
         return Ok(());
     }
