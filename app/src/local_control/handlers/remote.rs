@@ -6,20 +6,24 @@
 //! the client.
 
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use ::local_control::protocol::{
-    Action, RemoteAccess, RemoteAttachment, RemoteExecParams, RemoteExecVisibleParams,
-    RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams, RemoteSessionKind,
-    RemoteSessionListResult, RemoteSessionRef, RemoteSessionSummary, RequestEnvelope,
-    SessionTarget, TargetSelector,
+    APPROVAL_TIMEOUT_SECS, Action, RemoteAccess, RemoteAttachment, RemoteExecParams,
+    RemoteExecVisibleParams, RemoteFileReadParams, RemoteFileWriteParams, RemoteOutputRecentParams,
+    RemoteSessionKind, RemoteSessionListResult, RemoteSessionRef, RemoteSessionSummary,
+    RequestEnvelope, SessionTarget, TargetSelector, WriteExpectation,
 };
 use ::local_control::{ActionKind, ControlError, ErrorCode};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures::channel::oneshot;
 use parking_lot::FairMutex;
 use serde_json::Value;
-use warpui::{ModelContext, SingletonEntity, ViewHandle};
+use warpui::{ModelContext, SingletonEntity, ViewHandle, WindowId};
 
 use super::metadata::{SessionEntry, session_entries};
+use crate::agent_bridge::approval::{self, ApprovalDecision, ApprovalRequest, ApprovalSubject};
 use crate::agent_bridge::attachments::{Access, AttachmentStatus};
 use crate::agent_bridge::audit::audit_dir;
 use crate::agent_bridge::error::AgentBridgeError;
@@ -27,8 +31,8 @@ use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::operations::OperationKind;
 use crate::agent_bridge::ops::{self, SessionRunner, Target, VisibleAudit};
 use crate::agent_bridge::policy::{self, Decision, PolicyRequest};
-use crate::agent_bridge::recent;
 use crate::agent_bridge::visible::{self, CommandWatch};
+use crate::agent_bridge::{APPROVAL_PREVIEW_LINES, recent};
 use crate::features::FeatureFlag;
 use crate::local_control::LocalControlBridge;
 use crate::terminal::model::TerminalModel;
@@ -95,6 +99,8 @@ impl Operation {
             Self::Exec(params) => Some(PolicySubject::Exec(params.command.clone())),
             Self::Write(params) => Some(PolicySubject::Write {
                 path: params.path.clone(),
+                content_base64: params.content_base64.clone(),
+                creates: matches!(params.expectation, WriteExpectation::MustNotExist),
             }),
             Self::Read(_) => None,
         }
@@ -146,6 +152,7 @@ pub(crate) fn start(
     let runner = SessionRunner::new(session.clone()).map_err(ControlError::from)?;
     check_access(&session, operation.needed_access(), ctx)?;
     let id = session.id();
+    let window_id = snapshot.terminal_view.window_id(ctx);
     let target = target(snapshot.session_id, &session, snapshot.cwd, request);
     let is_exec = operation.is_exec();
     let (sender, receiver) = oneshot::channel();
@@ -156,6 +163,8 @@ pub(crate) fn start(
     };
     let input = AuthorizeInput {
         hostname: session.hostname().to_owned(),
+        session: id,
+        window_id,
         subject,
         action: kind,
         agent: operation.agent().map(str::to_owned),
@@ -272,6 +281,7 @@ pub(crate) fn exec_visible(
     ops::ensure_supported(&session).map_err(ControlError::from)?;
     check_access(&session, Access::Full, ctx)?;
     let id = session.id();
+    let window_id = snapshot.terminal_view.window_id(ctx);
     let target = target(
         snapshot.session_id.clone(),
         &session,
@@ -282,6 +292,8 @@ pub(crate) fn exec_visible(
 
     let input = AuthorizeInput {
         hostname: session.hostname().to_owned(),
+        session: id,
+        window_id,
         subject: PolicySubject::ExecVisible(params.command.clone()),
         action: kind,
         agent: params.agent.clone(),
@@ -465,13 +477,19 @@ fn target(
 }
 
 /// Enough about a write request to evaluate the agent-ops policy on a background thread and, if
-/// it is denied, to audit it. Owned (not the borrowing `PolicyRequest`) so it can cross into the
-/// spawned future.
-#[derive(Debug)]
+/// it is denied or asked about, to audit or display it. Owned (not the borrowing `PolicyRequest`)
+/// so it can cross into the spawned future and back.
+#[derive(Debug, Clone)]
 enum PolicySubject {
     Exec(String),
     ExecVisible(String),
-    Write { path: String },
+    Write {
+        path: String,
+        content_base64: String,
+        /// Whether the write expects to create a new file (`WriteExpectation::MustNotExist`)
+        /// rather than replace an existing one.
+        creates: bool,
+    },
 }
 
 impl PolicySubject {
@@ -479,7 +497,7 @@ impl PolicySubject {
         match self {
             Self::Exec(command) => PolicyRequest::Exec(command),
             Self::ExecVisible(command) => PolicyRequest::ExecVisible(command),
-            Self::Write { path } => PolicyRequest::Write { path },
+            Self::Write { path, .. } => PolicyRequest::Write { path },
         }
     }
 
@@ -492,17 +510,72 @@ impl PolicySubject {
 
     fn path(&self) -> Option<&str> {
         match self {
-            Self::Write { path } => Some(path),
+            Self::Write { path, .. } => Some(path),
             Self::Exec(_) | Self::ExecVisible(_) => None,
+        }
+    }
+
+    /// Builds what an approval dialog shows for this request. `cwd` comes from `Target` rather
+    /// than living on `PolicySubject` itself.
+    fn into_approval_subject(self, cwd: Option<String>) -> ApprovalSubject {
+        match self {
+            Self::Exec(command) => ApprovalSubject::Command {
+                command,
+                cwd,
+                visible: false,
+            },
+            Self::ExecVisible(command) => ApprovalSubject::Command {
+                command,
+                cwd,
+                visible: true,
+            },
+            Self::Write {
+                path,
+                content_base64,
+                creates,
+            } => {
+                let (bytes, preview, preview_truncated_lines) = write_preview(&content_base64);
+                ApprovalSubject::Write {
+                    path,
+                    bytes,
+                    creates,
+                    preview,
+                    preview_truncated_lines,
+                }
+            }
         }
     }
 }
 
-/// What `authorize` needs to evaluate the agent-ops policy and, if it denies the request, to
-/// audit that denial. `target`/`action`/`agent` mirror what the operation would itself audit as
-/// its "started" record, since a denied request never reaches it.
+/// Decodes `content_base64` (a pending `remote.file.write`'s content) into what an approval
+/// dialog shows: the byte count, up to `APPROVAL_PREVIEW_LINES` lines of text, and how many more
+/// lines were cut. Invalid base64 previews as empty rather than failing the approval outright —
+/// the write itself still validates it properly, and rejects it, once (if) it is allowed to run.
+fn write_preview(content_base64: &str) -> (u64, String, usize) {
+    let Ok(bytes) = BASE64.decode(content_base64.trim()) else {
+        return (0, String::new(), 0);
+    };
+    let total = bytes.len() as u64;
+    match std::str::from_utf8(&bytes) {
+        Ok(text) => {
+            let mut lines = text.lines();
+            let preview: Vec<&str> = lines.by_ref().take(APPROVAL_PREVIEW_LINES).collect();
+            let preview_truncated_lines = lines.count();
+            (total, preview.join("\n"), preview_truncated_lines)
+        }
+        Err(_) => (total, format!("(binary, {total} bytes)"), 0),
+    }
+}
+
+/// What `authorize` needs to evaluate the agent-ops policy, and if it asks about or denies the
+/// request, to queue it for approval or to audit the denial. `target`/`action`/`agent` mirror what
+/// the operation would itself audit as its "started" record, since a request that is never
+/// allowed never reaches it.
 struct AuthorizeInput {
     hostname: String,
+    session: SessionId,
+    /// The window whose pane holds the session, so a toast for this request shows up there.
+    window_id: WindowId,
     subject: PolicySubject,
     action: ActionKind,
     agent: Option<String>,
@@ -516,9 +589,6 @@ struct AuthorizeInput {
 /// `Err(reason)` once it is denied. A single continuation, rather than separate `proceed`/`fail`
 /// closures, because both would otherwise need to independently own the caller's `oneshot::Sender`
 /// (mục 3.6 of the plan allows restructuring the closure shape when `'static` makes it awkward).
-///
-/// Phase 1 of the plan only wires up Allow/Deny: `Decision::Ask` is a placeholder Deny until
-/// Task 2.3 adds the approval queue.
 fn authorize(
     input: AuthorizeInput,
     continue_with: impl FnOnce(
@@ -538,19 +608,168 @@ fn authorize(
         },
         move |_, (input, decision), ctx| match decision {
             Decision::Allow => continue_with(Ok(Some("allow")), ctx),
-            Decision::Ask => deny_authorization(
-                input,
-                "approval is not available yet".to_owned(),
-                continue_with,
-                ctx,
-            ),
-            Decision::Deny(reason) => deny_authorization(input, reason, continue_with, ctx),
+            Decision::Ask => ask_authorization(input, continue_with, ctx),
+            Decision::Deny(reason) => deny_authorization(input, "deny", reason, continue_with, ctx),
         },
     );
 }
 
+/// Handles `Decision::Ask` (mục 3.6 of the O2 plan): runs the request immediately if its exact
+/// command was already allowed for the rest of this session ("Allow this command in this
+/// session"), otherwise queues an [`ApprovalRequest`] and waits up to `APPROVAL_TIMEOUT_SECS` for
+/// a person to decide on it.
+fn ask_authorization(
+    input: AuthorizeInput,
+    continue_with: impl FnOnce(
+        Result<Option<&'static str>, AgentBridgeError>,
+        &mut ModelContext<LocalControlBridge>,
+    ) + 'static,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    if let Some(command) = input.subject.command() {
+        let allowed = AgentBridgeModel::handle(ctx).read(ctx, |model, _| {
+            model.is_command_allowed_in_session(input.session, command)
+        });
+        if allowed {
+            continue_with(Ok(Some("session_rule")), ctx);
+            return;
+        }
+    }
+
+    let request = ApprovalRequest {
+        request_id: input.target.request_id,
+        session: input.session,
+        session_label: format!(
+            "{}@{}",
+            input.target.session.user, input.target.session.host
+        ),
+        agent: input.agent.clone(),
+        subject: input
+            .subject
+            .clone()
+            .into_approval_subject(input.target.cwd.clone()),
+        deadline: SystemTime::now() + Duration::from_secs(APPROVAL_TIMEOUT_SECS),
+        window_id: input.window_id,
+    };
+    let request_id = request.request_id;
+    let pushed =
+        AgentBridgeModel::handle(ctx).update(ctx, |model, ctx| model.push_approval(request, ctx));
+    let receiver = match pushed {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            continue_with(Err(error), ctx);
+            return;
+        }
+    };
+
+    ctx.spawn(
+        async move {
+            // Fail-closed (mục 3.6): if the request cannot be recorded, it must not sit in the
+            // queue silently waiting for a decision no one can later account for.
+            let audited = ops::audit_approval_requested(
+                &input.target,
+                input.action,
+                input.agent.as_deref(),
+                input.subject.command(),
+                input.subject.path(),
+            );
+            match audited {
+                Ok(()) => {
+                    let decision = approval::wait_for_decision(
+                        receiver,
+                        Duration::from_secs(APPROVAL_TIMEOUT_SECS),
+                    )
+                    .await;
+                    (input, Ok(decision))
+                }
+                Err(error) => (input, Err(error)),
+            }
+        },
+        move |_, (input, outcome), ctx| match outcome {
+            Ok(decision) => finish_ask(input, decision, continue_with, ctx),
+            Err(error) => {
+                AgentBridgeModel::handle(ctx)
+                    .update(ctx, |model, ctx| model.remove_approval(request_id, ctx));
+                continue_with(Err(error), ctx);
+            }
+        },
+    );
+}
+
+/// Turns a decision out of the approval queue into the `authorize` outcome. `Approve`/
+/// `AllowInSession` re-check the attachment first — a detach or expiry while the request waited
+/// must still stop it from running — and `AllowInSession` also remembers the command for the rest
+/// of the session. Every other decision denies the request, each with its own audited reason
+/// (mục 3.3/3.10 of the plan).
+fn finish_ask(
+    input: AuthorizeInput,
+    decision: ApprovalDecision,
+    continue_with: impl FnOnce(
+        Result<Option<&'static str>, AgentBridgeError>,
+        &mut ModelContext<LocalControlBridge>,
+    ) + 'static,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) {
+    match decision {
+        ApprovalDecision::Approve | ApprovalDecision::AllowInSession => {
+            let recheck = AgentBridgeModel::handle(ctx).update(ctx, |model, _| {
+                model.check(
+                    input.session,
+                    Access::Full,
+                    &input.target.session.user,
+                    &input.target.session.host,
+                )
+            });
+            if let Err(error) = recheck {
+                continue_with(Err(error), ctx);
+                return;
+            }
+            if decision == ApprovalDecision::AllowInSession
+                && let Some(command) = input.subject.command().map(str::to_owned)
+            {
+                AgentBridgeModel::handle(ctx).update(ctx, |model, _| {
+                    model.allow_command_in_session(input.session, &command)
+                });
+            }
+            let label = if decision == ApprovalDecision::AllowInSession {
+                "approved_in_session"
+            } else {
+                "approved"
+            };
+            continue_with(Ok(Some(label)), ctx);
+        }
+        ApprovalDecision::Deny => deny_authorization(
+            input,
+            "ask_denied",
+            "the user denied it.".to_owned(),
+            continue_with,
+            ctx,
+        ),
+        ApprovalDecision::TimedOut => {
+            let request_id = input.target.request_id;
+            AgentBridgeModel::handle(ctx)
+                .update(ctx, |model, ctx| model.remove_approval(request_id, ctx));
+            deny_authorization(
+                input,
+                "ask_timeout",
+                "no one approved it within 5 minutes.".to_owned(),
+                continue_with,
+                ctx,
+            );
+        }
+        ApprovalDecision::Revoked => deny_authorization(
+            input,
+            "revoked",
+            "the user revoked agent access while it was waiting.".to_owned(),
+            continue_with,
+            ctx,
+        ),
+    }
+}
+
 fn deny_authorization(
     input: AuthorizeInput,
+    policy_decision: &'static str,
     reason: String,
     continue_with: impl FnOnce(
         Result<Option<&'static str>, AgentBridgeError>,
@@ -564,6 +783,7 @@ fn deny_authorization(
         input.agent.as_deref(),
         input.subject.command(),
         input.subject.path(),
+        policy_decision,
         &reason,
     );
     continue_with(Err(AgentBridgeError::PolicyDenied(reason)), ctx);

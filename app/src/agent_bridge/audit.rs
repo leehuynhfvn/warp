@@ -22,6 +22,9 @@ const ROTATED_FILE_NAME: &str = "audit.jsonl.1";
 pub(crate) enum AuditOutcome {
     /// Written before the request runs, so that it leaves a trace even if Warp stops midway.
     Started,
+    /// The agent-ops policy asked a person to decide; written before the wait for a decision
+    /// starts, for the same reason `Started` is.
+    ApprovalRequested,
     Ok,
     Error,
 }

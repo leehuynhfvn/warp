@@ -301,7 +301,10 @@ fn only_exec_and_write_operations_are_subject_to_the_agent_ops_policy() {
         agent: None,
     });
     match write.policy_subject() {
-        Some(PolicySubject::Write { path }) => assert_eq!(path, "/etc/hosts"),
+        Some(PolicySubject::Write { path, creates, .. }) => {
+            assert_eq!(path, "/etc/hosts");
+            assert!(creates, "MustNotExist means the write creates a new file");
+        }
         other => panic!("expected Some(Write), got {other:?}"),
     }
 }

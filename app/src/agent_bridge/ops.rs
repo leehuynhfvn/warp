@@ -677,21 +677,47 @@ impl Audit {
 
 /// Writes the single audit line for a request the agent-ops policy denied before it ran. There is
 /// no "started" line for a denied request (P13 of the plan): the policy decides before anything
-/// touches the server.
+/// touches the server. `policy_decision` distinguishes an outright policy `deny` from a denial
+/// that came out of an approval wait (`ask_denied`/`ask_timeout`/`revoked`).
 pub(crate) fn audit_policy_denied(
     target: &Target,
     action: ActionKind,
     agent: Option<&str>,
     command: Option<&str>,
     path: Option<&str>,
+    policy_decision: &'static str,
     reason: &str,
 ) {
     let mut audit = Audit::begin(target, action, agent);
     audit.record.command = command.map(str::to_owned);
     audit.record.path = path.map(str::to_owned);
-    audit.record.policy_decision = Some("deny");
+    audit.record.policy_decision = Some(policy_decision);
     audit.record.policy_reason = Some(reason.to_owned());
     audit.finish(Err(AgentBridgeError::PolicyDenied(reason.to_owned())));
+}
+
+/// Writes the audit line for a request now waiting for a person to decide on it (mục 3.10 of the
+/// O2 plan). Fails only if the log itself could not be written — the approval wait must not start
+/// unless it will actually be traceable afterwards (fail-closed, mục 3.6 of the plan).
+pub(crate) fn audit_approval_requested(
+    target: &Target,
+    action: ActionKind,
+    agent: Option<&str>,
+    command: Option<&str>,
+    path: Option<&str>,
+) -> Result<(), AgentBridgeError> {
+    let Some(dir) = &target.audit_dir else {
+        return Ok(());
+    };
+    let mut audit = Audit::begin(target, action, agent);
+    audit.record.command = command.map(str::to_owned);
+    audit.record.path = path.map(str::to_owned);
+    audit.record.result = AuditOutcome::ApprovalRequested;
+    audit::append(dir, &audit.record).map_err(|err| {
+        AgentBridgeError::Io(format!(
+            "The audit log cannot be written, so the request was not queued for approval: {err}"
+        ))
+    })
 }
 
 #[cfg(all(test, unix))]
