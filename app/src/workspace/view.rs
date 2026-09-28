@@ -19004,11 +19004,10 @@ impl Workspace {
     }
 
     fn open_workflows_palette_for_agent_cli(&mut self, ctx: &mut ViewContext<Self>) {
+        self.open_palette_action(PaletteMode::Command, PaletteSource::Keybinding, None, ctx);
         self.palette.update(ctx, |view, ctx| {
-            view.reset(ctx);
             view.set_active_query_filter(QueryFilter::Workflows, ctx);
         });
-        ctx.notify();
     }
 
     /// The `PaneId` of the pane holding the active terminal session — the id agent-facing MCP
