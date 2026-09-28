@@ -37,12 +37,28 @@ pub(crate) fn revoked_all_message(count: usize) -> String {
     }
 }
 
+/// "Agent Ops: Trust this session for the rest of the attachment" was invoked. `was_attached` is
+/// `false` when there was no attachment to trust.
+pub(crate) fn trusted_session_message(was_attached: bool) -> &'static str {
+    if was_attached {
+        "Agents can now act in this session without approval, for the rest of this attachment."
+    } else {
+        "Agents did not have access to this session."
+    }
+}
+
 /// Label next to the title of a pane whose session agents may use. `pending` is how many of the
-/// session's requests are waiting for approval.
-pub(crate) fn indicator_label(access: Access, user: &str, pending: usize) -> String {
+/// session's requests are waiting for approval, and `trusted` is whether "Trust this session for
+/// the rest of the attachment" was used.
+pub(crate) fn indicator_label(access: Access, user: &str, pending: usize, trusted: bool) -> String {
     let base = match access {
         Access::Full => format!("Agents · {user}"),
         Access::ReadOnly => format!("Agents · {user} · read-only"),
+    };
+    let base = if trusted {
+        format!("{base} · trusted")
+    } else {
+        base
     };
     match pending {
         0 => base,

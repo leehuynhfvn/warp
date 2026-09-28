@@ -198,6 +198,21 @@ impl AgentBridgeModel {
         self.attachments
             .is_command_allowed(id, command, Instant::now())
     }
+
+    /// "Trust this session for the rest of the attachment": every later `Decision::Ask` request of
+    /// `id` is allowed without queuing it. Returns `false` (and does not notify) if `id` is not
+    /// currently attached.
+    pub(crate) fn trust_session(&mut self, id: SessionId, ctx: &mut ModelContext<Self>) -> bool {
+        let trusted = self.attachments.trust_session(id);
+        if trusted {
+            ctx.notify();
+        }
+        trusted
+    }
+
+    pub(crate) fn is_session_trusted(&self, id: SessionId) -> bool {
+        self.attachments.is_session_trusted(id, Instant::now())
+    }
 }
 
 #[cfg(test)]

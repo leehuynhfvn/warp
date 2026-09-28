@@ -614,10 +614,12 @@ fn authorize(
     );
 }
 
-/// Handles `Decision::Ask` (mục 3.6 of the O2 plan): runs the request immediately if its exact
-/// command was already allowed for the rest of this session ("Allow this command in this
-/// session"), otherwise queues an [`ApprovalRequest`] and waits up to `APPROVAL_TIMEOUT_SECS` for
-/// a person to decide on it.
+/// Handles `Decision::Ask` (mục 3.6 of the O2 plan): runs the request immediately if the session
+/// was trusted ("Trust this session for the rest of the attachment") or its exact command was
+/// already allowed for the rest of this session ("Allow this command in this session"), otherwise
+/// queues an [`ApprovalRequest`] and waits up to `APPROVAL_TIMEOUT_SECS` for a person to decide on
+/// it. `Decision::Deny` is decided by the policy in `authorize` before this function is ever
+/// called, so a trusted or allowed session can never bypass a `[deny]` rule.
 fn ask_authorization(
     input: AuthorizeInput,
     continue_with: impl FnOnce(
@@ -626,6 +628,13 @@ fn ask_authorization(
     ) + 'static,
     ctx: &mut ModelContext<LocalControlBridge>,
 ) {
+    let trusted =
+        AgentBridgeModel::handle(ctx).read(ctx, |model, _| model.is_session_trusted(input.session));
+    if trusted {
+        continue_with(Ok(Some("session_trusted")), ctx);
+        return;
+    }
+
     if let Some(command) = input.subject.command() {
         let allowed = AgentBridgeModel::handle(ctx).read(ctx, |model, _| {
             model.is_command_allowed_in_session(input.session, command)

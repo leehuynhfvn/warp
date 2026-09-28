@@ -1023,6 +1023,14 @@ impl TerminalView {
             .map(|status| status.access)
     }
 
+    /// Whether "Trust this session for the rest of the attachment" was used on the active session.
+    fn agent_bridge_trusted(&self, app: &AppContext) -> bool {
+        let Some(session) = self.active_session().as_ref(app).session(app) else {
+            return false;
+        };
+        AgentBridgeModel::as_ref(app).is_session_trusted(session.id())
+    }
+
     /// How many of the active session's agent requests are waiting for approval.
     fn pending_agent_requests(&self, app: &AppContext) -> usize {
         let Some(session) = self.active_session().as_ref(app).session(app) else {
@@ -1039,6 +1047,7 @@ impl TerminalView {
         let appearance = Appearance::as_ref(app);
         let theme = appearance.theme();
         let pending = self.pending_agent_requests(app);
+        let trusted = self.agent_bridge_trusted(app);
         // Full access can change the server, so it is shown in the warning color; a waiting
         // request does too, the same way Full access itself does (mục 3.8 of the O2 plan).
         let color = if access == AgentBridgeAccess::Full || pending > 0 {
@@ -1047,8 +1056,12 @@ impl TerminalView {
             theme.sub_text_color(theme.background()).into_solid()
         };
         let icon_size = appearance.ui_font_size();
-        let label =
-            agent_bridge_messages::indicator_label(access, &printable(session.user()), pending);
+        let label = agent_bridge_messages::indicator_label(
+            access,
+            &printable(session.user()),
+            pending,
+            trusted,
+        );
         Some(
             Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)

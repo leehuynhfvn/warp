@@ -463,6 +463,12 @@ pub fn init(app: &mut AppContext) {
                 WorkspaceAction::AgentOpsDenyAllApprovals,
             )
             .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_ops_trust_session",
+                "Agent Ops: Trust this session for the rest of the attachment",
+                WorkspaceAction::AgentOpsTrustSession,
+            )
+            .with_context_predicate(id!("Workspace")),
         ]);
     }
 

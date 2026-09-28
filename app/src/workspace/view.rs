@@ -171,6 +171,7 @@ use crate::agent_bridge::{
     revoked_all_message as agent_bridge_revoked_all_message,
     revoked_message as agent_bridge_revoked_message, setup_command as agent_bridge_setup_command,
     setup_executable as agent_bridge_setup_executable,
+    trusted_session_message as agent_bridge_trusted_session_message,
 };
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
@@ -19378,6 +19379,18 @@ impl Workspace {
         self.add_agent_bridge_toast(toast, ctx);
     }
 
+    /// "Agent Ops: Trust this session for the rest of the attachment".
+    fn agent_ops_trust_session(&mut self, ctx: &mut ViewContext<Self>) {
+        let was_attached = self.active_terminal_session(ctx).is_some_and(|session| {
+            AgentBridgeModel::handle(ctx)
+                .update(ctx, |model, ctx| model.trust_session(session.id(), ctx))
+        });
+        let toast = DismissibleToast::default(
+            agent_bridge_trusted_session_message(was_attached).to_owned(),
+        );
+        self.add_agent_bridge_toast(toast, ctx);
+    }
+
     pub fn show_delete_conversation_confirmation_dialog(
         &mut self,
         source: DeleteConversationDialogSource,
@@ -25737,6 +25750,7 @@ impl TypedActionView for Workspace {
             }
             AgentOpsReviewWaitingRequests => self.agent_ops_review_waiting_requests(ctx),
             AgentOpsDenyAllApprovals => self.agent_ops_deny_all_approvals(ctx),
+            AgentOpsTrustSession => self.agent_ops_trust_session(ctx),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
             WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),

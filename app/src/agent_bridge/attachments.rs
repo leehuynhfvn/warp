@@ -38,6 +38,11 @@ pub(crate) struct Attachment {
     /// Cleared along with the rest of the attachment on detach/expiry/re-attach (mục 3.5 of the O2
     /// plan).
     allowed_commands: HashSet<String>,
+    /// Whether the person chose "Trust this session for the rest of the attachment": every
+    /// `Decision::Ask` request in this session is allowed without queuing it, until the
+    /// attachment itself ends. Cleared along with the rest of the attachment on
+    /// detach/expiry/re-attach, the same as `allowed_commands`.
+    trusted: bool,
 }
 
 impl Attachment {
@@ -71,6 +76,7 @@ impl Attachments {
                 last_used: now,
                 exec_count: 0,
                 allowed_commands: HashSet::new(),
+                trusted: false,
             },
         );
     }
@@ -152,6 +158,25 @@ impl Attachments {
     pub(crate) fn is_command_allowed(&self, id: SessionId, command: &str, now: Instant) -> bool {
         self.get(id, now)
             .is_some_and(|attachment| attachment.allowed_commands.contains(command.trim()))
+    }
+
+    /// Records "Trust this session for the rest of the attachment": every later `Decision::Ask`
+    /// request of `id` is allowed without asking again, until it detaches, expires, or
+    /// re-attaches. Returns `false` if `id` is not currently attached, so a caller can tell the
+    /// person there was nothing to trust.
+    pub(crate) fn trust_session(&mut self, id: SessionId) -> bool {
+        let Some(attachment) = self.by_session.get_mut(&id) else {
+            return false;
+        };
+        attachment.trusted = true;
+        true
+    }
+
+    /// Whether the session was marked trusted. `false` once the attachment itself has expired,
+    /// even if it was trusted before it did.
+    pub(crate) fn is_session_trusted(&self, id: SessionId, now: Instant) -> bool {
+        self.get(id, now)
+            .is_some_and(|attachment| attachment.trusted)
     }
 }
 

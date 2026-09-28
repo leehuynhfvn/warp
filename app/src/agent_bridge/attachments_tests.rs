@@ -210,3 +210,52 @@ fn re_attaching_a_session_clears_its_previously_allowed_commands() {
     attachments.attach(session(1), Access::Full, now);
     assert!(!attachments.is_command_allowed(session(1), "uptime", now));
 }
+
+#[test]
+fn trusting_an_attached_session_is_reported_and_remembered() {
+    let now = Instant::now();
+    let mut attachments = attached(Access::Full, now);
+
+    assert!(!attachments.is_session_trusted(session(1), now));
+    assert!(attachments.trust_session(session(1)));
+    assert!(attachments.is_session_trusted(session(1), now));
+}
+
+#[test]
+fn trusting_an_unknown_session_does_nothing() {
+    let now = Instant::now();
+    let mut attachments = Attachments::default();
+
+    assert!(!attachments.trust_session(session(1)));
+    assert!(!attachments.is_session_trusted(session(1), now));
+}
+
+#[test]
+fn a_trusted_session_stops_being_trusted_once_the_attachment_expires() {
+    let start = Instant::now();
+    let mut attachments = attached(Access::Full, start);
+    attachments.trust_session(session(1));
+
+    let expired = start + ATTACH_IDLE_TTL + Duration::from_secs(1);
+    assert!(!attachments.is_session_trusted(session(1), expired));
+}
+
+#[test]
+fn re_attaching_a_session_clears_that_it_was_trusted() {
+    let now = Instant::now();
+    let mut attachments = attached(Access::Full, now);
+    attachments.trust_session(session(1));
+
+    attachments.attach(session(1), Access::Full, now);
+    assert!(!attachments.is_session_trusted(session(1), now));
+}
+
+#[test]
+fn detaching_a_trusted_session_removes_it() {
+    let now = Instant::now();
+    let mut attachments = attached(Access::Full, now);
+    attachments.trust_session(session(1));
+
+    attachments.detach(session(1));
+    assert!(!attachments.is_session_trusted(session(1), now));
+}

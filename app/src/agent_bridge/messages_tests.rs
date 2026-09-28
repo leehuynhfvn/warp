@@ -29,8 +29,10 @@ fn the_messages_do_not_name_a_particular_agent() {
         revoked_message(true).to_owned(),
         revoked_message(false).to_owned(),
         revoked_all_message(2),
-        indicator_label(Access::Full, "root", 0),
-        indicator_label(Access::Full, "root", 2),
+        trusted_session_message(true).to_owned(),
+        trusted_session_message(false).to_owned(),
+        indicator_label(Access::Full, "root", 0, false),
+        indicator_label(Access::Full, "root", 2, true),
         revoke_tooltip("root", "h"),
         review_tooltip(2),
     ];
@@ -41,9 +43,12 @@ fn the_messages_do_not_name_a_particular_agent() {
 
 #[test]
 fn the_indicator_names_the_user_and_says_when_access_is_read_only() {
-    assert_eq!(indicator_label(Access::Full, "root", 0), "Agents · root");
     assert_eq!(
-        indicator_label(Access::ReadOnly, "deploy", 0),
+        indicator_label(Access::Full, "root", 0, false),
+        "Agents · root"
+    );
+    assert_eq!(
+        indicator_label(Access::ReadOnly, "deploy", 0, false),
         "Agents · deploy · read-only"
     );
     assert_eq!(
@@ -55,15 +60,39 @@ fn the_indicator_names_the_user_and_says_when_access_is_read_only() {
 #[test]
 fn the_indicator_and_tooltip_say_how_many_requests_are_waiting() {
     assert_eq!(
-        indicator_label(Access::Full, "root", 1),
+        indicator_label(Access::Full, "root", 1, false),
         "Agents · root · 1 waiting"
     );
     assert_eq!(
-        indicator_label(Access::Full, "root", 3),
+        indicator_label(Access::Full, "root", 3, false),
         "Agents · root · 3 waiting"
     );
     assert_eq!(review_tooltip(1), "Review the waiting agent request");
     assert_eq!(review_tooltip(3), "Review the 3 waiting agent requests");
+}
+
+#[test]
+fn a_trusted_session_adds_a_suffix_before_the_waiting_count() {
+    assert_eq!(
+        indicator_label(Access::Full, "root", 0, true),
+        "Agents · root · trusted"
+    );
+    assert_eq!(
+        indicator_label(Access::Full, "root", 2, true),
+        "Agents · root · trusted · 2 waiting"
+    );
+}
+
+#[test]
+fn the_trusted_session_message_says_whether_there_was_an_attachment_to_trust() {
+    assert_eq!(
+        trusted_session_message(true),
+        "Agents can now act in this session without approval, for the rest of this attachment."
+    );
+    assert_eq!(
+        trusted_session_message(false),
+        "Agents did not have access to this session."
+    );
 }
 
 #[test]

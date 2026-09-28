@@ -227,3 +227,27 @@ fn a_command_allowed_in_session_is_recognized_through_the_model_wrapper() {
         }));
     });
 }
+
+#[test]
+fn trusting_an_attached_session_is_recognized_through_the_model_wrapper() {
+    App::test((), |mut app| async move {
+        let model = setup(&mut app);
+        model.update(&mut app, |model, ctx| {
+            model.attach(session(1), Access::Full, ctx)
+        });
+
+        assert!(!model.read(&app, |model, _| model.is_session_trusted(session(1))));
+        assert!(model.update(&mut app, |model, ctx| model.trust_session(session(1), ctx)));
+        assert!(model.read(&app, |model, _| model.is_session_trusted(session(1))));
+    });
+}
+
+#[test]
+fn trusting_a_session_that_is_not_attached_does_nothing() {
+    App::test((), |mut app| async move {
+        let model = setup(&mut app);
+
+        assert!(!model.update(&mut app, |model, ctx| model.trust_session(session(1), ctx)));
+        assert!(!model.read(&app, |model, _| model.is_session_trusted(session(1))));
+    });
+}
