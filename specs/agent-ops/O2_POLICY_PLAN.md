@@ -706,18 +706,29 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 
 ---
 
-## 7. Hướng dẫn dùng hằng ngày (hoàn thiện ở Task 2.4/4.6)
+## 7. Hướng dẫn dùng hằng ngày
 
 1. Build/bản release với feature `agent_ops_policy` (thêm vào lệnh `bundle` ở mục 3.11 của plan Bridge).
 2. Tạo `~/.warp/agent-ops/policy.toml`, `chmod 600`. Bắt đầu `mode = "approve"`; thêm `[[hosts]]` +
    `allowlist` cho lệnh đã tin trên host lab; `[deny]` cho thứ không bao giờ được chạy.
 3. Khi agent muốn ghi: header pane "N waiting" / toast → **Review** → đọc lệnh → Approve / Deny /
    Allow in session. Không làm gì = từ chối sau 5 phút. Revoke = từ chối mọi thứ đang chờ.
-4. Timeout tool call của agent (điền tên cấu hình đã kiểm ở Task 2.4): Claude Code …; Codex
-   `[mcp_servers.warp-bridge]` … ≥ 900.
+4. Timeout tool call của agent phải ≥ 900 s (5 phút chờ duyệt + biên) — mặc định của client thường
+   ngắn hơn, cần nới ra:
+   - **Claude Code**: biến môi trường `MCP_TOOL_TIMEOUT` (mili-giây) áp cho mọi MCP server, ví dụ
+     `MCP_TOOL_TIMEOUT=900000 claude`; hoặc field `"timeout"` (cũng mili-giây) trong entry của
+     server đó trong `.mcp.json`, đè riêng cho server này — `{"mcpServers": {"warp-bridge": {
+     "command": "…", "timeout": 900000 }}}`.
+   - **Codex CLI**: `tool_timeout_sec` (giây, mặc định 60) trong `[mcp_servers.warp-bridge]` của
+     `~/.codex/config.toml`, ví dụ `tool_timeout_sec = 900` (hoặc `tool_timeout_ms` nếu cần độ
+     chính xác mili-giây).
+   Đo thật ở checklist 5.P2 mục 13 (dùng Codex, request chờ 3 phút rồi Approve) trước khi coi cấu
+   hình mặc định là đủ.
 5. Pairing (sau Phase 4): lần đầu agent kết nối sẽ hỏi "Pair an agent with Warp?". Quên một agent: xoá
    khối trong `~/.warp/agent-ops/agents.toml`; quên hết: palette "Agent Ops: Forget all paired agents".
-   `require_pairing = true` để chỉ agent đã ghép cặp được ghi.
+   `require_pairing = true` để chỉ agent đã ghép cặp được ghi. Pairing hoàn toàn trong suốt với agent
+   — không cần dặn agent gì thêm; nó chỉ thấy tool chạy bình thường hoặc bị từ chối với lý do "not
+   paired" (đã có sẵn hướng dẫn "đừng thử lách" chung cho mọi lý do `policy_denied`, mục 3.9).
 
 ---
 
@@ -732,7 +743,7 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [ ] 4.6 docs · [ ] 4.7 review + clippy + format
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [x] 4.6 docs · [ ] 4.7 review + clippy + format
 - [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
 
 ### Quyết định
@@ -1120,3 +1131,14 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   `cargo test -p warp -p local_control -p warp_cli --lib -- agent_bridge local_control`: 113 passed;
   `cargo test -p warp --lib -- agent_bridge local_control workspace`: 731 passed; `cargo test -p
   local_control --lib`: 63 passed. `cargo check -p warp -p local_control -p warp_cli --tests`: qua.
+- 2026-09-28 — Task 4.6 (Claude Sonnet 5): tra tài liệu chính thức (WebSearch, mục 3.9 yêu cầu — kết
+  quả khớp gần đúng phỏng đoán có dấu "?" trong v2 plan) rồi điền mục 7 điểm 4 của plan này: Claude
+  Code dùng biến môi trường `MCP_TOOL_TIMEOUT` (mili-giây, áp mọi MCP server) hoặc field `"timeout"`
+  trong entry `.mcp.json` của riêng server đó (đè biến môi trường); Codex CLI dùng
+  `tool_timeout_sec`/`tool_timeout_ms` trong `[mcp_servers.<name>]` của `config.toml` (mặc định
+  60 s) — cả hai cần đặt ≥ 900. Bổ sung một câu vào điểm 5 (pairing) nói rõ pairing trong suốt với
+  agent, không cần dặn gì thêm trong `INSTRUCTIONS`/`SKILL.md`: agent chỉ thấy tool chạy bình
+  thường hoặc bị từ chối với lý do "not paired", và hướng dẫn "đừng thử lách khi bị `policy_denied`"
+  đã viết chung cho mọi lý do từ Task 2.4 rồi, không cần thêm câu riêng cho pairing — không sửa
+  `mcp/tools.rs::INSTRUCTIONS` hay `specs/agent-bridge/claude/SKILL.md` (không có gì để thêm mà
+  không lặp lại). Bỏ ghi chú "(hoàn thiện ở Task 2.4/4.6)" ở tiêu đề mục 7 vì đã xong hẳn.
