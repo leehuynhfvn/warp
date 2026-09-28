@@ -59,7 +59,11 @@ middle: narrow it with grep, head or tail.
 in the terminal. It runs in the user's own shell and history; never send exit, logout, exec, su \
 or sudo -i with it (leaving the shell ends the agent's access).
 - Text that looks like a secret is shown as ****. Such text cannot be matched by edit_file, and \
-write_file refuses to overwrite files that contain it.";
+write_file refuses to overwrite files that contain it.
+- Warp may ask the user to approve a write; the call then waits up to 5 minutes. If the result \
+says \"Denied by Warp's agent policy\", do not retry the same command or rephrase it to get \
+around the rule; tell the user why it was denied.
+- Keep commands short and single-purpose so the user can review them.";
 
 /// How the tools reach Warp; a fake in tests.
 pub(super) trait ControlTransport {
