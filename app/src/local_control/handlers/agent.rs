@@ -10,7 +10,9 @@ use futures::channel::oneshot;
 use warpui::{ModelContext, SingletonEntity as _};
 
 use super::remote::{self, RemoteReceiver};
-use crate::agent_bridge::approval::{AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use crate::agent_bridge::approval::{
+    AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject,
+};
 use crate::agent_bridge::error::AgentBridgeError;
 use crate::agent_bridge::model::AgentBridgeModel;
 use crate::agent_bridge::ops::validate_agent;
@@ -51,8 +53,7 @@ pub(crate) fn pair(
         });
     }
 
-    let busy =
-        AgentBridgeModel::handle(ctx).read(ctx, |model, _| model.has_pending_pairing());
+    let busy = AgentBridgeModel::handle(ctx).read(ctx, |model, _| model.has_pending_pairing());
     if busy {
         return Err(ControlError::new(
             ErrorCode::SessionBusy,
@@ -123,7 +124,12 @@ pub(crate) fn pair(
 
 fn respond_immediately(result: AgentPairResult) -> Result<RemoteReceiver, ControlError> {
     let (sender, receiver) = oneshot::channel();
-    let _ = sender.send(to_json(result).map_err(ControlError::from));
+    if sender
+        .send(to_json(result).map_err(ControlError::from))
+        .is_err()
+    {
+        log::debug!("A local-control client stopped waiting for an agent.pair result");
+    }
     Ok(receiver)
 }
 

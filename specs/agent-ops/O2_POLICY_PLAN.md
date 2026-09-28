@@ -743,8 +743,8 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
 - [x] 2.1 `approval.rs` · [x] 2.2 model + allow-in-session · [x] 2.3 Ask đầy đủ · [x] 2.4 INSTRUCTIONS/skill · [x] clippy + format
 - [x] 3.1 đọc skill · [x] 3.2 dialog · [x] 3.3 Workspace · [x] 3.4 header · [x] 3.5 toast + palette · [x] 3.6 review · [x] clippy + format
 - [x] ⛔ CHECKPOINT P2 (người dùng xác nhận đạt 2026-09-28)
-- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [x] 4.6 docs · [ ] 4.7 review + clippy + format
-- [ ] ⛔ CHECKPOINT P3 · [ ] tick O2 trong roadmap
+- [x] 4.1 protocol · [x] 4.2 `agents.toml` · [x] 4.3 danh tính trong policy · [x] 4.4 `agent.pair` · [x] 4.5 client · [x] 4.6 docs · [x] 4.7 review + clippy + format
+- [ ] ⛔ CHECKPOINT P3 (đã sẵn sàng — chờ người dùng test tay checklist 5.P3) · [ ] tick O2 trong roadmap
 
 ### Quyết định
 
@@ -1142,3 +1142,28 @@ mật khẩu). Build theo mục 0.12, bật Settings > Scripting, attach **Full*
   đã viết chung cho mọi lý do từ Task 2.4 rồi, không cần thêm câu riêng cho pairing — không sửa
   `mcp/tools.rs::INSTRUCTIONS` hay `specs/agent-bridge/claude/SKILL.md` (không có gì để thêm mà
   không lặp lại). Bỏ ghi chú "(hoàn thiện ở Task 2.4/4.6)" ở tiêu đề mục 7 vì đã xong hẳn.
+- 2026-09-28 — Task 4.7 (Claude Sonnet 5): tự rà theo đúng danh sách mục 4.7 (không gọi
+  `ecc:rust-reviewer`/`ecc:security-reviewer` riêng, giống cách Task 3.6 đã làm — phiên này giữ
+  toàn bộ ngữ cảnh Phase 4 vừa viết, rà trực tiếp bằng `grep` xác nhận): token không bao giờ vào
+  log/audit/lỗi (`grep` mọi chỗ dùng `.secret()` — chỉ 2 chỗ băm (`bridge.rs`, `agent.rs`), 1 chỗ
+  ghi file token (`pairing.rs`), còn lại là test; `AgentToken`'s `Debug` luôn in `(****)`, không
+  `Display`; `AuditRecord`/`PairingError`/mọi thông báo lỗi chỉ mang `agent_id` (id đã ghép, không
+  phải secret) hoặc đường dẫn file, không mang hash/token); so sánh hash bằng `==` thường (không
+  constant-time) — khớp đúng tiền lệ có sẵn của `AuthToken`/bearer token trong `auth.rs` (cũng
+  `PartialEq` thường), không phải hổng mới; quyền file token đã test 0600/0700 (client) và
+  0600/0700 (`agents.toml` phía app, từ Task 4.2); chống spam pairing hai lớp — phía app
+  `has_pending_pairing()` (một pairing chờ toàn app, test ở Task 4.4) và phía client
+  `pairing_attempted` (một lần thử/process, test ở Task 4.5); không `TerminalModel::lock()` mới
+  nào trong toàn bộ diff Phase 4 (`git diff` từ đầu Phase 4, `grep ".lock()"` — chỉ thấy
+  `io::stdin().lock()` không liên quan); match exhaustive, không `unwrap`/`expect` trên dữ liệu
+  file/request trong code sản xuất (`grep` xác nhận rỗng ở mọi file mới); hộp thoại vẫn không bind
+  Enter (không đụng `init()`). Sửa một chỗ thật: `handlers/agent.rs::respond_immediately`'s nhánh
+  `already_paired` dùng `let _ = sender.send(...)` nuốt lỗi âm thầm — đổi sang
+  `if sender.send(...).is_err() { log::debug!(...) }` đúng khuôn mọi chỗ khác trong `remote.rs`
+  (mục 0.6: không `let _ =` nuốt lỗi). `cargo clippy -p warp -p local_control -p warp_cli
+  --all-targets --tests -- -D warnings`: sạch (0 warning). `./script/format` một lần — chỉ định
+  dạng lại xuống dòng (13 file, `git diff --stat` xác nhận không đổi logic); không chạy lại
+  test/lint sau format theo mục 0.8. **⛔ CHECKPOINT P3 sẵn sàng** — checklist 5.P3 (mục 5) chờ
+  người dùng test tay trên VM có sshd theo đúng môi trường mục 5.A–5.C của plan Bridge; cần build
+  lại với feature `agent_ops_policy` (mục 0.12, không đổi từ P1/P2) để `agent.pair` xuất hiện
+  trong catalog action.
