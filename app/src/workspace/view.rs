@@ -298,7 +298,10 @@ use crate::editor::{
 use crate::env_vars::CloudEnvVarCollection;
 use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::experiments::{BlockOnboarding, Experiment};
-use crate::launch_configs::launch_config::WindowTemplate;
+use crate::host_directory::{HostDirectoryEvent, HostDirectoryModel, RefreshMode, validate_alias};
+use crate::launch_configs::launch_config::{
+    CommandTemplate, PaneMode, PaneTemplateType, WindowTemplate,
+};
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
 use crate::menu::{
     Event as MenuEvent, MENU_VERTICAL_PADDING, Menu, MenuItem, MenuItemFields, MenuSelectionSource,
@@ -3283,6 +3286,12 @@ impl Workspace {
             ctx.subscribe_to_model(&AgentBridgeModel::handle(ctx), |me, _, event, ctx| {
                 me.handle_agent_bridge_event(event, ctx);
             });
+        }
+        if crate::host_directory::is_enabled() {
+            ctx.subscribe_to_model(&HostDirectoryModel::handle(ctx), |me, _, event, ctx| {
+                me.handle_host_directory_event(event, ctx);
+            });
+            HostDirectoryModel::handle(ctx).update(ctx, |directory, ctx| directory.start(ctx));
         }
 
         ctx.subscribe_to_model(
@@ -14912,6 +14921,16 @@ impl Workspace {
         });
     }
 
+    fn open_servers_palette(&mut self, ctx: &mut ViewContext<Self>) {
+        HostDirectoryModel::handle(ctx).update(ctx, |directory, ctx| {
+            directory.refresh(RefreshMode::Startup, ctx)
+        });
+        self.palette.update(ctx, |view, ctx| {
+            view.reset(ctx);
+            view.set_active_query_filter(QueryFilter::Servers, ctx);
+        });
+    }
+
     fn close_palette(
         &mut self,
         focus_active_tab: bool,
@@ -15029,6 +15048,7 @@ impl Workspace {
                 _ => self.open_navigation_palette(ctx),
             },
             PaletteMode::LaunchConfig => self.open_launch_config_palette(ctx),
+            PaletteMode::Servers => self.open_servers_palette(ctx),
             PaletteMode::WarpDrive => self.open_warp_drive_palette(ctx),
             PaletteMode::Files => self.open_files_palette(ctx),
             PaletteMode::Conversations => self.open_conversations_palette(ctx),
@@ -19678,6 +19698,49 @@ impl Workspace {
                 view.add_agent_bridge_toast(DismissibleToast::default(message), ctx);
             },
         );
+    }
+
+    /// The alias is typed into the shell without quoting, so it is checked again here.
+    fn agent_ops_connect_to_server(&mut self, alias: &str, ctx: &mut ViewContext<Self>) {
+        if let Err(reason) = validate_alias(alias) {
+            self.add_agent_bridge_toast(
+                DismissibleToast::default(format!("Cannot connect to \"{alias}\": it {reason}")),
+                ctx,
+            );
+            return;
+        }
+        let pane = PaneTemplateType::PaneTemplate {
+            cwd: PathBuf::new(),
+            commands: vec![CommandTemplate {
+                exec: format!("ssh {alias}"),
+            }],
+            is_focused: Some(true),
+            pane_mode: PaneMode::Terminal,
+            shell: None,
+        };
+        self.add_tab_with_pane_layout(
+            PanesLayout::Template(pane),
+            Arc::new(HashMap::new()),
+            Some(alias.to_owned()),
+            ctx,
+        );
+    }
+
+    /// Only the window the user is looking at shows the message; the model has one answer for all
+    /// of them.
+    fn handle_host_directory_event(
+        &mut self,
+        event: &HostDirectoryEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            HostDirectoryEvent::Notice(message) => {
+                if ctx.windows().active_window() == Some(ctx.window_id()) {
+                    self.add_agent_bridge_toast(DismissibleToast::default(message.clone()), ctx);
+                }
+            }
+            HostDirectoryEvent::Changed => ctx.notify(),
+        }
     }
 
     pub fn show_delete_conversation_confirmation_dialog(
@@ -26099,6 +26162,11 @@ impl TypedActionView for Workspace {
             AgentOpsDenyAllApprovals => self.agent_ops_deny_all_approvals(ctx),
             AgentOpsTrustSession => self.agent_ops_trust_session(ctx),
             AgentOpsForgetAllPairedAgents => self.agent_ops_forget_all_paired_agents(ctx),
+            AgentOpsConnectToServer { alias } => self.agent_ops_connect_to_server(alias, ctx),
+            AgentOpsImportSshHosts => HostDirectoryModel::handle(ctx)
+                .update(ctx, |directory, ctx| {
+                    directory.refresh(RefreshMode::Manual, ctx)
+                }),
             WarpSyncOpenMirror => self.warp_sync_open_mirror(ctx),
             WarpSyncOpenMirrorInEditor => self.warp_sync_open_mirror_in_editor(ctx),
             WarpSyncOpenInEditor { request } => self.warp_sync_open_in_editor(request.clone(), ctx),

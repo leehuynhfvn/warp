@@ -62,6 +62,10 @@ pub enum CommandPaletteItemAction {
     NewSession {
         source: Arc<NewSessionOption>,
     },
+    /// Open a tab that connects to the server in the server directory with this alias.
+    ConnectToServer {
+        alias: String,
+    },
     OpenFile {
         path: String,
         project_directory: String,
@@ -116,6 +120,7 @@ impl CommandPaletteItemAction {
             CommandPaletteItemAction::OpenLaunchConfiguration { .. } => {
                 ItemSummary::LaunchConfiguration
             }
+            CommandPaletteItemAction::ConnectToServer { .. } => ItemSummary::Server,
             CommandPaletteItemAction::ViewInWarpDrive { id } => match id {
                 CloudObjectTypeAndId::Notebook(_)
                 | CloudObjectTypeAndId::Folder(_)
@@ -188,6 +193,9 @@ pub enum ItemSummary {
     /// Dummy enum variant for launch configurations until we support showing them in recent section
     /// of the zero state
     LaunchConfiguration,
+    /// Dummy enum variant for servers until we support showing them in the recent section of the
+    /// zero state
+    Server,
     /// Dummy enum variant for cloud objects that aren't supported yet in command palette
     CloudObject,
     File {

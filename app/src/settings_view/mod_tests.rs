@@ -140,6 +140,7 @@ const ALL_SECTIONS: &[SettingsSection] = &[
     SettingsSection::WarpDrive,
     SettingsSection::Warpify,
     SettingsSection::WarpSync,
+    SettingsSection::Servers,
     SettingsSection::WarpAgent,
     SettingsSection::AgentProfiles,
     SettingsSection::AgentMCPServers,
@@ -175,6 +176,7 @@ fn all_sections_list_is_exhaustive() {
             | SettingsSection::WarpDrive
             | SettingsSection::Warpify
             | SettingsSection::WarpSync
+            | SettingsSection::Servers
             | SettingsSection::WarpAgent
             | SettingsSection::AgentProfiles
             | SettingsSection::AgentMCPServers

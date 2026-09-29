@@ -118,6 +118,10 @@ impl ZeroState {
             valid_filters.push(QueryFilter::LaunchConfigurations);
         }
 
+        if crate::host_directory::is_enabled() {
+            valid_filters.push(QueryFilter::Servers);
+        }
+
         if AISettings::as_ref(app).is_any_ai_enabled(app) {
             valid_filters.push(QueryFilter::Conversations);
         }

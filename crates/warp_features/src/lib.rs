@@ -1018,6 +1018,10 @@ pub enum FeatureFlag {
     /// every write an agent makes through the Agent Bridge, independent of the agent's own
     /// permission prompt.
     AgentOpsPolicy,
+
+    /// Gates the server directory: a list of the user's servers with tags, imported from
+    /// `~/.ssh/config`, that can be connected to from the command palette.
+    AgentOpsHosts,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =
@@ -1098,6 +1102,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::WarpSync,
     FeatureFlag::WarpSyncRemoteEdit,
     FeatureFlag::AgentBridge,
+    FeatureFlag::AgentOpsHosts,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).

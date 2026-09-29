@@ -40,6 +40,7 @@ mod external_secrets;
 mod font_fallback;
 mod global_resource_handles;
 mod gpu_state;
+mod host_directory;
 mod input_classifier;
 mod interval_timer;
 mod linear;
@@ -1888,6 +1889,7 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(|_ctx| warp_sync::WarpSyncModel::new());
     ctx.add_singleton_model(|_ctx| warp_sync::remote_edit::RemoteEditModel::new());
     ctx.add_singleton_model(|_ctx| agent_bridge::model::AgentBridgeModel::default());
+    ctx.add_singleton_model(|_ctx| host_directory::HostDirectoryModel::new());
     #[cfg(not(target_family = "wasm"))]
     ctx.add_singleton_model(remote_server::codebase_index_model::RemoteCodebaseIndexModel::new);
     #[cfg(not(target_family = "wasm"))]

@@ -113,6 +113,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AgentBridge,
         #[cfg(feature = "agent_ops_policy")]
         FeatureFlag::AgentOpsPolicy,
+        #[cfg(feature = "agent_ops_hosts")]
+        FeatureFlag::AgentOpsHosts,
         #[cfg(feature = "drag_tabs_to_windows")]
         FeatureFlag::DragTabsToWindows,
         #[cfg(feature = "cycle_next_command_suggestion")]

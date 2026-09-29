@@ -538,6 +538,12 @@ pub enum WorkspaceAction {
     /// "Agent Ops: Forget all paired agents" — empties `~/.warp/agent-ops/agents.toml`. This only
     /// removes identities; it grants nothing and revokes nothing on its own.
     AgentOpsForgetAllPairedAgents,
+    /// "Agent Ops: Import hosts from SSH config".
+    AgentOpsImportSshHosts,
+    /// Open a tab that runs `ssh <alias>` for a server in the server directory.
+    AgentOpsConnectToServer {
+        alias: String,
+    },
     /// Open the Warp Sync mirror of the active remote session's host in the file explorer.
     WarpSyncOpenMirror,
     /// Open the Warp Sync mirror of the active remote session's host in the external editor.
@@ -1324,7 +1330,9 @@ impl WorkspaceAction {
             | AgentOpsReviewWaitingRequests
             | AgentOpsDenyAllApprovals
             | AgentOpsTrustSession
-            | AgentOpsForgetAllPairedAgents => false,
+            | AgentOpsForgetAllPairedAgents
+            | AgentOpsImportSshHosts
+            | AgentOpsConnectToServer { .. } => false,
             #[cfg(feature = "local_fs")]
             FileRenamed { .. } => false, // File rename doesn't change workspace state
             #[cfg(feature = "local_fs")]

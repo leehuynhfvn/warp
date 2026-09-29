@@ -393,6 +393,7 @@ impl View {
             (PaletteMode::Command, QueryFilter::Actions)
                 | (PaletteMode::Navigation, QueryFilter::Sessions)
                 | (PaletteMode::LaunchConfig, QueryFilter::LaunchConfigurations)
+                | (PaletteMode::Servers, QueryFilter::Servers)
                 | (PaletteMode::Files, QueryFilter::Files)
                 | (PaletteMode::Conversations, QueryFilter::Conversations)
                 | (PaletteMode::WarpDrive, QueryFilter::Drive)
@@ -757,6 +758,14 @@ impl View {
                     return;
                 }
                 Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Servers,
+                    source: _,
+                }) => {
+                    self.reset(ctx);
+                    self.set_active_query_filter(QueryFilter::Servers, ctx);
+                    return;
+                }
+                Some(WorkspaceAction::TogglePalette {
                     mode: PaletteMode::Navigation,
                     source: _,
                 }) => {
@@ -893,6 +902,9 @@ impl View {
                         ui_location: LaunchConfigUiLocation::CommandPalette,
                     },
                 );
+            }
+            CommandPaletteItemAction::ConnectToServer { alias } => {
+                ctx.dispatch_typed_action(&WorkspaceAction::AgentOpsConnectToServer { alias });
             }
             CommandPaletteItemAction::ExecuteWorkflow { id } => {
                 ctx.emit(Event::ExecuteWorkflow { id })

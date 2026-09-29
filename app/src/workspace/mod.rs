@@ -500,6 +500,32 @@ pub fn init(app: &mut AppContext) {
         ]);
     }
 
+    if crate::host_directory::is_enabled() {
+        app.register_editable_bindings([
+            EditableBinding::new(
+                "workspace:agent_ops_connect_to_server",
+                "Agent Ops: Connect to server…",
+                WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Servers,
+                    source: PaletteSource::Keybinding,
+                },
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_ops_import_ssh_hosts",
+                "Agent Ops: Import hosts from SSH config",
+                WorkspaceAction::AgentOpsImportSshHosts,
+            )
+            .with_context_predicate(id!("Workspace")),
+            EditableBinding::new(
+                "workspace:agent_ops_add_server",
+                "Agent Ops: Add or manage servers…",
+                WorkspaceAction::ShowSettingsPage(SettingsSection::Servers),
+            )
+            .with_context_predicate(id!("Workspace")),
+        ]);
+    }
+
     if FeatureFlag::UIZoom.is_enabled() {
         app.register_fixed_bindings([
             FixedBinding::custom(
