@@ -43,9 +43,10 @@ pub fn pass_startup_args_to_existing_instance(
         let mut open_new_url;
         let mut url_refs = args.urls.iter().map(AsRef::as_ref).collect_vec();
         // If there are no URLs on the command line, send one to open a new
-        // window using the same current working directory as this process.
+        // tab (in the existing window) using the same current working
+        // directory as this process.
         if url_refs.is_empty() {
-            open_new_url = format!("{}://action/new_window", ChannelState::url_scheme());
+            open_new_url = format!("{}://action/new_tab", ChannelState::url_scheme());
             if let Ok(current_dir) = std::env::current_dir() {
                 open_new_url.push_str(&format!("?path={}", current_dir.display()));
             }
