@@ -7,8 +7,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
     APPROVAL_TIMEOUT_SECS, ActionKind, AgentToken, ControlError, RemoteExecParams,
     RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams,
-    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
-    RemoteOutputRecentResult, RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
+    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteHostListParams,
+    RemoteHostListResult, RemoteOutputRecentParams, RemoteOutputRecentResult,
+    RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -17,14 +18,15 @@ use sha2::{Digest, Sha256};
 
 use super::edit::{EditError, apply_edit};
 use super::format::{
-    edit_snippet, place, render_exec, render_exec_visible, render_read, render_sessions,
+    edit_snippet, place, render_exec, render_exec_visible, render_hosts, render_read,
+    render_sessions,
 };
 use super::jsonrpc::{McpHandler, ToolResult};
 use super::redact::Redactor;
 use crate::local_control::remote::{
     APPROVAL_CLIENT_MARGIN, EXEC_CLIENT_MARGIN, EXEC_DEFAULT_TIMEOUT_SECS, FILE_CLIENT_TIMEOUT,
-    MAX_WRITE_BYTES, RECENT_DEFAULT_COUNT, RECENT_MAX_COUNT, SESSIONS_CLIENT_TIMEOUT, decode,
-    render_recent,
+    HOSTS_DEFAULT_LIMIT, HOSTS_MAX_LIMIT, MAX_WRITE_BYTES, RECENT_DEFAULT_COUNT, RECENT_MAX_COUNT,
+    SESSIONS_CLIENT_TIMEOUT, decode, render_recent,
 };
 
 /// Audit name when the client does not say who it is.
@@ -43,6 +45,9 @@ These tools act on a remote server through a terminal session the user opened in
 `ssh` then `sudo -i`, so commands often run as root). They are not your local shell: use your own \
 Bash/Read/Edit tools for this machine and these tools for the server.
 - Call list_sessions first and name the user@host you are about to change before any change.
+- list_hosts shows the servers the user keeps in Warp (tags, user@host, open sessions, the local \
+mirror of their files); it does not open sessions. Read a mirror with your own local tools; \
+changing a server's files still goes through read_file and edit_file.
 - When the user refers to something they just ran or an error they just saw in that terminal, \
 call recent_output to read it instead of running the command again.
 - Prefer read_file + edit_file for config files; edit_file only needs the lines you change.
@@ -108,6 +113,13 @@ pub(super) struct Tools<T> {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListSessionsArgs {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListHostsArgs {
+    query: Option<String>,
+    limit: Option<u32>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,6 +225,25 @@ impl<T: ControlTransport> Tools<T> {
         let ListSessionsArgs {} = parse_args("list_sessions", args)?;
         let result = self.session_list()?;
         Ok(render_sessions(&result.sessions))
+    }
+
+    fn list_hosts(&mut self, args: Value) -> Result<String, ToolError> {
+        let args: ListHostsArgs = parse_args("list_hosts", args)?;
+        let params = RemoteHostListParams {
+            query: args.query,
+            limit: Some(
+                args.limit
+                    .unwrap_or(HOSTS_DEFAULT_LIMIT)
+                    .clamp(1, HOSTS_MAX_LIMIT),
+            ),
+        };
+        let result: RemoteHostListResult = self.call(
+            ActionKind::RemoteHostList,
+            params,
+            None,
+            SESSIONS_CLIENT_TIMEOUT,
+        )?;
+        Ok(render_hosts(&result))
     }
 
     fn exec(&mut self, args: Value) -> Result<String, ToolError> {
@@ -541,6 +572,7 @@ impl<T: ControlTransport> McpHandler for Tools<T> {
         self.maybe_pair();
         let outcome = match name {
             "list_sessions" => self.list_sessions(arguments),
+            "list_hosts" => self.list_hosts(arguments),
             "exec" => self.exec(arguments),
             "exec_visible" => self.exec_visible(arguments),
             "read_file" => self.read_file(arguments),
@@ -657,6 +689,30 @@ fn tool_definitions() -> Value {
             "description": "List the terminal sessions open in Warp: user@host, current \
                             directory and whether the user allowed agents to use each one.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true, "openWorldHint": false }
+        },
+        {
+            "name": "list_hosts",
+            "title": "List the user's servers",
+            "description": "List the servers in the user's Warp server directory: alias, tags, \
+                            user@host:port, how to become root, the sessions open on each, and \
+                            the local folder that mirrors its synced files with the paths synced. \
+                            Only describes; it does not connect and holds no passwords or keys.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Words that match aliases and tags loosely; tag:prod \
+                                        keeps only servers with that tag."
+                    },
+                    "limit": {
+                        "type": "integer", "minimum": 1, "maximum": 100,
+                        "description": "How many servers to show (default 20)."
+                    }
+                },
+                "additionalProperties": false
+            },
             "annotations": { "readOnlyHint": true, "openWorldHint": false }
         },
         {

@@ -123,13 +123,9 @@ pub(crate) fn session_list(
 ) -> Result<Value, ControlError> {
     let kind = ActionKind::RemoteSessionList;
     ensure_enabled(kind)?;
-    let entries = session_entries(&TargetSelector::default(), kind, ctx)?;
-    let sessions = entries
-        .iter()
-        .filter_map(|entry| {
-            let snapshot = read_session(entry, ctx)?;
-            Some(summary(entry, &snapshot, ctx))
-        })
+    let sessions = listed_sessions(kind, ctx)?
+        .into_iter()
+        .map(|listed| listed.summary)
         .collect();
     serde_json::to_value(RemoteSessionListResult { sessions }).map_err(|err| {
         ControlError::with_details(
@@ -138,6 +134,34 @@ pub(crate) fn session_list(
             err.to_string(),
         )
     })
+}
+
+/// A session in the list, with what the user typed after `ssh` to open it.
+pub(super) struct ListedSession {
+    pub(super) summary: RemoteSessionSummary,
+    pub(super) ssh_host: Option<String>,
+}
+
+pub(super) fn listed_sessions(
+    kind: ActionKind,
+    ctx: &mut ModelContext<LocalControlBridge>,
+) -> Result<Vec<ListedSession>, ControlError> {
+    let entries = session_entries(&TargetSelector::default(), kind, ctx)?;
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            let snapshot = read_session(entry, ctx)?;
+            Some(ListedSession {
+                summary: summary(entry, &snapshot, ctx),
+                ssh_host: ssh_host(&snapshot.session),
+            })
+        })
+        .collect())
+}
+
+fn ssh_host(session: &Session) -> Option<String> {
+    let info = session.subshell_info().as_ref()?;
+    info.ssh_connection_info.as_ref()?.host.clone()
 }
 
 /// Starts an operation in an attached session. The answer arrives on the returned receiver so

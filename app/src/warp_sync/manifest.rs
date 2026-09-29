@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use super::WarpSyncError;
+use super::paths::manifest_path;
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -171,6 +172,13 @@ impl Manifest {
     pub fn last_sync(&self, root: &str) -> Option<&SyncRecord> {
         self.last_sync.get(root)
     }
+}
+
+/// The paths that were downloaded or uploaded into the mirror `host_key` under `mirror_root`,
+/// sorted. Empty when nothing was synced there.
+pub fn synced_paths(mirror_root: &Path, host_key: &str) -> Result<Vec<String>, WarpSyncError> {
+    let manifest = Manifest::load_or_default(&manifest_path(mirror_root, host_key), host_key)?;
+    Ok(manifest.last_sync.into_keys().collect())
 }
 
 /// Whether `path` is `root` or lies below it. Compares whole components, so `/etc/nginx2` is not

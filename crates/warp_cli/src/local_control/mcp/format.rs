@@ -1,7 +1,8 @@
 //! Text of the tool results, shaped like the output of Claude Code's own tools.
 use local_control::protocol::{
-    RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteSessionKind, RemoteSessionRef,
-    RemoteSessionSummary, RemoteStream,
+    RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteHostListResult,
+    RemoteHostMirror, RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteRootLogin,
+    RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary, RemoteStream, RemoteTransport,
 };
 
 /// Longer lines are cut, as Claude Code's Read tool does.
@@ -230,6 +231,97 @@ fn render_session(session: &RemoteSessionSummary) -> String {
         "- session_id {id}{focus}: {}@{} cwd {cwd} shell {} — {status}",
         session.user, session.host, session.shell
     )
+}
+
+/// `list_hosts` result.
+pub(in crate::local_control) fn render_hosts(result: &RemoteHostListResult) -> String {
+    if result.hosts.is_empty() {
+        return "No servers match in Warp's server directory.".to_owned();
+    }
+    let total = result.total as usize;
+    let mut text = if total > result.hosts.len() {
+        format!(
+            "Warp's server directory ({} of {total} shown; narrow it with query, e.g. \
+             \"tag:prod\"):\n",
+            result.hosts.len()
+        )
+    } else {
+        format!("Warp's server directory ({total}):\n")
+    };
+    for host in &result.hosts {
+        text.push_str(&render_host(host));
+    }
+    text
+}
+
+fn render_host(host: &RemoteHostSummary) -> String {
+    let tags = if host.tags.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", host.tags.join(", "))
+    };
+    let connection = host.connection.as_deref().unwrap_or("connection unknown");
+    let source = match host.source {
+        RemoteHostSource::SshConfig => "from ~/.ssh/config",
+        RemoteHostSource::Warp => "created in Warp",
+    };
+    let root = match host.root_login {
+        RemoteRootLogin::Root => "logs in as root",
+        RemoteRootLogin::SudoNopasswd => "root via sudo without a password",
+        RemoteRootLogin::SudoPassword => "root via sudo with a password",
+        RemoteRootLogin::None => "no root access noted",
+    };
+    let transport = match host.transport {
+        RemoteTransport::InBand => "in_band",
+        RemoteTransport::Direct => "direct",
+    };
+    let missing = if host.missing {
+        "; no longer in ~/.ssh/config"
+    } else {
+        ""
+    };
+    let mut text = format!(
+        "- {}{tags}: {connection} — {source}{missing}; {root}; transport {transport}\n",
+        host.alias
+    );
+    for session in &host.sessions {
+        text.push_str(&format!("    open: {}\n", render_host_session(session)));
+    }
+    if let Some(mirror) = &host.mirror {
+        text.push_str(&render_mirror(mirror));
+    }
+    text
+}
+
+fn render_host_session(session: &RemoteHostSession) -> String {
+    let id = serde_json::Value::String(session.session_id.clone());
+    let focus = if session.is_active { " (focused)" } else { "" };
+    let status = match &session.attached {
+        None => "not attached",
+        Some(attached) => match attached.access {
+            RemoteAccess::Full => "attached: exec, read and write",
+            RemoteAccess::ReadOnly => "attached read-only",
+        },
+    };
+    format!("session_id {id}{focus}, {status}")
+}
+
+fn render_mirror(mirror: &RemoteHostMirror) -> String {
+    let mut text = format!("    mirror: {}\n", mirror.dir);
+    if mirror.synced_paths.is_empty() {
+        text.push_str("    synced: nothing yet\n");
+        return text;
+    }
+    let more = if mirror.synced_paths_truncated {
+        ", … (more not shown)"
+    } else {
+        ""
+    };
+    text.push_str(&format!(
+        "    synced: {}{more}\n",
+        mirror.synced_paths.join(", ")
+    ));
+    text
 }
 
 /// `user@host:path`, which tells the model where something happened.

@@ -24,6 +24,7 @@ use crate::host_directory::{
     ProvisionError, RefreshMode, Resolved, RootLogin, SshResolver, SystemSsh, Transport,
 };
 use crate::view_components::{Dropdown, DropdownItem};
+use crate::warp_sync::SyncConfig;
 
 /// Rows shown at once; the search narrows a longer list.
 pub(super) const MAX_ROWS: usize = 40;
@@ -40,6 +41,7 @@ pub enum ServersPageAction {
     CancelRemove,
     ConfirmRemove,
     InstallInclude,
+    OpenMirror,
 }
 
 /// A message under the form or the detail, until the next thing the person does.
@@ -84,6 +86,7 @@ pub(super) struct ButtonStates {
     pub(super) confirm_remove: MouseStateHandle,
     pub(super) cancel_remove: MouseStateHandle,
     pub(super) install_include: MouseStateHandle,
+    pub(super) open_mirror: MouseStateHandle,
 }
 
 pub struct ServersSettingsPageView {
@@ -499,6 +502,32 @@ impl ServersSettingsPageView {
         );
     }
 
+    /// Shows the folder that Warp Sync mirrors the selected server into.
+    fn open_mirror(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(host) = self.selected_host(ctx) else {
+            return;
+        };
+        let opened = SyncConfig::from_settings(ctx)
+            .map_err(|error| error.to_string())
+            .and_then(|config| {
+                host_directory::mirror_dir(&host, &config.mirror_root)
+                    .filter(|dir| dir.is_dir())
+                    .ok_or_else(|| {
+                        "There is no local mirror of this server yet: download a file from it \
+                         with Warp Sync first."
+                            .to_owned()
+                    })
+            });
+        match opened {
+            Ok(dir) => {
+                self.status = None;
+                ctx.open_file_path_in_explorer(&dir);
+            }
+            Err(text) => self.set_status(text, true),
+        }
+        ctx.notify();
+    }
+
     fn install_include(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(home) = dirs::home_dir() else {
             return;
@@ -634,6 +663,7 @@ impl TypedActionView for ServersSettingsPageView {
             }
             ServersPageAction::ConfirmRemove => self.remove_selected(ctx),
             ServersPageAction::InstallInclude => self.install_include(ctx),
+            ServersPageAction::OpenMirror => self.open_mirror(ctx),
         }
     }
 }

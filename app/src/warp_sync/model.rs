@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +10,8 @@ use warpui::{AppContext, Entity, ModelContext, SingletonEntity, WindowId};
 use super::config::{SyncConfig, SyncLimits};
 use super::diff::FileDifference;
 use super::editor::{EditorCli, EditorRequest, MAX_EDITOR_DIFFS, launch};
-use super::paths::{host_key, printable};
+use super::manifest::Manifest;
+use super::paths::{host_key, manifest_path, printable};
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
@@ -24,6 +25,7 @@ use super::transfer::{
     execute_upload, prepare_upload,
 };
 use super::{EXTERNAL_PENDING_TTL, MAX_EXTERNAL_PENDING, WarpSyncError};
+use crate::host_directory::{self, HostDirectoryModel, MirrorLink};
 use crate::terminal::model::session::Session;
 
 /// Marks toasts that report an operation started by a local-control client rather than by the
@@ -615,15 +617,24 @@ impl WarpSyncModel {
         ctx.spawn(
             async move {
                 let outcome = execute_upload(shell.as_ref(), &prepared).await;
-                (prepared.remote_path, outcome)
+                (
+                    shell,
+                    prepared.mirror_root,
+                    prepared.host_key,
+                    prepared.remote_path,
+                    outcome,
+                )
             },
-            move |me, (remote_path, outcome), ctx| {
+            move |me, (shell, mirror_root, host_key, remote_path, outcome), ctx| {
                 me.finish_sync(&key);
                 let finished = match outcome {
-                    Ok(outcome) => Finished::Uploaded {
-                        remote_path,
-                        outcome,
-                    },
+                    Ok(outcome) => {
+                        link_host_mirror(shell.as_ref(), mirror_root, host_key, ctx);
+                        Finished::Uploaded {
+                            remote_path,
+                            outcome,
+                        }
+                    }
                     Err(error) => Finished::Failed(error),
                 };
                 report(requester, finished, ctx);
@@ -647,6 +658,16 @@ impl WarpSyncModel {
             move |me, (shell, request, result), ctx| match result {
                 Ok(DownloadResult::Done(outcome)) => {
                     me.finish_sync(&key);
+                    if let Some(host_key) =
+                        outcome.host_dir.file_name().and_then(|name| name.to_str())
+                    {
+                        link_host_mirror(
+                            shell.as_ref(),
+                            request.mirror_root.clone(),
+                            host_key.to_owned(),
+                            ctx,
+                        );
+                    }
                     let finished = Finished::Downloaded {
                         remote_path: request.remote_path,
                         outcome,
@@ -840,6 +861,49 @@ fn window_event(window_id: WindowId, finished: Finished) -> WarpSyncEvent {
             outcome,
         } => compare_event(window_id, hostname, remote_path, outcome),
         Finished::Failed(error) => WarpSyncEvent::Failed { window_id, error },
+    }
+}
+
+/// Tells the server directory which mirror a sync just used, when the session was opened with an
+/// alias that the directory knows.
+fn link_host_mirror(
+    shell: &dyn RemoteShell,
+    mirror_root: PathBuf,
+    host_key: String,
+    ctx: &mut ModelContext<WarpSyncModel>,
+) {
+    if !host_directory::is_enabled() {
+        return;
+    }
+    let Some(alias) = shell
+        .ssh_host()
+        .and_then(|ssh_host| HostDirectoryModel::as_ref(ctx).alias_for_ssh_host(&ssh_host))
+    else {
+        return;
+    };
+    ctx.spawn(
+        async move { read_mirror_link(&mirror_root, host_key) },
+        move |_, observed, ctx| {
+            let Some(observed) = observed else {
+                return;
+            };
+            HostDirectoryModel::handle(ctx).update(ctx, |directory, ctx| {
+                directory.observe_mirror(alias, observed, ctx)
+            });
+        },
+    );
+}
+
+fn read_mirror_link(mirror_root: &Path, host_key: String) -> Option<MirrorLink> {
+    match Manifest::load_or_default(&manifest_path(mirror_root, &host_key), &host_key) {
+        Ok(manifest) => Some(MirrorLink {
+            machine_id: manifest.machine_id().map(str::to_owned),
+            mirror_key: host_key,
+        }),
+        Err(error) => {
+            log::warn!("Warp Sync: could not read the manifest of {host_key}: {error}");
+            None
+        }
     }
 }
 

@@ -28,9 +28,11 @@ use std::time::Duration;
 pub use config::SyncConfig;
 pub use diff::{FileChange, FileDifference};
 pub use error::WarpSyncError;
+pub use manifest::synced_paths;
 pub use model::{MirrorLocation, RemoteEditOutcome, UploadSummary, WarpSyncEvent, WarpSyncModel};
 pub use paths::{
-    host_dir_matches, host_mirror_dir, normalize_remote_path, printable, selection_to_remote_path,
+    host_dir_matches, host_mirror_dir, is_mirror_key, normalize_remote_path, printable,
+    selection_to_remote_path,
 };
 pub use requester::{ConfirmationKind, ExternalReply, RemoteEditStep, Requester, SyncReply};
 

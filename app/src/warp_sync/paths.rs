@@ -7,6 +7,7 @@ use uuid::Uuid;
 use super::WarpSyncError;
 
 const MAX_REMOTE_PATH_LEN: usize = 4096;
+const MAX_MIRROR_KEY_LEN: usize = 255;
 const UNKNOWN_HOST_KEY: &str = "unknown-host";
 pub(super) const STATE_DIR_NAME: &str = ".warp-sync";
 const STAGING_DIR_NAME: &str = "staging";
@@ -134,6 +135,17 @@ fn is_invisible_format(c: char) -> bool {
             | '\u{2066}'..='\u{206F}'
             | '\u{FEFF}'
     )
+}
+
+/// Whether `key` looks like the name of a mirror folder that Warp Sync made. A key read from a file
+/// the user can edit must pass this before it is joined to a path.
+pub fn is_mirror_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_MIRROR_KEY_LEN
+        && !key.starts_with('.')
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// Directory holding the mirror of everything synced from `hostname`.

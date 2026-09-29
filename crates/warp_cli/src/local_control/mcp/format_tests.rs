@@ -203,3 +203,85 @@ fn human_bytes_picks_a_unit() {
     assert_eq!(human_bytes(1536), "1.5 KiB");
     assert_eq!(human_bytes(5 * 1024 * 1024), "5.0 MiB");
 }
+
+fn listed_host(alias: &str) -> RemoteHostSummary {
+    RemoteHostSummary {
+        alias: alias.to_owned(),
+        tags: Vec::new(),
+        source: RemoteHostSource::Warp,
+        missing: false,
+        connection: None,
+        root_login: RemoteRootLogin::None,
+        transport: RemoteTransport::Direct,
+        sessions: Vec::new(),
+        mirror: None,
+    }
+}
+
+#[test]
+fn render_hosts_says_when_the_list_is_cut() {
+    let text = render_hosts(&RemoteHostListResult {
+        hosts: vec![listed_host("a")],
+        total: 454,
+    });
+    assert!(
+        text.starts_with("Warp's server directory (1 of 454 shown"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "- a: connection unknown — created in Warp; no root access noted; transport direct\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn render_hosts_handles_an_empty_list_and_a_gone_host() {
+    assert_eq!(
+        render_hosts(&RemoteHostListResult {
+            hosts: Vec::new(),
+            total: 0
+        }),
+        "No servers match in Warp's server directory."
+    );
+    let mut gone = listed_host("old");
+    gone.missing = true;
+    let text = render_hosts(&RemoteHostListResult {
+        hosts: vec![gone],
+        total: 1,
+    });
+    assert!(text.contains("no longer in ~/.ssh/config"), "{text}");
+}
+
+#[test]
+fn render_hosts_shows_a_mirror_with_nothing_synced_and_a_cut_path_list() {
+    let mut host = listed_host("a");
+    host.mirror = Some(RemoteHostMirror {
+        dir: "/m/a".to_owned(),
+        synced_paths: Vec::new(),
+        synced_paths_truncated: false,
+    });
+    let text = render_hosts(&RemoteHostListResult {
+        hosts: vec![host.clone()],
+        total: 1,
+    });
+    assert!(
+        text.contains("mirror: /m/a\n    synced: nothing yet"),
+        "{text}"
+    );
+
+    host.mirror = Some(RemoteHostMirror {
+        dir: "/m/a".to_owned(),
+        synced_paths: vec!["/etc".to_owned(), "/srv".to_owned()],
+        synced_paths_truncated: true,
+    });
+    let text = render_hosts(&RemoteHostListResult {
+        hosts: vec![host],
+        total: 1,
+    });
+    assert!(
+        text.contains("synced: /etc, /srv, … (more not shown)"),
+        "{text}"
+    );
+}

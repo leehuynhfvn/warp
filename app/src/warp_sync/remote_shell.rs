@@ -16,6 +16,11 @@ pub trait RemoteShell: Send + Sync {
     /// Runs `command` and returns its stdout. A non-zero exit is an error carrying the reason
     /// the command printed.
     async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError>;
+
+    /// What the user typed after `ssh` to open this session, when they did.
+    fn ssh_host(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The command executor of a Warpified remote session.
@@ -43,6 +48,11 @@ impl SessionShell {
 
 #[async_trait]
 impl RemoteShell for SessionShell {
+    fn ssh_host(&self) -> Option<String> {
+        let info = self.session.subshell_info().as_ref()?;
+        info.ssh_connection_info.as_ref()?.host.clone()
+    }
+
     async fn run(&self, command: &str) -> Result<Vec<u8>, WarpSyncError> {
         let output = self
             .session

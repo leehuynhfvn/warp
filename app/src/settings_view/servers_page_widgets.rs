@@ -320,7 +320,7 @@ impl SettingsWidget for ServerDetailWidget {
     type View = ServersSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "servers host tags root sudo transport forget delete"
+        "servers host tags root sudo transport forget delete mirror sync files"
     }
 
     fn render(
@@ -367,6 +367,7 @@ impl SettingsWidget for ServerDetailWidget {
                 transport_label(host.transport)
             )),
         ));
+        column.add_child(mirror_row(view, &host, appearance));
         column.add_child(remove_row(view, &host, appearance));
         if let Some(status) = status_note(&view.status, appearance) {
             column.add_child(status);
@@ -388,6 +389,38 @@ fn detail_description(view: &ServersSettingsPageView, host: &Host) -> String {
         Some(Err(reason)) => format!("{origin} ssh could not resolve it: {reason}"),
         None => origin.to_owned(),
     }
+}
+
+fn mirror_row(
+    view: &ServersSettingsPageView,
+    host: &Host,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let description = match &host.mirror_key {
+        Some(key) => format!(
+            "Files Warp Sync copied from this server are in the folder \"{key}\" of the local \
+             mirror."
+        ),
+        None => "Nothing has been synced from this server yet. Open a session with this name and \
+                 download a file with Warp Sync."
+            .to_owned(),
+    };
+    render_body_item::<ServersPageAction>(
+        "Local mirror".into(),
+        None,
+        LocalOnlyIconState::Hidden,
+        ToggleState::Enabled,
+        appearance,
+        button(
+            "Open mirror of this server",
+            ButtonVariant::Secondary,
+            view.buttons.open_mirror.clone(),
+            ServersPageAction::OpenMirror,
+            host.mirror_key.is_some(),
+            appearance,
+        ),
+        Some(description),
+    )
 }
 
 fn remove_row(

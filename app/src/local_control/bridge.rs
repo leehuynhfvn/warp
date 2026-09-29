@@ -14,7 +14,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 use crate::agent_bridge::pairing;
 use crate::local_control::handlers::sync::{self, PathOperation, SyncReceiver};
 use crate::local_control::handlers::{
-    agent, app_state, close, metadata, metadata_config, remote, settings_surfaces,
+    agent, app_state, close, hosts, metadata, metadata_config, remote, settings_surfaces,
 };
 use crate::local_control::permissions::{
     ensure_action_allowed, ensure_feature_enabled, ensure_protocol_version,
@@ -215,6 +215,9 @@ impl LocalControlBridge {
                     request.request_id,
                     remote::start(&request, token_sha256, ctx),
                 );
+            }
+            ActionKind::RemoteHostList => {
+                return pending(request.request_id, hosts::host_list(&request, ctx));
             }
             ActionKind::RemoteOutputRecent => {
                 return pending(request.request_id, remote::output_recent(&request, ctx));

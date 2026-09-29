@@ -153,6 +153,10 @@ fn remote_actions_are_unsupported_when_the_bridge_is_off() {
             .call(ActionKind::RemoteSessionList, serde_json::json!({}), None)
             .await;
         assert_eq!(error_code(list), ErrorCode::UnsupportedAction);
+        let hosts = harness
+            .call(ActionKind::RemoteHostList, serde_json::json!({}), None)
+            .await;
+        assert_eq!(error_code(hosts), ErrorCode::UnsupportedAction);
     });
 }
 
@@ -421,6 +425,129 @@ fn a_visible_command_is_validated_before_any_session_is_looked_up() {
                     session_id("999"),
                 )
                 .await;
+            assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
+        }
+    });
+}
+
+fn missing_host(alias: &str) -> crate::host_directory::Host {
+    crate::host_directory::Host {
+        missing: true,
+        tags: vec!["prod".to_owned()],
+        ..crate::host_directory::Host::new(alias, crate::host_directory::HostSource::SshConfig)
+    }
+}
+
+/// Runs `remote.host.list` once per entry of `params_list`, in an app whose directory holds hosts
+/// that are gone from the SSH configuration, so that no `ssh` is started.
+async fn list_hosts_with(
+    app: &mut warpui::App,
+    params_list: &[serde_json::Value],
+) -> Vec<Result<serde_json::Value, ControlError>> {
+    let harness = Harness::new(app).await;
+    app.update(crate::settings::WarpSyncSettings::register);
+    let directory = app.add_singleton_model(|_| crate::host_directory::HostDirectoryModel::new());
+    directory.update(app, |directory, ctx| {
+        directory.replace_hosts(vec![missing_host("old-b"), missing_host("old-a")], ctx)
+    });
+    let mut results = Vec::new();
+    for params in params_list {
+        results.push(
+            harness
+                .call(ActionKind::RemoteHostList, params.clone(), None)
+                .await,
+        );
+    }
+    results
+}
+
+async fn list_hosts(
+    app: &mut warpui::App,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, ControlError> {
+    list_hosts_with(app, &[params]).await.remove(0)
+}
+
+#[test]
+fn host_list_is_unsupported_when_the_directory_is_off() {
+    let _flags = (
+        FeatureFlag::WarpControlCli.override_enabled(true),
+        FeatureFlag::AgentBridge.override_enabled(true),
+        FeatureFlag::AgentOpsHosts.override_enabled(false),
+    );
+    warpui::App::test((), |mut app| async move {
+        let result = list_hosts(&mut app, serde_json::json!({})).await;
+        assert_eq!(error_code(result), ErrorCode::UnsupportedAction);
+    });
+}
+
+#[test]
+fn host_list_describes_the_directory_without_a_session() {
+    let _flags = (
+        FeatureFlag::WarpControlCli.override_enabled(true),
+        FeatureFlag::AgentBridge.override_enabled(true),
+        FeatureFlag::AgentOpsHosts.override_enabled(true),
+    );
+    warpui::App::test((), |mut app| async move {
+        let data = list_hosts(&mut app, serde_json::json!({})).await.unwrap();
+
+        assert_eq!(data["total"], 2);
+        let aliases: Vec<_> = data["hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|host| host["alias"].as_str().unwrap())
+            .collect();
+        assert_eq!(aliases, ["old-b", "old-a"]);
+        assert_eq!(data["hosts"][0]["missing"], true);
+        assert_eq!(data["hosts"][0]["tags"], serde_json::json!(["prod"]));
+        assert_eq!(data["hosts"][0]["sessions"], serde_json::json!([]));
+    });
+}
+
+#[test]
+fn host_list_filters_and_limits() {
+    let _flags = (
+        FeatureFlag::WarpControlCli.override_enabled(true),
+        FeatureFlag::AgentBridge.override_enabled(true),
+        FeatureFlag::AgentOpsHosts.override_enabled(true),
+    );
+    warpui::App::test((), |mut app| async move {
+        let mut results = list_hosts_with(
+            &mut app,
+            &[
+                serde_json::json!({ "query": "old-b", "limit": 1 }),
+                serde_json::json!({ "limit": 1 }),
+            ],
+        )
+        .await
+        .into_iter();
+
+        let data = results.next().unwrap().unwrap();
+        assert_eq!(data["total"], 1);
+        assert_eq!(data["hosts"][0]["alias"], "old-b");
+
+        let data = results.next().unwrap().unwrap();
+        assert_eq!(data["total"], 2);
+        assert_eq!(data["hosts"].as_array().unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn host_list_rejects_bad_params() {
+    let _flags = (
+        FeatureFlag::WarpControlCli.override_enabled(true),
+        FeatureFlag::AgentBridge.override_enabled(true),
+        FeatureFlag::AgentOpsHosts.override_enabled(true),
+    );
+    warpui::App::test((), |mut app| async move {
+        let bad = [
+            serde_json::json!({ "limit": 0 }),
+            serde_json::json!({ "limit": 101 }),
+            serde_json::json!({ "unknown": 1 }),
+        ];
+        let results = list_hosts_with(&mut app, &bad).await;
+        for (params, result) in bad.iter().zip(results) {
             assert_eq!(error_code(result), ErrorCode::InvalidParams, "{params}");
         }
     });

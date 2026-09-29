@@ -2,6 +2,7 @@
 //! in Warp, with the metadata Warp keeps about each (tags, how to become root, its mirror).
 
 mod directory;
+mod mirror;
 mod model;
 mod provision;
 mod search;
@@ -13,6 +14,7 @@ mod warp_conf;
 use std::path::{Path, PathBuf};
 
 pub(crate) use directory::{HostDirectoryEvent, HostDirectoryModel, RefreshMode};
+pub(crate) use mirror::{MirrorLink, alias_of_ssh_host, mirror_dir};
 pub(crate) use model::{Host, HostSource, RootLogin, Transport, parse_tags, validate_alias};
 pub(crate) use provision::{
     HostEdit, ProvisionError, create_host, include_installed, install_include, remove_host,

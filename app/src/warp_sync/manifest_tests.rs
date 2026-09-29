@@ -299,3 +299,36 @@ fn machine_id_round_trips_and_is_optional() {
     let loaded = Manifest::load_or_default(&path, "h").unwrap();
     assert_eq!(loaded.machine_id(), Some("abcdef0123456789"));
 }
+
+#[test]
+fn synced_paths_lists_what_was_synced_in_order() {
+    let mirror_root = tempfile::tempdir().unwrap();
+    let mut manifest = Manifest::new("web01");
+    for root in ["/etc/nginx", "/etc/hosts"] {
+        manifest.record_sync(
+            root,
+            SyncRecord {
+                remote_user: "root".to_owned(),
+                at_unix: 1,
+            },
+        );
+    }
+    manifest
+        .save_atomic(&manifest_path(mirror_root.path(), "web01"))
+        .unwrap();
+
+    assert_eq!(
+        synced_paths(mirror_root.path(), "web01").unwrap(),
+        ["/etc/hosts", "/etc/nginx"]
+    );
+}
+
+#[test]
+fn nothing_is_synced_from_a_host_without_a_manifest() {
+    let mirror_root = tempfile::tempdir().unwrap();
+    assert!(
+        synced_paths(mirror_root.path(), "web01")
+            .unwrap()
+            .is_empty()
+    );
+}

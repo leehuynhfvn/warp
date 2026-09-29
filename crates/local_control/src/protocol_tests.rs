@@ -198,7 +198,7 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 fn catalog_has_exactly_the_retained_and_sync_actions() {
     const RETAINED_ACTIONS: usize = 84;
     const SYNC_ACTIONS: usize = 6;
-    const REMOTE_ACTIONS: usize = 6;
+    const REMOTE_ACTIONS: usize = 7;
     const AGENT_ACTIONS: usize = 1;
     assert_eq!(
         ActionKind::ALL.len(),

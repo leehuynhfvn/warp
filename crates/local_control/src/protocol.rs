@@ -796,6 +796,106 @@ pub struct RemoteSessionListResult {
     pub sessions: Vec<RemoteSessionSummary>,
 }
 
+/// Where a host is defined, which decides who may change it.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteHostSource {
+    /// A block the user wrote in their own SSH configuration.
+    SshConfig,
+    /// A block Warp wrote to its own file inside the SSH configuration.
+    Warp,
+}
+
+/// How to get from the SSH login to a root shell.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteRootLogin {
+    Root,
+    SudoNopasswd,
+    SudoPassword,
+    None,
+}
+
+/// Which channel runs commands on the server.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteTransport {
+    InBand,
+    Direct,
+}
+
+/// Parameters for `remote.host.list`. Both are optional; without them the first
+/// [`DEFAULT_HOST_LIST_LIMIT`] hosts by alias are returned.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteHostListParams {
+    /// Words that match aliases and tags loosely; `tag:prod` keeps only hosts with that tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// At most this many hosts, from 1 to [`MAX_HOST_LIST_LIMIT`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+pub const DEFAULT_HOST_LIST_LIMIT: u32 = 50;
+pub const MAX_HOST_LIST_LIMIT: u32 = 100;
+pub const MAX_HOST_QUERY_LEN: usize = 200;
+/// How many synced paths one host reports.
+pub const MAX_HOST_SYNCED_PATHS: usize = 200;
+
+/// A terminal session opened with a host's alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHostSession {
+    pub session_id: String,
+    pub is_active: bool,
+    /// Absent unless an agent may use the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<RemoteAttachment>,
+}
+
+/// The Warp Sync mirror of a host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHostMirror {
+    /// Local folder that holds the mirrored files.
+    pub dir: String,
+    /// Remote paths that were downloaded or uploaded, sorted; at most [`MAX_HOST_SYNCED_PATHS`].
+    pub synced_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub synced_paths_truncated: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// One server in `remote.host.list`. Never holds a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHostSummary {
+    pub alias: String,
+    pub tags: Vec<String>,
+    pub source: RemoteHostSource,
+    /// The alias is no longer in the SSH configuration.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub missing: bool,
+    /// `user@hostname:port` as OpenSSH resolves the alias; absent when `ssh -G` did not answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
+    pub root_login: RemoteRootLogin,
+    pub transport: RemoteTransport,
+    /// Sessions open right now that were opened with this alias.
+    pub sessions: Vec<RemoteHostSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<RemoteHostMirror>,
+}
+
+/// Result of `remote.host.list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteHostListResult {
+    pub hosts: Vec<RemoteHostSummary>,
+    /// How many hosts matched, before `limit` cut the list.
+    pub total: u32,
+}
+
 /// Typed success payloads for catalog actions that need stable structured data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

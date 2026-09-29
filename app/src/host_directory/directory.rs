@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use super::WARP_CONF_FILE;
+use super::mirror::{self, MirrorApplied, MirrorLink};
 use super::model::{Host, MergeReport, merge_discovered};
 use super::ssh_config::discover_aliases;
 use super::store::{self, HostsError};
@@ -66,6 +67,50 @@ impl HostDirectoryModel {
         self.hosts = hosts;
         ctx.emit(HostDirectoryEvent::Changed);
         ctx.notify();
+    }
+
+    /// The alias of the host that `ssh <ssh_host>` reached, if the directory has it.
+    pub(crate) fn alias_for_ssh_host(&self, ssh_host: &str) -> Option<String> {
+        let alias = mirror::alias_of_ssh_host(ssh_host);
+        self.hosts
+            .iter()
+            .any(|host| host.alias == alias)
+            .then(|| alias.to_owned())
+    }
+
+    /// Records the mirror that a Warp Sync run on a session of `alias` used, and warns when the
+    /// alias now reaches another machine than before.
+    pub(crate) fn observe_mirror(
+        &mut self,
+        alias: String,
+        observed: MirrorLink,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        ctx.spawn(
+            async move {
+                let applied = mirror::apply_observation(&home, &alias, &observed);
+                (alias, applied)
+            },
+            |me, (alias, applied), ctx| match applied {
+                Ok(Some(MirrorApplied {
+                    hosts,
+                    machine_changed,
+                })) => {
+                    if machine_changed {
+                        ctx.emit(HostDirectoryEvent::Notice(format!(
+                            "{alias} now reaches a different machine than before; Warp Sync \
+                             keeps a separate mirror for it"
+                        )));
+                    }
+                    me.replace_hosts(hosts, ctx);
+                }
+                Ok(None) => {}
+                Err(error) => log::warn!("[Host Directory] could not record the mirror: {error}"),
+            },
+        );
     }
 
     /// Scans once when the first window opens.

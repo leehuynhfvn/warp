@@ -10,13 +10,14 @@ use clap::{ArgGroup, Args, Subcommand};
 use local_control::protocol::{
     APPROVAL_TIMEOUT_SECS, ActionKind, ControlError, ErrorCode, RemoteAccess, RemoteExecParams,
     RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams,
-    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteOutputRecentParams,
-    RemoteOutputRecentResult, RemoteSessionKind, RemoteSessionListResult, RemoteSessionSummary,
-    WriteExpectation,
+    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteHostListParams,
+    RemoteHostListResult, RemoteOutputRecentParams, RemoteOutputRecentResult, RemoteSessionKind,
+    RemoteSessionListResult, RemoteSessionSummary, WriteExpectation,
 };
 
 use crate::agent::OutputFormat;
 use crate::local_control::commands::send_action;
+use crate::local_control::mcp::render_hosts;
 use crate::local_control::output::{write_json, write_json_line};
 use crate::local_control::{EXIT_SUCCESS, TargetArgs};
 
@@ -42,6 +43,10 @@ const MAX_EXIT_CODE: i32 = 255;
 /// Largest file `write` sends, matching what the app accepts.
 pub(super) const MAX_WRITE_BYTES: u64 = 512 * 1024;
 
+/// Servers `hosts` shows by default, and at most, matching what the app accepts.
+pub(super) const HOSTS_DEFAULT_LIMIT: u32 = 20;
+pub(super) const HOSTS_MAX_LIMIT: u32 = 100;
+
 /// Commands `recent` shows by default, and at most, matching what the app accepts.
 pub(super) const RECENT_DEFAULT_COUNT: u32 = 3;
 pub(super) const RECENT_MAX_COUNT: u32 = 10;
@@ -65,6 +70,11 @@ pub enum RemoteCommand {
     /// List the sessions and which of them agents may use.
     Sessions(TargetArgs),
 
+    /// List the servers in Warp's server directory with their tags, open sessions and mirrors.
+    ///
+    /// Only describes: nothing connects and no password or key is shown.
+    Hosts(RemoteHostsArgs),
+
     /// Run a command on the server and print its output.
     ///
     /// Exits with the exit code of the command (124 when it timed out, or with `--visible` when it
@@ -85,6 +95,24 @@ pub enum RemoteCommand {
     ///
     /// Read from Warp's blocks: nothing runs on the server.
     Recent(RemoteRecentArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RemoteHostsArgs {
+    #[command(flatten)]
+    pub target: TargetArgs,
+
+    /// Words that match aliases and tags loosely; `tag:prod` keeps only servers with that tag.
+    #[arg(long = "query")]
+    pub query: Option<String>,
+
+    /// How many servers to show (1-100).
+    #[arg(
+        long = "limit",
+        default_value_t = HOSTS_DEFAULT_LIMIT,
+        value_parser = clap::value_parser!(u32).range(1..=i64::from(HOSTS_MAX_LIMIT))
+    )]
+    pub limit: u32,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -176,6 +204,7 @@ pub(super) fn run_remote_command(
 ) -> Result<u8, ControlError> {
     match command {
         RemoteCommand::Sessions(args) => run_sessions(&args, output_format),
+        RemoteCommand::Hosts(args) => run_hosts(&args, output_format),
         RemoteCommand::Exec(args) => run_exec(args, output_format),
         RemoteCommand::Read(args) => run_read(&args, output_format),
         RemoteCommand::Write(args) => run_write(args, output_format),
@@ -193,6 +222,31 @@ fn run_sessions(args: &TargetArgs, output_format: OutputFormat) -> Result<u8, Co
     let result: RemoteSessionListResult = decode(data.clone(), "session list")?;
     print_result(&data, output_format, || {
         println!("{}", render_sessions(&result.sessions));
+        Ok(())
+    })?;
+    Ok(EXIT_SUCCESS)
+}
+
+fn run_hosts(args: &RemoteHostsArgs, output_format: OutputFormat) -> Result<u8, ControlError> {
+    let params = RemoteHostListParams {
+        query: args.query.clone(),
+        limit: Some(args.limit),
+    };
+    let data = send_action(
+        &args.target,
+        ActionKind::RemoteHostList,
+        serde_json::to_value(params).map_err(|err| {
+            ControlError::with_details(
+                ErrorCode::Internal,
+                "failed to encode the request",
+                err.to_string(),
+            )
+        })?,
+        SESSIONS_CLIENT_TIMEOUT,
+    )?;
+    let result: RemoteHostListResult = decode(data.clone(), "host list")?;
+    print_result(&data, output_format, || {
+        println!("{}", render_hosts(&result));
         Ok(())
     })?;
     Ok(EXIT_SUCCESS)

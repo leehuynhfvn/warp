@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
 
 use local_control::protocol::{
-    ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteSessionKind,
-    RemoteSessionSummary, RemoteStream,
+    ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteHostMirror,
+    RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteRootLogin, RemoteSessionKind,
+    RemoteSessionSummary, RemoteStream, RemoteTransport,
 };
 
 use super::*;
@@ -752,6 +753,7 @@ fn every_tool_has_a_schema_and_the_list_matches_the_dispatch() {
         names,
         [
             "list_sessions",
+            "list_hosts",
             "exec",
             "exec_visible",
             "read_file",
@@ -1012,4 +1014,113 @@ fn no_pair_never_attempts_pairing() {
     answer(&mut tools, ActionKind::RemoteSessionList, session_list(&[]));
     call(&mut tools, "list_sessions", json!({}));
     assert!(tools.transport.pair_calls.is_empty());
+}
+
+fn host(alias: &str) -> RemoteHostSummary {
+    RemoteHostSummary {
+        alias: alias.to_owned(),
+        tags: vec!["prod".to_owned()],
+        source: RemoteHostSource::SshConfig,
+        missing: false,
+        connection: Some("ops@web01.example:22".to_owned()),
+        root_login: RemoteRootLogin::SudoNopasswd,
+        transport: RemoteTransport::InBand,
+        sessions: vec![RemoteHostSession {
+            session_id: "Pane 7".to_owned(),
+            is_active: true,
+            attached: None,
+        }],
+        mirror: Some(RemoteHostMirror {
+            dir: "/home/me/.warp/mirrors/web01".to_owned(),
+            synced_paths: vec!["/etc/nginx".to_owned()],
+            synced_paths_truncated: false,
+        }),
+    }
+}
+
+#[test]
+fn list_hosts_asks_for_a_clamped_limit_and_needs_no_session() {
+    let mut tools = tools();
+    for (requested, sent) in [(None, 20), (Some(0), 1), (Some(5000), 100), (Some(7), 7)] {
+        answer(
+            &mut tools,
+            ActionKind::RemoteHostList,
+            RemoteHostListResult {
+                hosts: vec![host("web01")],
+                total: 1,
+            },
+        );
+        let arguments = match requested {
+            Some(limit) => json!({ "query": "tag:prod", "limit": limit }),
+            None => json!({ "query": "tag:prod" }),
+        };
+
+        let result = call(&mut tools, "list_hosts", arguments);
+
+        assert!(!result.is_error);
+        let sent_call = tools.transport.calls.last().unwrap();
+        assert_eq!(sent_call.session, None);
+        assert_eq!(
+            sent_call.params,
+            json!({ "query": "tag:prod", "limit": sent })
+        );
+        assert_eq!(sent_call.timeout, SESSIONS_CLIENT_TIMEOUT);
+    }
+}
+
+#[test]
+fn list_hosts_shows_what_the_agent_needs_and_nothing_secret() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteHostList,
+        RemoteHostListResult {
+            hosts: vec![host("web01")],
+            total: 1,
+        },
+    );
+
+    let result = call(&mut tools, "list_hosts", json!({}));
+
+    assert!(!result.is_error);
+    for expected in [
+        "web01 [prod]",
+        "ops@web01.example:22",
+        "root via sudo without a password",
+        "session_id \"Pane 7\" (focused), not attached",
+        "/home/me/.warp/mirrors/web01",
+        "/etc/nginx",
+    ] {
+        assert!(
+            result.text.contains(expected),
+            "{expected}: {}",
+            result.text
+        );
+    }
+}
+
+#[test]
+fn list_hosts_refuses_unknown_arguments() {
+    let mut tools = tools();
+    let result = call(&mut tools, "list_hosts", json!({ "password": "x" }));
+    assert!(result.is_error);
+    assert!(result.text.contains("Invalid arguments for list_hosts"));
+}
+
+#[test]
+fn list_hosts_reports_an_app_error_as_text() {
+    let mut tools = tools();
+    fail(
+        &mut tools,
+        ActionKind::RemoteHostList,
+        ControlError::new(ErrorCode::UnsupportedAction, "no server directory"),
+    );
+    let result = call(&mut tools, "list_hosts", json!({}));
+    assert!(result.is_error);
+    assert!(result.text.contains("no server directory"));
+}
+
+#[test]
+fn the_instructions_mention_list_hosts() {
+    assert!(INSTRUCTIONS.contains("list_hosts"));
 }

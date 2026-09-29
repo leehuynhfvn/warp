@@ -966,3 +966,36 @@ fn an_editor_operation_is_reported_to_its_window_and_then_as_finished_editing() 
         ));
     });
 }
+
+#[test]
+fn read_mirror_link_reports_the_machine_of_the_manifest() {
+    let mirror_root = tempfile::tempdir().unwrap();
+    let mut manifest = Manifest::new("web01-abcd");
+    manifest.set_machine_id(Some("machine-1".to_owned()));
+    manifest
+        .save_atomic(&manifest_path(mirror_root.path(), "web01-abcd"))
+        .unwrap();
+
+    let link = read_mirror_link(mirror_root.path(), "web01-abcd".to_owned());
+
+    assert_eq!(
+        link,
+        Some(MirrorLink {
+            mirror_key: "web01-abcd".to_owned(),
+            machine_id: Some("machine-1".to_owned()),
+        })
+    );
+}
+
+#[test]
+fn read_mirror_link_gives_up_on_an_unreadable_manifest() {
+    let mirror_root = tempfile::tempdir().unwrap();
+    let path = manifest_path(mirror_root.path(), "web01");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "not json").unwrap();
+
+    assert_eq!(
+        read_mirror_link(mirror_root.path(), "web01".to_owned()),
+        None
+    );
+}

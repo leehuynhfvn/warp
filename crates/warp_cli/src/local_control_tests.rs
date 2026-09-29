@@ -599,6 +599,12 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             vec!["warpctrl", "remote", "sessions"],
         ),
         (
+            ActionKind::RemoteHostList,
+            vec![
+                "warpctrl", "remote", "hosts", "--query", "tag:prod", "--limit", "5",
+            ],
+        ),
+        (
             ActionKind::RemoteExec,
             vec!["warpctrl", "remote", "exec", "--session", "12", "--", "id"],
         ),
@@ -840,6 +846,7 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
         },
         ControlCommand::Remote(command) => match command {
             RemoteCommand::Sessions(_) => Some(ActionKind::RemoteSessionList),
+            RemoteCommand::Hosts(_) => Some(ActionKind::RemoteHostList),
             RemoteCommand::Exec(args) if args.visible => Some(ActionKind::RemoteExecVisible),
             RemoteCommand::Exec(_) => Some(ActionKind::RemoteExec),
             RemoteCommand::Read(_) => Some(ActionKind::RemoteFileRead),

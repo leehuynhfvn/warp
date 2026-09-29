@@ -10,6 +10,7 @@ use std::io;
 use std::time::Duration;
 
 use clap::Args;
+pub(in crate::local_control) use format::render_hosts;
 use jsonrpc::serve;
 use local_control::protocol::{ActionKind, AgentToken, ControlError, ErrorCode};
 use redact::Redactor;

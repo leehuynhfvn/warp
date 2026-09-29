@@ -51,6 +51,7 @@ pub enum ActionParameterSpec {
     RemoteExecVisible,
     RemoteFileRead,
     RemoteFileWrite,
+    RemoteHostList,
     RemoteOutputRecent,
     Rename,
     Resize,
@@ -82,6 +83,7 @@ pub enum ActionResultSpec {
     RemoteExecVisibleResult,
     RemoteFileContent,
     RemoteFileWriteResult,
+    RemoteHostList,
     RemoteOutputRecent,
     RemoteSessionList,
     SettingList,
@@ -318,6 +320,7 @@ define_action_catalog! {
 
     remote {
         RemoteSessionList => { name: "remote.session.list", status: Implemented, target: Instance, params: None, result: RemoteSessionList },
+        RemoteHostList => { name: "remote.host.list", status: Implemented, target: Instance, params: RemoteHostList, result: RemoteHostList },
         RemoteExec => { name: "remote.exec", status: Implemented, target: Session, params: RemoteExec, result: RemoteExecResult },
         RemoteExecVisible => { name: "remote.exec.visible", status: Implemented, target: Session, params: RemoteExecVisible, result: RemoteExecVisibleResult },
         RemoteFileRead => { name: "remote.file.read", status: Implemented, target: Session, params: RemoteFileRead, result: RemoteFileContent },

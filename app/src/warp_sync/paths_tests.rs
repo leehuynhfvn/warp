@@ -429,3 +429,29 @@ fn printable_escapes_invisible_and_direction_changing_characters() {
         "caf\u{e9} \u{4e2d}\u{6587}"
     );
 }
+
+#[test]
+fn a_key_that_warp_sync_made_is_a_mirror_key() {
+    assert!(is_mirror_key("web01"));
+    assert!(is_mirror_key("web01.example.com"));
+    assert!(is_mirror_key(&host_key("odd host!")));
+    assert!(is_mirror_key(&machine_host_key("web01", "machine-id")));
+}
+
+#[test]
+fn a_key_that_could_name_another_folder_is_not_a_mirror_key() {
+    for key in [
+        "",
+        ".",
+        "..",
+        ".warp-sync",
+        "a/b",
+        "../x",
+        "/etc",
+        "a b",
+        "a\nb",
+    ] {
+        assert!(!is_mirror_key(key), "{key:?}");
+    }
+    assert!(!is_mirror_key(&"a".repeat(256)));
+}
