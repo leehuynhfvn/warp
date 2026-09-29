@@ -223,7 +223,7 @@ Thứ tự: 1 → ⛔ CHECKPOINT EA → 2 → ⛔ CHECKPOINT EB → 3 → ⛔ CH
 ## 5. Checklist test tay (người dùng)
 
 Môi trường: VM lab có sshd như các checkpoint trước; tab SSH → `sudo -i` → Warpify. Build lại có
-flag mới.
+flag mới: `./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,warp_sync_remote_edit`.
 
 **5.EA — Edit in Warp**
 
@@ -239,6 +239,10 @@ flag mới.
 7. Mở file, sửa trên server bằng `echo '# x' >> /etc/nginx/nginx.conf`, rồi Save trong Warp → hộp
    thoại cảnh báo server đã đổi (luồng `remote_check` sẵn có), Cancel được.
 8. Đóng tab SSH rồi Save → lỗi rõ ở footer + toast, file mirror còn nguyên.
+9. Nút `</>` ở phía phải tab bar: chỉ hiện khi pane đang active là session SSH đã Warpify; tooltip
+   `Open the mirror of root@<host> in VS Code`; bấm → VS Code mở thư mục mirror của host đó (kể cả
+   khi Settings > "Choose an editor to open file links" không phải VS Code). Chuyển sang tab local →
+   nút ẩn.
 
 **5.EB — Bấm đường dẫn**
 
@@ -248,6 +252,12 @@ flag mới.
 3. Hover đường dẫn → **không** có lệnh lạ nào xuất hiện trong block/history của shell.
 4. Cmd/Ctrl-click một đường dẫn không tồn tại → toast lỗi, không mở gì.
 5. Session local (không SSH) → nhận diện đường dẫn như trước, không đổi hành vi.
+6. `ls -l /etc/nginx`: hover `root`, `4096`, `-rw-r--r--` → không gạch chân; hover `nginx.conf` →
+   gạch chân cả tên, tooltip "Edit in Warp".
+7. Chuột phải trên link remote → "Warp Sync: Edit in Warp" / "Download to local mirror" / "Copy
+   path" đều chạy đúng.
+8. Double-click bôi đen `sites-available` (không có đuôi) → chuột phải → "Warp Sync: Edit in Warp"
+   → toast "… is a folder …"; làm tương tự với một file không đuôi → mở được.
 
 **5.EC — Tô màu**
 
@@ -255,7 +265,12 @@ flag mới.
    `#!/bin/bash` → đều có màu.
 2. `/etc/haproxy/haproxy.cfg` không màu; thêm `language_overrides` `{ glob = "/etc/haproxy/*.cfg",
    language = "ini" }` → mở lại có màu.
-3. Ghi `language = "khong-co"` → không crash, có một cảnh báo.
+3. Ghi `language = "khong-co"` → không crash, có một cảnh báo trong log.
+4. Footer có nút tên ngôn ngữ (vd. `NGINX`, `Plain text`) ở góc phải. Mở `/etc/hosts` (Plain text) →
+   chọn `INI` → có màu ngay; đóng tab, mở lại → vẫn INI; trong `settings.toml` có mục
+   `code.editor.language_overrides` với đúng đường dẫn đó. Chọn "Auto-detect" → về Plain text.
+5. File mở từ server: footer không còn icon LSP và dòng "Language support is unavailable".
+6. Một file local `.rs`/`.py` vẫn có màu như trước; footer vẫn có trạng thái LSP.
 
 ---
 
@@ -281,12 +296,13 @@ agent (đi qua duyệt O2).
 ### Tiến độ
 
 - [x] Plan v1 (2026-09-29)
-- [ ] 1.1 flag · [ ] 1.2 model · [ ] 1.3 requester · [ ] 1.4 palette/mở editor · [ ] 1.5 Save → upload · [ ] 1.6 footer · [ ] 1.7 diff · [ ] 1.8 review + clippy + format
-- [ ] ⛔ CHECKPOINT EA
-- [ ] 2.1 đọc · [ ] 2.2 nhận diện remote · [ ] 2.3 click · [ ] 2.4 menu · [ ] 2.5 review + clippy + format
-- [ ] ⛔ CHECKPOINT EB
-- [ ] 3.1 grammar · [ ] 3.2 nhận diện · [ ] 3.3 `language_overrides` · [ ] 3.4 review + clippy + format
-- [ ] ⛔ CHECKPOINT EC · [ ] tick E trong roadmap
+- [x] 1.1 flag · [x] 1.2 model · [x] 1.3 requester · [x] 1.4 palette/mở editor · [x] 1.5 Save → upload · [x] 1.6 footer · [x] 1.7 diff · [x] 1.8 review + clippy + format
+- [x] 1.9 (thêm theo yêu cầu) nút tab bar mở mirror của session remote đang active trong VS Code
+- [x] ⛔ CHECKPOINT EA (người dùng test đạt, 2026-09-29)
+- [x] 2.1 đọc · [x] 2.2 nhận diện remote · [x] 2.3 click · [x] 2.4 menu · [x] 2.5 review + clippy + format
+- [x] ⛔ CHECKPOINT EB (test gộp với EC, đạt 2026-09-29)
+- [x] 3.1 grammar · [x] 3.2 nhận diện · [x] 3.3 `language_overrides` · [x] 3.3b bộ chọn ngôn ngữ ở footer · [x] 3.4 review + clippy + format
+- [x] ⛔ CHECKPOINT EC (đạt 2026-09-29) · [x] tick E trong roadmap
 
 ### Quyết định
 
@@ -299,6 +315,21 @@ agent (đi qua duyệt O2).
 | E5 | 2026-09-29 | Hộp thoại upload luôn hiện (kèm diff cho file đơn), kể cả khi mở từ E1/E2 | Ghi lên server root; diff giúp duyệt nhanh nên một cú bấm là chấp nhận được |
 | E6 | 2026-09-29 | Không dùng dịch vụ tô màu/"syntax server" bên ngoài (AO15) | Tô màu đã cục bộ; gửi file `/etc` ra ngoài là lộ bí mật |
 | E7 | 2026-09-29 | E dựa trên Warp Sync (in-band qua PTY đã `sudo -i`), không dùng `remote_server` của upstream | `remote_server` chạy dưới user đăng nhập SSH (không sửa được file root sau `sudo -i` có mật khẩu), phải cài binary lên server, gắn xác thực Warp |
+| E8 | 2026-09-29 | Không viết `resolve_remote_path` mới: dùng `normalize_remote_path(input, pwd)` sẵn có (tuyệt đối/tương đối, `\0`, `.`/`..`) | Đã có test; một hàm cho mọi prompt đường dẫn của Warp Sync |
+| E9 | 2026-09-29 | `Requester::RemoteEdit { window_id, step }` (`step` = `Open { session_id, hostname }` / `Save { local_path }`): báo như `Window` rồi phát thêm `WarpSyncEvent::RemoteEditFinished`; pending download/upload giữ `edit` để Confirm/Cancel còn biết; `cancel_pending` trả về `step` | Không đổi đường đi của Window/External; hủy hộp thoại upload → `Unsynced` |
+| E10 | 2026-09-29 | Upload khi Save đi qua **session còn sống** có đúng `SessionId` đã download (tìm trong các pane của cửa sổ); không thấy → lỗi ở footer + toast, không upload | Thoát `sudo -i` đổi session của pane nên không bao giờ upload với quyền khác; đóng tab cũng vậy |
+| E11 | 2026-09-29 | Chỉ editor **đã bắt đầu** lần save mới báo cho `RemoteEditModel` (`save_in_flight`) | Hai pane cùng một file đều nhận `FileSaved`; không có cờ này thì upload hai lần và auto-save của pane kia bị coi là save tay |
+| E12 | 2026-09-29 | `download` có `require_file`: probe là thư mục → `NotAFile` trước khi tải gì | Không tải nguyên thư mục chỉ để báo lỗi |
+| E13 | 2026-09-29 | Diff tính trong `prepare_upload` (luồng nền) từ `git cat-file blob HEAD:<path>` của baseline so với bản mirror; không có baseline/không phải UTF-8 → không diff; `UploadSummary.diff` được `printable` hoá cho client local-control | Không chạy `git` trên luồng UI; không tạo repo khi chỉ đọc |
+| E15 | 2026-09-29 | Link remote = từ **rộng nhất** quanh con trỏ mà đường dẫn (đã tách `:dòng[:cột]`) không chứa khoảng trắng/ký tự phân cách của Warp, bỏ dấu câu cuối câu; đường dẫn tương đối chỉ nhận khi có `/` hoặc có đuôi (có `.` và có chữ cái); loại số, version, IP, option `-…`, URL, `..`; ghép với `pwd` của block bằng `normalize_remote_path` | Không hỏi server được lúc hover (E3), nên phải đoán theo cú pháp; bỏ `root`/`4096` trong `ls -l` để không gạch chân mọi từ. Tên không có đuôi (vd. `sites-available`) vẫn mở được qua bôi đen + chuột phải |
+| E16 | 2026-09-29 | Tooltip link remote là "Edit in Warp" (chuỗi tĩnh) thay vì "Edit on user@host" | `tooltip_text` của mọi link là `&'static str`; host đã có ở footer khi mở |
+| E17 | 2026-09-29 | Chuột phải có hai đường: (a) đang hover link remote → "Warp Sync: Edit in Warp" / "Download to local mirror" / "Copy path"; (b) bôi đen chữ trong block remote → thêm "Warp Sync: Edit in Warp" vào nhóm Warp Sync sẵn có | (b) phủ mọi tên file mà (a) không nhận diện |
+| E18 | 2026-09-29 | Bỏ `lang-perl`: C của grammar không biên dịch được với glibc/GCC mới (`bsearch` là macro `_Generic`) | Build hỏng trên toolchain hiện tại; 7 grammar còn lại đủ cho file cấu hình |
+| E19 | 2026-09-29 | Thêm **bộ chọn ngôn ngữ** ở footer mọi editor một file (nhãn = ngôn ngữ hiện tại hoặc "Plain text"; menu "Auto-detect" + 42 ngôn ngữ). Chọn = ghi `{ glob = <đường dẫn đúng file>, language }` lên đầu `code.editor.language_overrides` (thay lựa chọn cũ của cùng file); "Auto-detect" xoá nó | Một cơ chế duy nhất cho cả chọn tay và luật glob; lựa chọn được nhớ qua lần mở sau và sửa được trong file cấu hình |
+| E20 | 2026-09-29 | Thứ tự trong code: override (glob đầu tiên khớp, tên phải hỗ trợ) → tên file/đuôi → thư mục (chỉ cho `.conf` hoặc không đuôi) → shebang. File mở từ server khớp bằng đường dẫn trên server | Tương đương E4; áp dụng lại khi file load xong để đọc được dòng `#!`; chỉ đổi khi ngôn ngữ thực sự khác (tránh parse lại) |
+| E21 | 2026-09-29 | Đổi ngôn ngữ thì bỏ các cây cú pháp đã parse (`SyntaxTreeState::forget_parsed_state`); thêm `clear_language` cho "Plain text" | Cây parse bằng grammar cũ không dùng incremental với grammar mới được |
+| E22 | 2026-09-29 | File mở từ server: footer bỏ icon + dòng trạng thái LSP | Không có language server cho file cấu hình; dòng "Language support is unavailable" gây hiểu nhầm |
+| E14 | 2026-09-29 | Nút mở mirror nằm cố định ở phía phải tab bar (không vào `HeaderToolbarItemKind` cấu hình được), chỉ hiện khi flag `WarpSync` bật và pane active đang ở session remote; mở bằng editor chọn cho file link, nếu editor đó không mở được mirror thì mở VS Code (`code`); bỏ lỗi `NoEditor` | Người dùng muốn một cú bấm vào VS Code; thêm biến thể toolbar cấu hình được phải migrate cấu hình đã lưu |
 
 ### Nhật ký
 
@@ -307,3 +338,46 @@ agent (đi qua duyệt O2).
   ngôn ngữ, crate có sẵn nginx/ini/ssh-config…); nhận diện đường dẫn đang tắt cho block remote
   (`link_detection.rs:581`); upstream có `remote_server` (cài binary, chạy dưới user SSH) — không
   dùng (E7). Chưa code.
+- 2026-09-29 — Phase 1 + nút VS Code (Claude Opus 5.5). File mới: `warp_sync/remote_edit.rs`
+  (`RemoteEditModel`, `RemoteEditFile`, trạng thái Clean/Unsynced/Uploading/Failed),
+  `warp_sync/file_diff.rs` (`single_file_diff`, `upload_diff`) + test. Đổi: flag
+  `WarpSyncRemoteEdit` (DOGFOOD + cargo feature `warp_sync_remote_edit`); `Requester::RemoteEdit`,
+  `WarpSyncEvent::RemoteEditFinished`, `DownloadRequest.require_file`, `WarpSyncError::NotAFile`,
+  `PreparedUpload.diff`/`UploadSummary.diff`, `baseline::synced_content`; hộp thoại upload có mục
+  "Changes since the last sync"; `PathPromptKind::Edit`; palette "Warp Sync: Edit a remote file in
+  Warp…"; `LocalCodeEditorView` báo save cho model (E11); footer editor hiện
+  `user@host:path · trạng thái`; Workspace mở file bằng editor code của Warp theo
+  `open_file_layout`, upload qua session sống (E10); nút tab bar `Icon::Code2` (E14) + editor
+  fallback VS Code. Lệnh: `cargo nextest run -p warp --features warp_sync,warp_sync_remote_edit -E
+  'test(/warp_sync::|local_control::handlers::sync|agent_bridge::error/)'` → 426/426 pass (+ test
+  diff khi prepare: pass); `cargo clippy -p warp --features warp_sync,warp_sync_remote_edit
+  --all-targets --tests -- -D warnings` → sạch; `cargo check -p warp` (không feature) → OK;
+  `./script/format`. Chưa test tay: dừng ở ⛔ CHECKPOINT EA.
+- 2026-09-29 — CHECKPOINT EA: người dùng test đạt.
+- 2026-09-29 — Phase 2 (Claude Opus 5.5). 2.1: nhánh local của `scan_for_file_path` bỏ qua block remote
+  rồi kiểm từng ứng viên của `possible_file_paths_at_point` trên đĩa (luồng riêng), link lưu trong
+  `HighlightedLinkOption` (đồng bộ smart-select override), Cmd/Ctrl-click → `maybe_open_link`,
+  click thường → tooltip → `OpenGridLink` → `open_highlighted_link`. Nhánh remote chạy trước nhánh
+  local, đồng bộ, không I/O. Đổi: `GridHighlightedLink::RemoteFile(WithinModel<RemoteFileLink>)`
+  (session_id, remote_path, dòng/cột) + đủ các match; `remote_edit::remote_link_path`;
+  `TerminalView::remote_link_from_candidates` (E15); `RemoteEditStep::Open.line` → mở editor tại
+  dòng; `ContextMenuAction::WarpSyncEdit` (bôi đen) và `WarpSyncDownloadPath` (link); lock model
+  chỉ để đọc block/ứng viên rồi nhả trước khi xử lý. Lệnh: `cargo nextest run -p warp --features
+  warp_sync,warp_sync_remote_edit -E 'test(/link_detection|warp_sync::|local_control::handlers::sync|agent_bridge::error|terminal::view/)'`
+  → 797/797 pass; clippy `-D warnings` sạch; `cargo check -p warp` OK; `./script/format`. Dừng ở
+  ⛔ CHECKPOINT EB.
+- 2026-09-29 — Phase 3 (Claude Opus 5.5); người dùng chọn làm tiếp và test EB + EC một lượt. Đổi:
+  `Cargo.toml` bật `lang-nginx/ini/ssh-config/diff/awk/jinja2/caddy` (perl bỏ, E18);
+  `crates/languages`: 7 `grammars/*/config.yaml`, `SUPPORTED_LANGUAGES` 42, luật tên file/đuôi mới
+  (`nginx.conf`, `sshd_config`, `Caddyfile`, `.profile`…, `.ini/.cnf`, unit systemd, `.j2`,
+  `.awk`, `.diff/.patch`), `detect_language(_name)` (thư mục + shebang), `supported_language_name`,
+  `supported_language_names` (chỉ đọc yaml); `syntax_tree`: `clear_language`, `language()`, bỏ cây
+  khi đổi grammar; setting `code.editor.language_overrides` (`LanguageOverride { glob, language }`);
+  `code/language_overrides.rs` (`language_for_path`, `with_choice`, dùng lại `glob_matches` của O2);
+  `LocalCodeEditorView` áp ngôn ngữ khi load + xử lý chọn ở footer; footer có bộ chọn (E19) và ẩn LSP
+  cho file từ server (E22). Test: `languages`+`syntax_tree` 17/17 (cần `RUST_FONTCONFIG_DLOPEN=1`
+  khi build `languages` riêng), app 1292/1292 + settings 444/444; clippy `-p warp -p languages -p
+  syntax_tree … -D warnings` sạch; `cargo check -p warp` OK; `./script/format`. Dừng ở ⛔ CHECKPOINT
+  EB + EC.
+- 2026-09-29 — CHECKPOINT EB + EC: người dùng test đạt. Phase E xong, tick trong `ROADMAP.md`.
+  Việc tiếp theo: viết `G_GATEWAY_PLAN.md` (G1).

@@ -353,7 +353,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 - [ ] O0 Warp Sync — CHECKPOINT E
 - [x] O1 Agent Bridge v1 (theo plan riêng, gồm D11, D12; xong 2026-09-27, CHECKPOINT A–D, thêm Phase 5: `exec_visible` + bản release) · [x] gate O1 (CHECKPOINT B đạt gồm 5.B.8 client MCP thứ hai; độ trễ 0,183 s/lệnh ở CHECKPOINT A)
 - [x] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`; xong 2026-09-29, CHECKPOINT P1–P3 đạt, gồm fix toast pairing P28) · [ ] gate O2 (≥ 1 tuần dùng hằng ngày trên host lab: 2026-09-29 → sớm nhất 2026-10-06)
-- [ ] E sửa file từ xa ngay trong Warp (plan: `specs/agent-ops/E_REMOTE_EDIT_PLAN.md`) · [ ] E1 luồng Edit in Warp · [ ] E2 bấm đường dẫn trong output SSH · [ ] E3 tô màu file cấu hình hệ thống
+- [x] E sửa file từ xa ngay trong Warp (plan: `specs/agent-ops/E_REMOTE_EDIT_PLAN.md`; xong 2026-09-29, CHECKPOINT EA–EC đạt; flag `WarpSyncRemoteEdit`, cargo feature `warp_sync_remote_edit`) · [x] E1 luồng Edit in Warp (+ nút tab bar mở mirror trong VS Code) · [x] E2 bấm đường dẫn trong output SSH (hover, Cmd/Ctrl-click, chuột phải) · [x] E3 tô màu file cấu hình hệ thống (7 grammar, bộ chọn ngôn ngữ ở footer, `code.editor.language_overrides`)
 - [ ] G1 danh bạ server (G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, chưa viết)
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
