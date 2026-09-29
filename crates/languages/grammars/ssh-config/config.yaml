@@ -1,0 +1,4 @@
+display_name: "SSH Config"
+indent_unit:
+  space: 4
+comment_prefix: "#"

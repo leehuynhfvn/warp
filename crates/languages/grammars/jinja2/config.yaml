@@ -1,0 +1,10 @@
+display_name: "Jinja2"
+indent_unit:
+  space: 2
+brackets:
+  - start: "{"
+    end: "}"
+  - start: "("
+    end: ")"
+  - start: "["
+    end: "]"

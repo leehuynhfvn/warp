@@ -105,10 +105,38 @@ impl SyntaxTreeState {
     }
 
     pub fn set_language(&mut self, language: Arc<Language>) {
+        let is_switch = self
+            .language_queries
+            .as_ref()
+            .is_some_and(|queries| !Arc::ptr_eq(&queries.language, &language));
+        if is_switch {
+            self.forget_parsed_state();
+        }
         self.language_queries = Some(LanguageQueries {
             syntax_query: HighlightQuery::new(&language.highlight_query, self.color_map),
             language,
         });
+    }
+
+    /// Drops the language, so that the buffer is shown as plain text.
+    pub fn clear_language(&mut self) {
+        self.language_queries = None;
+        self.forget_parsed_state();
+    }
+
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language_queries
+            .as_ref()
+            .map(|queries| &queries.language)
+    }
+
+    /// Trees parsed with one grammar cannot be reparsed incrementally with another.
+    fn forget_parsed_state(&mut self) {
+        if let Some(handle) = self.parsing_handle.take() {
+            handle.abort();
+        }
+        self.syntax_tree.lock().clear();
+        *self.highlight_cache.borrow_mut() = None;
     }
 
     pub fn has_supported_highlighting(&self) -> bool {

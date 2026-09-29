@@ -18,7 +18,7 @@ lazy_static! {
     static ref LANGUAGE_REGISTRY: LanguageRegistry = LanguageRegistry::new();
 }
 
-pub const SUPPORTED_LANGUAGES: [&str; 35] = [
+pub const SUPPORTED_LANGUAGES: [&str; 42] = [
     "rust",
     "golang",
     "yaml",
@@ -54,6 +54,13 @@ pub const SUPPORTED_LANGUAGES: [&str; 35] = [
     "dockerfile",
     "nix",
     "markdown",
+    "nginx",
+    "ini",
+    "ssh-config",
+    "diff",
+    "awk",
+    "jinja2",
+    "caddy",
 ];
 
 /// Registry that holds all of the supported languages.
@@ -118,6 +125,10 @@ fn normalize_language_name(name: &str) -> &str {
         "kt" => "kotlin",
         "docker" | "containerfile" => "dockerfile",
         "md" => "markdown",
+        "j2" | "jinja" => "jinja2",
+        "patch" => "diff",
+        "ssh_config" | "sshconfig" => "ssh-config",
+        "caddyfile" => "caddy",
         other => other,
     }
 }
@@ -131,73 +142,176 @@ fn language_by_filename_parts(
     filename: Option<&str>,
     extension: Option<&str>,
 ) -> Option<Arc<Language>> {
+    language_name_by_filename_parts(filename, extension).and_then(language_by_name)
+}
+
+/// The language for a file name and extension, when either is specific enough on its own.
+fn language_name_by_filename_parts(
+    filename: Option<&str>,
+    extension: Option<&str>,
+) -> Option<&'static str> {
     // First check for specific filenames that don't use extensions.
     if let Some(filename) = filename {
         match filename {
             // Bash config files
-            ".bashrc" | ".bash_profile" => {
-                return language_by_name("shell");
+            ".bashrc" | ".bash_profile" | ".bash_aliases" | ".bash_logout" | ".profile" => {
+                return Some("shell");
             }
             // ZSH config files
             ".zshrc" | ".zsh_profile" | ".zprofile" => {
-                return language_by_name("shell");
+                return Some("shell");
             }
             // Bazel build files
             "BUILD" | "WORKSPACE" => {
-                return language_by_name("starlark");
+                return Some("starlark");
             }
             // Dockerfiles
             "Dockerfile" | "Containerfile" | "dockerfile" | "containerfile" => {
-                return language_by_name("dockerfile");
+                return Some("dockerfile");
             }
+            "nginx.conf" => return Some("nginx"),
+            "sshd_config" | "ssh_config" => return Some("ssh-config"),
+            "Caddyfile" => return Some("caddy"),
             _ => {
                 // Also match Dockerfile variants like Dockerfile.dev, Dockerfile.prod
                 if filename.starts_with("Dockerfile.") || filename.starts_with("Containerfile.") {
-                    return language_by_name("dockerfile");
+                    return Some("dockerfile");
                 }
             }
         }
     }
 
     let extension = extension?;
+    let name = match extension {
+        "rs" => "rust",
+        "go" => "golang",
+        "yml" | "yaml" => "yaml",
+        "py" | "py3" | "pyw" | "pyi" => "python",
+        "js" | "cjs" | "mjs" => "javascript",
+        "jsx" => "jsx",
+        "tsx" => "tsx",
+        "ts" | "cts" | "mts" => "typescript",
+        "java" | "groovy" | "gvy" | "gy" | "gsh" => "java",
+        "cpp" | "cxx" | "cc" | "h" | "hh" | "hpp" | "hxx" | "H" | "h++" => "cpp",
+        "sh" | "zsh" | "bash" | "command" => "shell",
+        "cs" => "csharp",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "c" => "c",
+        "json" => "json",
+        "jq" => "jq",
+        "tf" | "hcl" | "tfvars" => "hcl",
+        "lua" => "lua",
+        "nix" => "nix",
+        "rb" => "ruby",
+        "php" | "phtml" => "php",
+        "toml" => "toml",
+        "swift" => "swift",
+        "kt" | "kts" => "kotlin",
+        "scala" | "sbt" | "sc" => "scala",
+        "ps1" | "pwsh" => "powershell",
+        "ex" | "exs" => "elixir",
+        "sql" => "sql",
+        "bzl" | "bazel" => "starlark",
+        "m" | "mm" => "objective-c",
+        "xml" => "xml",
+        "vue" => "vue",
+        "dockerfile" => "dockerfile",
+        "md" | "markdown" => "markdown",
+        // `.conf` is left out on purpose: nginx, Apache, HAProxy and many others share it.
+        "ini" | "cnf" => "ini",
+        // systemd units
+        "service" | "timer" | "socket" | "mount" | "automount" | "target" | "path" | "slice"
+        | "network" | "netdev" | "link" => "ini",
+        "j2" | "jinja" | "jinja2" => "jinja2",
+        "awk" => "awk",
+        "diff" | "patch" => "diff",
+        _ => return None,
+    };
+    Some(name)
+}
+
+/// Finds the language of a file from its path, which may be a path on another machine, and, for
+/// a file that neither its name nor its folder identifies, from its first line (a `#!` line).
+pub fn detect_language(path: &str, first_line: Option<&str>) -> Option<Arc<Language>> {
+    detect_language_name(path, first_line).and_then(language_by_name)
+}
+
+/// The internal name of the language [`detect_language`] finds.
+pub fn detect_language_name(path: &str, first_line: Option<&str>) -> Option<&'static str> {
+    let path = path.replace('\\', "/");
+    let filename = path.rsplit('/').next().filter(|name| !name.is_empty());
+    let extension = filename.and_then(|name| {
+        let (stem, extension) = name.rsplit_once('.')?;
+        (!stem.is_empty()).then_some(extension)
+    });
+    language_name_by_filename_parts(filename, extension)
+        .or_else(|| language_name_by_folder(&path, extension))
+        .or_else(|| first_line.and_then(language_name_by_shebang))
+}
+
+/// Files that only their folder identifies: `.conf` files, and files without an extension, of
+/// programs that keep their configuration in a folder of their own.
+fn language_name_by_folder(path: &str, extension: Option<&str>) -> Option<&'static str> {
+    let in_folder = |folder: &str| path.contains(folder);
     match extension {
-        "rs" => language_by_name("rust"),
-        "go" => language_by_name("golang"),
-        "yml" | "yaml" => language_by_name("yaml"),
-        "py" | "py3" | "pyw" | "pyi" => language_by_name("python"),
-        "js" | "cjs" | "mjs" => language_by_name("javascript"),
-        "jsx" => language_by_name("jsx"),
-        "tsx" => language_by_name("tsx"),
-        "ts" | "cts" | "mts" => language_by_name("typescript"),
-        "java" | "groovy" | "gvy" | "gy" | "gsh" => language_by_name("java"),
-        "cpp" | "cxx" | "cc" | "h" | "hh" | "hpp" | "hxx" | "H" | "h++" => language_by_name("cpp"),
-        "sh" | "zsh" | "bash" | "command" => language_by_name("shell"),
-        "cs" => language_by_name("csharp"),
-        "html" | "htm" => language_by_name("html"),
-        "css" => language_by_name("css"),
-        "c" => language_by_name("c"),
-        "json" => language_by_name("json"),
-        "jq" => language_by_name("jq"),
-        "tf" | "hcl" | "tfvars" => language_by_name("hcl"),
-        "lua" => language_by_name("lua"),
-        "nix" => language_by_name("nix"),
-        "rb" => language_by_name("ruby"),
-        "php" | "phtml" => language_by_name("php"),
-        "toml" => language_by_name("toml"),
-        "swift" => language_by_name("swift"),
-        "kt" | "kts" => language_by_name("kotlin"),
-        "scala" | "sbt" | "sc" => language_by_name("scala"),
-        "ps1" | "pwsh" => language_by_name("powershell"),
-        "ex" | "exs" => language_by_name("elixir"),
-        "sql" => language_by_name("sql"),
-        "bzl" | "bazel" => language_by_name("starlark"),
-        "m" | "mm" => language_by_name("objective-c"),
-        "xml" => language_by_name("xml"),
-        "vue" => language_by_name("vue"),
-        "dockerfile" => language_by_name("dockerfile"),
-        "md" | "markdown" => language_by_name("markdown"),
+        Some("conf") if in_folder("/nginx/") => Some("nginx"),
+        Some("conf") if in_folder("/sshd_config.d/") || in_folder("/ssh_config.d/") => {
+            Some("ssh-config")
+        }
+        Some("conf") if in_folder("/systemd/") => Some("ini"),
+        None if in_folder("/nginx/sites-available/")
+            || in_folder("/nginx/sites-enabled/")
+            || in_folder("/nginx/conf.d/") =>
+        {
+            Some("nginx")
+        }
         _ => None,
     }
+}
+
+/// The language of a script from its `#!` line, e.g. `#!/bin/bash` or `#!/usr/bin/env python3`.
+fn language_name_by_shebang(first_line: &str) -> Option<&'static str> {
+    let command = first_line.strip_prefix("#!")?;
+    let mut words = command.split_whitespace();
+    let mut program = words.next()?.rsplit('/').next()?;
+    if program == "env" {
+        program = words.find(|word| !word.starts_with('-'))?;
+    }
+    let program = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    match program {
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "ash" => Some("shell"),
+        "python" => Some("python"),
+        "ruby" => Some("ruby"),
+        "node" | "nodejs" => Some("javascript"),
+        "php" => Some("php"),
+        "lua" => Some("lua"),
+        "awk" | "gawk" | "mawk" | "nawk" => Some("awk"),
+        _ => None,
+    }
+}
+
+/// The internal name of a supported language, given that name or one of its aliases, e.g. `bash`.
+pub fn supported_language_name(name: &str) -> Option<&'static str> {
+    let normalized = normalize_language_name(name);
+    SUPPORTED_LANGUAGES
+        .iter()
+        .copied()
+        .find(|supported| *supported == normalized)
+}
+
+/// Every supported language as `(internal name, display name)`, sorted by display name. Only the
+/// configuration files are read; no grammar is loaded.
+pub fn supported_language_names() -> Vec<(&'static str, String)> {
+    let mut names: Vec<(&'static str, String)> = SUPPORTED_LANGUAGES
+        .iter()
+        .map(|name| {
+            let config = load_yaml(&[name, "config.yaml"].join("\\"));
+            (*name, config.display_name)
+        })
+        .collect();
+    names.sort_by_key(|(_, display_name)| display_name.to_lowercase());
+    names
 }
 
 /// Captures the language-specific parser grammar and queries for syntax features like highlighting and
@@ -294,6 +408,13 @@ fn get_arborium_highlight_query(lang: &str) -> Option<&str> {
         "vue" => Some(&arborium::lang_vue::HIGHLIGHTS_QUERY),
         "dockerfile" => Some(arborium::lang_dockerfile::HIGHLIGHTS_QUERY),
         "markdown" => Some(arborium::lang_markdown::HIGHLIGHTS_QUERY),
+        "nginx" => Some(arborium::lang_nginx::HIGHLIGHTS_QUERY),
+        "ini" => Some(arborium::lang_ini::HIGHLIGHTS_QUERY),
+        "ssh-config" => Some(arborium::lang_ssh_config::HIGHLIGHTS_QUERY),
+        "diff" => Some(arborium::lang_diff::HIGHLIGHTS_QUERY),
+        "awk" => Some(arborium::lang_awk::HIGHLIGHTS_QUERY),
+        "jinja2" => Some(arborium::lang_jinja2::HIGHLIGHTS_QUERY),
+        "caddy" => Some(arborium::lang_caddy::HIGHLIGHTS_QUERY),
         _ => None,
     }
 }

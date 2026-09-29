@@ -1,0 +1,7 @@
+display_name: "INI"
+indent_unit:
+  space: 4
+comment_prefix: "#"
+brackets:
+  - start: "["
+    end: "]"
