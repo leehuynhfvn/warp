@@ -132,6 +132,26 @@ fn record_upload_with(
     Ok(BaselineOutcome::Recorded)
 }
 
+/// The content `remote_path` had when it was last synced, from the baseline under `host_dir`.
+/// `None` when there is no baseline, the file is not in it, or `git` cannot be run; nothing is
+/// created.
+pub fn synced_content(host_dir: &Path, remote_path: &str) -> Option<Vec<u8>> {
+    synced_content_with(GIT_PROGRAM, host_dir, remote_path)
+}
+
+fn synced_content_with(program: &str, host_dir: &Path, remote_path: &str) -> Option<Vec<u8>> {
+    let git = Git::new(program, host_dir);
+    if !git.git_dir.is_dir() {
+        return None;
+    }
+    let object = format!("HEAD:{}", relative_path(remote_path));
+    let command = git.command(&["cat-file", "blob", &object]);
+    match git.execute_raw(command, None) {
+        Ok(output) if output.status.success() => Some(output.stdout),
+        Ok(_) | Err(GitFailure::NotInstalled) | Err(GitFailure::Failed(_)) => None,
+    }
+}
+
 /// A commit message that names the synced path without letting it add lines.
 pub fn commit_message(action: &str, remote_path: &str, remote_user: &str) -> String {
     format!(

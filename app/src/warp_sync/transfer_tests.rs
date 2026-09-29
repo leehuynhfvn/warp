@@ -156,6 +156,7 @@ impl Env {
             mirror_root: self.mirror_root(),
             limits: SyncLimits::default(),
             allow_overwrite_local_changes,
+            require_file: false,
         }
     }
 
@@ -327,6 +328,29 @@ fn download_and_upload_keep_the_git_baseline_at_what_the_server_has() {
 }
 
 #[test]
+fn preparing_the_upload_of_one_edited_file_carries_its_diff_and_a_folder_has_none() {
+    let env = Env::new();
+    env.download_done();
+    fs::write(env.local("a.conf"), "edited a").unwrap();
+    let file_request = UploadRequest {
+        remote_path: format!("{}/a.conf", env.remote_path),
+        ..env.upload_request()
+    };
+
+    let prepared = block_on(prepare_upload(&env.shell, &file_request)).unwrap();
+
+    assert_eq!(
+        prepared.diff,
+        Some(vec![
+            "@@ -1 +1 @@".to_owned(),
+            "-remote a".to_owned(),
+            "+edited a".to_owned(),
+        ])
+    );
+    assert_eq!(env.prepare().diff, None);
+}
+
+#[test]
 fn download_of_a_single_file() {
     let env = Env::new();
     let request = DownloadRequest {
@@ -338,6 +362,37 @@ fn download_of_a_single_file() {
 
     assert!(matches!(result, DownloadResult::Done(ref outcome) if outcome.files == 1));
     assert_eq!(fs::read_to_string(env.local("a.conf")).unwrap(), "remote a");
+}
+
+#[test]
+fn a_download_that_requires_a_file_refuses_a_folder_before_anything_is_written() {
+    let env = Env::new();
+    let request = DownloadRequest {
+        require_file: true,
+        ..env.download_request(false)
+    };
+
+    let result = block_on(download(&env.shell, &request));
+
+    assert!(
+        matches!(&result, Err(WarpSyncError::NotAFile(path)) if *path == env.remote_path),
+        "{result:?}"
+    );
+    assert!(!env.mirror_root().join(HOST_KEY).exists());
+}
+
+#[test]
+fn a_download_that_requires_a_file_accepts_one() {
+    let env = Env::new();
+    let request = DownloadRequest {
+        remote_path: format!("{}/a.conf", env.remote_path),
+        require_file: true,
+        ..env.download_request(false)
+    };
+
+    let result = block_on(download(&env.shell, &request));
+
+    assert!(matches!(result, Ok(DownloadResult::Done(ref outcome)) if outcome.is_file));
 }
 
 #[test]

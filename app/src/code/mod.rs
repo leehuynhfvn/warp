@@ -23,6 +23,7 @@ pub mod editor;
 pub mod editor_management;
 pub mod global_buffer_model;
 pub mod inline_diff;
+pub mod language_overrides;
 #[cfg(feature = "local_fs")]
 pub mod language_server_shutdown_manager;
 #[cfg(not(target_family = "wasm"))]

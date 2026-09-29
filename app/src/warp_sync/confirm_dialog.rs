@@ -199,6 +199,9 @@ fn upload_body(summary: &UploadSummary) -> String {
             }
         }
     }
+    if let Some(diff) = &summary.diff {
+        sections.push(diff_section(diff));
+    }
     sections.extend(risk_sections(summary));
     if !summary.missing_locally.is_empty() {
         sections.push(format!(
@@ -221,6 +224,14 @@ fn upload_body(summary: &UploadSummary) -> String {
         );
     }
     sections.join("\n\n")
+}
+
+fn diff_section(diff: &[String]) -> String {
+    if diff.is_empty() {
+        return "No changes since the last sync.".to_owned();
+    }
+    let lines: Vec<String> = diff.iter().map(|line| printable(line)).collect();
+    format!("Changes since the last sync:\n{}", lines.join("\n"))
 }
 
 fn risk_sections(summary: &UploadSummary) -> Vec<String> {

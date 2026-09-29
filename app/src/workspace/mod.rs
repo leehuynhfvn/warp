@@ -72,6 +72,7 @@ use crate::workspace::view::{
     TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
     TOGGLE_RIGHT_PANEL_BINDING_NAME, TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME,
     TOGGLE_VERTICAL_TABS_PANEL_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    WARP_SYNC_OPEN_MIRROR_IN_EDITOR_BINDING_NAME,
 };
 
 pub fn init(app: &mut AppContext) {
@@ -406,12 +407,21 @@ pub fn init(app: &mut AppContext) {
             )
             .with_context_predicate(id!("Workspace")),
             EditableBinding::new(
-                "workspace:warp_sync_open_mirror_in_editor",
+                WARP_SYNC_OPEN_MIRROR_IN_EDITOR_BINDING_NAME,
                 "Warp Sync: Open local mirror in external editor",
                 WorkspaceAction::WarpSyncOpenMirrorInEditor,
             )
             .with_context_predicate(id!("Workspace")),
         ]);
+    }
+
+    if crate::warp_sync::remote_edit::is_enabled() {
+        app.register_editable_bindings([EditableBinding::new(
+            "workspace:warp_sync_edit_remote_file",
+            "Warp Sync: Edit a remote file in Warp…",
+            WorkspaceAction::WarpSyncEditRemoteFile,
+        )
+        .with_context_predicate(id!("Workspace"))]);
     }
 
     if FeatureFlag::AgentBridge.is_enabled() {

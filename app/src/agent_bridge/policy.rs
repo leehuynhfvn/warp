@@ -299,7 +299,7 @@ fn ask_or_deny_for_length(request: PolicyRequest<'_>) -> Decision {
 
 /// Minimal glob: `*` matches any run of characters (including none, including `/`), `?` matches
 /// exactly one character. No other syntax is special.
-fn glob_matches(pattern: &str, text: &str, case_insensitive: bool) -> bool {
+pub(crate) fn glob_matches(pattern: &str, text: &str, case_insensitive: bool) -> bool {
     let normalize = |value: &str| {
         if case_insensitive {
             value.to_lowercase()

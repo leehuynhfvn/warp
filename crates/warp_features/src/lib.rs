@@ -1006,6 +1006,10 @@ pub enum FeatureFlag {
     /// uploads edits back through the active remote session.
     WarpSync,
 
+    /// Gates editing a single remote file in Warp's own editor on top of Warp Sync: saving uploads
+    /// it through the session that opened it. Only takes effect together with `WarpSync`.
+    WarpSyncRemoteEdit,
+
     /// Gates the Agent Bridge, which lets an external agent run commands and read and write files
     /// in a remote session the user attached, through local control.
     AgentBridge,
@@ -1092,6 +1096,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::LrcActivitySignal,
     FeatureFlag::StoredScreenshots,
     FeatureFlag::WarpSync,
+    FeatureFlag::WarpSyncRemoteEdit,
     FeatureFlag::AgentBridge,
 ];
 

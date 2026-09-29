@@ -1,6 +1,25 @@
 use settings::macros::define_settings_group;
 use settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
 
+/// A language to highlight files with, for the files whose path matches `glob`.
+#[derive(
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Eq,
+    Clone,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+pub struct LanguageOverride {
+    /// `*` matches any run of characters, `/` included; `?` matches one character. Files opened
+    /// from a server with Warp Sync are matched by their path on the server.
+    pub glob: String,
+    /// One of the language names Warp supports, e.g. `ini`, `shell`, `nginx`.
+    pub language: String,
+}
+
 define_settings_group!(CodeSettings, settings: [
     code_as_default_editor: CodeAsDefaultEditor {
         type: bool,
@@ -99,5 +118,17 @@ define_settings_group!(CodeSettings, settings: [
         private: false,
         toml_path: "code.editor.auto_save",
         description: "Whether the Warp text editor automatically saves changes as you type and when the editor loses focus.",
+    },
+    // Languages chosen for files that Warp does not recognize, or recognizes wrongly. The first
+    // matching entry wins; the language picker in the editor footer adds entries at the front.
+    language_overrides: LanguageOverrides {
+        type: Vec<LanguageOverride>,
+        default: Vec::new(),
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "code.editor.language_overrides",
+        description: "Languages to highlight files with, by path glob, e.g. { glob = \"/etc/haproxy/*.cfg\", language = \"ini\" }.",
     },
 ]);

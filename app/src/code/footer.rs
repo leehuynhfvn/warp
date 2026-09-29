@@ -19,9 +19,9 @@ use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill, WarpTheme};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    Dismiss, Empty, Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect,
-    Shrinkable, Stack,
+    Dismiss, Empty, Expanded, Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize,
+    MouseStateHandle, OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
+    Radius, Rect, Shrinkable, Stack,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
@@ -36,17 +36,24 @@ use crate::ai::persisted_workspace::{
     LSPEnablementResultForFile, LspRepoStatus, PersistedWorkspace,
 };
 use crate::code::lsp_telemetry::{LspControlActionType, LspEnablementSource, LspTelemetryEvent};
+#[cfg(feature = "local_fs")]
+use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields};
 use crate::settings::AISettings;
 use crate::ui_components::blended_colors;
-#[cfg(feature = "local_fs")]
 use crate::user_config::is_tab_config_toml;
 use crate::view_components::action_button::{
     ActionButton, ButtonSize, NakedTheme, PaneHeaderTheme,
 };
+use crate::warp_sync::remote_edit::{self, RemoteEditEvent, RemoteEditModel, RemoteEditState};
 
 const FOOTER_HEIGHT: f32 = 24.;
 /// Margin around the LSP icon container
 const ICON_MARGIN: f32 = 4.;
+const REMOTE_EDIT_STATUS_MARGIN: f32 = 12.;
+const PLAIN_TEXT_LABEL: &str = "Plain text";
+const AUTO_DETECT_LABEL: &str = "Auto-detect";
+const LANGUAGE_MENU_WIDTH: f32 = 200.;
+const LANGUAGE_MENU_HEIGHT: f32 = 320.;
 const INDICATOR_SIZE: f32 = 8.;
 
 #[derive(Default)]
@@ -132,6 +139,9 @@ impl FooterMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CodeFooterViewAction {
+    ToggleLanguageMenu,
+    /// `None` goes back to recognizing the language from the file.
+    ChooseLanguage(Option<&'static str>),
     CloseMenu,
     #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
     ToggleMenu,
@@ -210,6 +220,15 @@ pub struct CodeFooterView {
     is_lsp_menu_open: bool,
     /// Whether to render the top border. Disabled for code review footer.
     show_border: bool,
+    /// Only a single file's footer has one.
+    language_picker: Option<LanguagePicker>,
+}
+
+/// The language the file is highlighted with, and a menu to choose another.
+struct LanguagePicker {
+    button: ViewHandle<ActionButton>,
+    menu: ViewHandle<Menu<CodeFooterViewAction>>,
+    is_open: bool,
 }
 
 /// Wraps the per-server-type status map and enforces a single invariant on
@@ -339,6 +358,95 @@ impl CodeFooterView {
         })
     }
 
+    fn create_language_picker(ctx: &mut ViewContext<Self>) -> LanguagePicker {
+        let button = ctx.add_typed_action_view(|_| {
+            ActionButton::new(PLAIN_TEXT_LABEL, NakedTheme)
+                .with_size(ButtonSize::Small)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(CodeFooterViewAction::ToggleLanguageMenu);
+                })
+        });
+        let menu = ctx.add_typed_action_view(|_| {
+            Menu::new()
+                .prevent_interaction_with_other_elements()
+                .with_drop_shadow()
+                .with_width(LANGUAGE_MENU_WIDTH)
+        });
+        ctx.subscribe_to_view(&menu, |me, _, event, ctx| {
+            if let MenuEvent::Close { .. } = event
+                && let Some(picker) = &mut me.language_picker
+            {
+                picker.is_open = false;
+                ctx.notify();
+            }
+        });
+        LanguagePicker {
+            button,
+            menu,
+            is_open: false,
+        }
+    }
+
+    /// Shows which language the file is highlighted with; `None` for plain text.
+    pub fn set_language(&mut self, display_name: Option<&str>, ctx: &mut ViewContext<Self>) {
+        let Some(picker) = &self.language_picker else {
+            return;
+        };
+        let label = display_name.unwrap_or(PLAIN_TEXT_LABEL).to_owned();
+        picker
+            .button
+            .update(ctx, |button, ctx| button.set_label(label, ctx));
+        ctx.notify();
+    }
+
+    fn toggle_language_menu(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(picker) = &mut self.language_picker else {
+            return;
+        };
+        picker.is_open = !picker.is_open;
+        if picker.is_open {
+            let items =
+                std::iter::once(
+                    MenuItemFields::new(AUTO_DETECT_LABEL)
+                        .with_on_select_action(CodeFooterViewAction::ChooseLanguage(None))
+                        .into_item(),
+                )
+                .chain(std::iter::once(MenuItem::Separator))
+                .chain(languages::supported_language_names().into_iter().map(
+                    |(name, display_name)| {
+                        MenuItemFields::new(display_name)
+                            .with_on_select_action(CodeFooterViewAction::ChooseLanguage(Some(name)))
+                            .into_item()
+                    },
+                ))
+                .collect::<Vec<_>>();
+            picker.menu.update(ctx, |menu, ctx| {
+                menu.set_height(LANGUAGE_MENU_HEIGHT);
+                menu.set_items(items, ctx);
+            });
+        }
+        ctx.notify();
+    }
+
+    fn render_language_picker(&self) -> Option<Box<dyn Element>> {
+        let picker = self.language_picker.as_ref()?;
+        let button = ChildView::new(&picker.button).finish();
+        if !picker.is_open {
+            return Some(button);
+        }
+        let mut stack = Stack::new().with_child(button);
+        stack.add_positioned_child(
+            ChildView::new(&picker.menu).finish(),
+            OffsetPositioning::offset_from_parent(
+                vec2f(0., -2.),
+                ParentOffsetBounds::WindowByPosition,
+                ParentAnchor::TopRight,
+                ChildAnchor::BottomRight,
+            ),
+        );
+        Some(stack.finish())
+    }
+
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn new(path: PathBuf, ctx: &mut ViewContext<Self>) -> Self {
         let lsp_status_button = Self::create_lsp_status_button(true, ctx);
@@ -353,6 +461,7 @@ impl CodeFooterView {
                 tab_config_skill_button: Some(tab_config_skill_button),
                 is_lsp_menu_open: false,
                 show_border: true,
+                language_picker: None,
             };
             footer.sync_tab_config_skill_button(ctx);
             ctx.subscribe_to_model(&AISettings::handle(ctx), |me, _, _, ctx| {
@@ -436,6 +545,16 @@ impl CodeFooterView {
         #[cfg(not(feature = "local_fs"))]
         let initial_status = LspRepoStatus::CheckingForInstallation;
 
+        if remote_edit::is_enabled() {
+            ctx.subscribe_to_model(&RemoteEditModel::handle(ctx), |me, _, event, ctx| {
+                if let RemoteEditEvent::StateChanged { local_path } = event
+                    && matches!(&me.mode, FooterMode::SingleFile { path, .. } if path == local_path)
+                {
+                    ctx.notify();
+                }
+            });
+        }
+
         Self {
             mode: FooterMode::SingleFile {
                 path,
@@ -449,6 +568,7 @@ impl CodeFooterView {
             enable_lsp_button,
             tab_config_skill_button: None,
             show_border: true,
+            language_picker: Some(Self::create_language_picker(ctx)),
         }
     }
 
@@ -583,6 +703,7 @@ impl CodeFooterView {
             enable_lsp_button: None,
             tab_config_skill_button: None,
             show_border: false,
+            language_picker: None,
         };
 
         // Populate initial servers from the manager
@@ -1447,6 +1568,44 @@ impl CodeFooterView {
         element.finish()
     }
 
+    /// Where a file opened from a server lives there, and whether saving has uploaded it.
+    fn render_remote_edit_status(
+        &self,
+        theme: &WarpTheme,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        if !remote_edit::is_enabled() {
+            return None;
+        }
+        let FooterMode::SingleFile { path, .. } = &self.mode else {
+            return None;
+        };
+        let file = RemoteEditModel::as_ref(app).get(path)?;
+        let font_color = match file.state() {
+            RemoteEditState::Failed(_) => theme.ui_error_color(),
+            RemoteEditState::Clean | RemoteEditState::Unsynced | RemoteEditState::Uploading => {
+                internal_colors::text_sub(theme, theme.background())
+            }
+        };
+        let text = appearance
+            .ui_builder()
+            .span(file.status_line())
+            .with_style(UiComponentStyles {
+                font_family_id: Some(appearance.ui_font_family()),
+                font_color: Some(font_color),
+                font_size: Some(12.0),
+                ..Default::default()
+            })
+            .build()
+            .finish();
+        Some(
+            Container::new(text)
+                .with_margin_left(REMOTE_EDIT_STATUS_MARGIN)
+                .finish(),
+        )
+    }
+
     fn render_status_text(
         theme: &WarpTheme,
         appearance: &Appearance,
@@ -1668,6 +1827,10 @@ impl CodeFooterView {
 #[derive(Clone)]
 #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
 pub enum CodeFooterViewEvent {
+    /// `None` goes back to recognizing the language from the file.
+    ChooseLanguage {
+        language: Option<&'static str>,
+    },
     RunTabConfigSkill {
         path: PathBuf,
     },
@@ -1741,6 +1904,9 @@ impl View for CodeFooterView {
                         .finish(),
                 );
             }
+        } else if let Some(remote_status) = self.render_remote_edit_status(theme, appearance, app) {
+            // No language server applies to a file opened from a server.
+            footer_content.add_child(Shrinkable::new(1., remote_status).finish());
         } else {
             footer_content.add_child(self.render_lsp_icon(appearance, app));
 
@@ -1765,6 +1931,11 @@ impl View for CodeFooterView {
                         .finish(),
                 );
             }
+        }
+
+        if let Some(language_picker) = self.render_language_picker() {
+            footer_content.add_child(Expanded::new(1., Empty::new().finish()).finish());
+            footer_content.add_child(language_picker);
         }
 
         let mut container = Container::new(
@@ -1793,6 +1964,16 @@ impl TypedActionView for CodeFooterView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            CodeFooterViewAction::ToggleLanguageMenu => self.toggle_language_menu(ctx),
+            CodeFooterViewAction::ChooseLanguage(language) => {
+                if let Some(picker) = &mut self.language_picker {
+                    picker.is_open = false;
+                }
+                ctx.emit(CodeFooterViewEvent::ChooseLanguage {
+                    language: *language,
+                });
+                ctx.notify();
+            }
             CodeFooterViewAction::ToggleMenu => {
                 self.is_lsp_menu_open = !self.is_lsp_menu_open;
                 ctx.notify();

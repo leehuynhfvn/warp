@@ -33,8 +33,10 @@ fn pending_download(host_key: &str, remote_path: &str) -> PendingDownload {
             mirror_root: PathBuf::from("/mirror"),
             limits: SyncLimits::default(),
             allow_overwrite_local_changes: false,
+            require_file: false,
         },
         window_id: WindowId::new(),
+        edit: None,
     }
 }
 
@@ -66,9 +68,11 @@ fn pending_upload(host_key: &str, remote_path: &str) -> PendingUpload {
             remote_path: remote_path.to_owned(),
             host_key: host_key.to_owned(),
             mirror_root: PathBuf::from("/mirror"),
+            diff: None,
         },
         key: (host_key.to_owned(), remote_path.to_owned()),
         window_id: WindowId::new(),
+        edit: None,
     }
 }
 
@@ -878,5 +882,87 @@ fn too_many_operations_waiting_for_clients_are_refused_and_release_their_path() 
                 "the refused path is free"
             );
         });
+    });
+}
+
+fn save_step() -> RemoteEditStep {
+    RemoteEditStep::Save {
+        local_path: PathBuf::from("/mirror/prod-1/etc/nginx/nginx.conf"),
+    }
+}
+
+#[test]
+fn an_upload_from_the_editor_waits_for_the_window_dialog_and_cancelling_returns_its_step() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+
+        await_upload(
+            &mut app,
+            &model,
+            Requester::RemoteEdit {
+                window_id,
+                step: save_step(),
+            },
+        );
+
+        let id = match events.borrow().as_slice() {
+            [
+                WarpSyncEvent::UploadNeedsConfirmation {
+                    window_id: event_window,
+                    id,
+                    ..
+                },
+            ] if *event_window == window_id => *id,
+            events => panic!("expected one upload confirmation, got {events:?}"),
+        };
+        model.update(&mut app, |model, _| {
+            assert!(model.external_pending.is_empty());
+            assert_eq!(model.cancel_pending(id), Some(save_step()));
+            assert!(model.try_begin_sync("prod-1", "/etc/nginx").is_ok());
+        });
+    });
+}
+
+#[test]
+fn a_window_upload_cancels_without_an_editing_step() {
+    let mut model = WarpSyncModel::new();
+    let id = model.next_pending_id();
+    model
+        .pending_uploads
+        .insert(id, pending_upload("prod-1", "/etc/nginx"));
+
+    assert_eq!(model.cancel_pending(id), None);
+}
+
+#[test]
+fn an_editor_operation_is_reported_to_its_window_and_then_as_finished_editing() {
+    warpui::App::test((), |mut app| async move {
+        let model = app.add_model(|_| WarpSyncModel::new());
+        let events = collect_events(&mut app, &model);
+        let window_id = WindowId::new();
+
+        model.update(&mut app, |_, ctx| {
+            let requester = Requester::RemoteEdit {
+                window_id,
+                step: save_step(),
+            };
+            report(requester, Finished::Failed(WarpSyncError::Timeout), ctx);
+        });
+
+        assert!(matches!(
+            events.borrow().as_slice(),
+            [
+                WarpSyncEvent::Failed { window_id: failed_window, error: WarpSyncError::Timeout },
+                WarpSyncEvent::RemoteEditFinished {
+                    window_id: finished_window,
+                    step,
+                    outcome: RemoteEditOutcome::Failed(_),
+                },
+            ] if *failed_window == window_id
+                && *finished_window == window_id
+                && *step == save_step()
+        ));
     });
 }

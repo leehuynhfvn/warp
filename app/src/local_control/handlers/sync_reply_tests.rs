@@ -24,6 +24,7 @@ fn upload_summary(remote_check: RemoteCheck) -> UploadSummary {
         remote_check,
         ownership_may_be_incomplete: true,
         server_id_tail: Some("cdef".to_owned()),
+        diff: None,
     }
 }
 

@@ -12,6 +12,10 @@ pub enum WarpSyncError {
     #[error("Not found on the remote host: {0}")]
     NotFound(String),
     #[error(
+        "{0} is a folder. Edit in Warp opens files; use \"Warp Sync: Download a path\" for folders"
+    )]
+    NotAFile(String),
+    #[error(
         "Permission denied (running as {user}). Run `sudo -i` and Warpify the subshell, then retry."
     )]
     PermissionDenied { user: String },
@@ -42,12 +46,6 @@ pub enum WarpSyncError {
     LocalIo(String),
     #[error("A sync for this path is already in progress")]
     AlreadyInProgress,
-    #[error(
-        "No editor to open the mirror with: choose VS Code, VS Code Insiders, Cursor or Windsurf \
-         under \"Choose an editor to open file links\" in Settings > Code > Editor and Code \
-         Review"
-    )]
-    NoEditor,
     #[error("Could not open the editor: {0}")]
     Editor(String),
     #[error("Could not record the Git baseline: {0}")]

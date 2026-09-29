@@ -159,6 +159,7 @@ fn an_upload_confirmation_escapes_every_server_string() {
         }),
         ownership_may_be_incomplete: false,
         server_id_tail: Some("ab\ncd".to_owned()),
+        diff: None,
     };
 
     let ConfirmationKind::Upload(summary) = ConfirmationKind::upload(summary) else {
@@ -210,6 +211,7 @@ fn an_unavailable_remote_check_stays_unavailable() {
         remote_check: RemoteCheck::Unavailable,
         ownership_may_be_incomplete: true,
         server_id_tail: None,
+        diff: None,
     };
 
     let ConfirmationKind::Upload(summary) = ConfirmationKind::upload(summary) else {

@@ -159,6 +159,7 @@ pub(super) fn control_error(error: WarpSyncError) -> ControlError {
         WarpSyncError::NotRemoteSession
         | WarpSyncError::UnsupportedShell
         | WarpSyncError::NotFound(_)
+        | WarpSyncError::NotAFile(_)
         | WarpSyncError::PermissionDenied { .. }
         | WarpSyncError::SpecialMode(_)
         | WarpSyncError::TooLarge { .. }
@@ -171,7 +172,6 @@ pub(super) fn control_error(error: WarpSyncError) -> ControlError {
         | WarpSyncError::NotMirrored(_)
         | WarpSyncError::Manifest(_)
         | WarpSyncError::LocalIo(_)
-        | WarpSyncError::NoEditor
         | WarpSyncError::Editor(_)
         | WarpSyncError::Baseline(_)
         | WarpSyncError::TooManyPending => ErrorCode::SyncFailed,

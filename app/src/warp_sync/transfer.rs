@@ -20,6 +20,7 @@ use super::archive::{
 use super::baseline::{self, BaselineOutcome, commit_message};
 use super::config::SyncLimits;
 use super::diff::{ComparedTrees, Comparison, FileDifference, compare_trees, render_report};
+use super::file_diff::upload_diff;
 use super::manifest::{EntryKind, EntryMeta, Manifest, SyncRecord};
 use super::paths::{
     compare_dir, components_below, create_private_dir_all, diff_path, local_path_for,
@@ -62,6 +63,8 @@ pub struct DownloadRequest {
     pub limits: SyncLimits,
     /// Whether local edits under the path may be overwritten.
     pub allow_overwrite_local_changes: bool,
+    /// Whether a folder at the path is refused.
+    pub require_file: bool,
 }
 
 #[derive(Debug)]
@@ -122,6 +125,9 @@ pub struct PreparedUpload {
     pub remote_path: String,
     pub host_key: String,
     pub mirror_root: PathBuf,
+    /// What the upload changes in the one file it replaces, when it replaces a single text file
+    /// that has a baseline.
+    pub diff: Option<Vec<String>>,
 }
 
 impl PreparedUpload {
@@ -207,6 +213,9 @@ pub async fn download(
 ) -> Result<DownloadResult, WarpSyncError> {
     let probe = probe(shell, &request.remote_path).await?;
     ensure_readable(&probe, &request.remote_path)?;
+    if request.require_file && probe.kind == RemoteKind::Dir {
+        return Err(WarpSyncError::NotAFile(request.remote_path.clone()));
+    }
     ensure_download_size(&probe, request.limits)?;
 
     let host_key = resolve_host_key(
@@ -332,7 +341,7 @@ pub async fn prepare_upload(
         request.limits.max_upload_bytes,
     )?;
     let remote_check = check_remote(shell, &request.remote_path, &manifest, &archive).await?;
-    Ok(PreparedUpload {
+    let prepared = PreparedUpload {
         archive,
         probe,
         placement: UploadPlacement::Replace,
@@ -340,6 +349,11 @@ pub async fn prepare_upload(
         remote_path: request.remote_path.clone(),
         host_key,
         mirror_root: request.mirror_root.clone(),
+        diff: None,
+    };
+    Ok(PreparedUpload {
+        diff: upload_diff(&prepared),
+        ..prepared
     })
 }
 
@@ -421,6 +435,7 @@ async fn prepare_new_upload(
         remote_path: remote_path.to_owned(),
         host_key,
         mirror_root: request.mirror_root.clone(),
+        diff: None,
     })
 }
 

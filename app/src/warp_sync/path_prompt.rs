@@ -32,6 +32,8 @@ pub enum PathPromptKind {
     Download,
     Upload,
     Compare,
+    /// Opens a file in Warp's editor.
+    Edit,
 }
 
 impl PathPromptKind {
@@ -40,6 +42,7 @@ impl PathPromptKind {
             Self::Download => "Download from the server",
             Self::Upload => "Upload to the server",
             Self::Compare => "Compare with the server",
+            Self::Edit => "Edit a file on the server",
         }
     }
 
@@ -48,6 +51,7 @@ impl PathPromptKind {
             Self::Download => "Download",
             Self::Upload => "Upload",
             Self::Compare => "Compare",
+            Self::Edit => "Open",
         }
     }
 }

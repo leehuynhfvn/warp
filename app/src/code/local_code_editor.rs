@@ -65,11 +65,13 @@ use crate::code::editor::EditorReviewComment;
 use crate::code::editor::model::HoverableLink;
 use crate::code::footer::{CodeFooterView, CodeFooterViewEvent};
 use crate::code::global_buffer_model::{BufferState, GlobalBufferModel, GlobalBufferModelEvent};
+use crate::code::language_overrides::{language_for_path, with_choice};
 use crate::code::{SaveOutcome, ShowFindReferencesCardProvider};
 use crate::code_review::comments::CommentId;
 use crate::menu::{Event, Menu, MenuItem, MenuItemFields};
 use crate::settings::{AISettings, CodeSettings};
 use crate::terminal::TerminalView;
+use crate::warp_sync::remote_edit::{self, RemoteEditModel};
 use crate::workspace::WorkspaceAction;
 
 const DROP_SHADOW_COLOR: ColorU = ColorU {
@@ -84,6 +86,8 @@ const HOVER_DEBOUNCE_PERIOD: Duration = Duration::from_millis(500);
 /// How long to wait after the user stops typing before triggering a debounced
 /// auto-save. Mirrors VS Code's default `files.autoSaveDelay` of 1000ms.
 const AUTO_SAVE_DEBOUNCE_PERIOD: Duration = Duration::from_millis(1000);
+/// Only the start of the first line is looked at to recognize a script by its `#!` line.
+const MAX_SHEBANG_LEN: usize = 256;
 
 use warp_core::send_telemetry_from_ctx;
 
@@ -176,6 +180,7 @@ struct LoadedFileMetadata {
     location: BufferFileLocation,
 }
 
+use settings::Setting as _;
 use warp_errors::report_error;
 
 pub use super::diff_viewer::DisplayMode;
@@ -304,6 +309,9 @@ pub struct LocalCodeEditorView {
     /// resulting `FileSaved` event can be marked as an auto-save and suppress
     /// the success toast.
     auto_save_in_flight: bool,
+    /// Set while a save this editor started is in flight. Every editor of the same file hears
+    /// that the file was saved, but only the one that saved it reports it as its own.
+    save_in_flight: bool,
     /// State for the LSP hover tooltip.
     pub(super) lsp_hover_state: LspHoverState,
     /// Pending scroll position to apply after the file is loaded. This is used when
@@ -533,6 +541,7 @@ impl LocalCodeEditorView {
             hover_debounce_tx,
             auto_save_debounce_tx,
             auto_save_in_flight: false,
+            save_in_flight: false,
             lsp_hover_state: LspHoverState::None,
             pending_scroll_on_load: None,
             processed_diagnostics: Vec::new(),
@@ -1143,6 +1152,7 @@ impl LocalCodeEditorView {
 
     fn perform_save(&mut self, file_id: FileId, ctx: &mut ViewContext<Self>) {
         self.base_content_version = Some(self.editor.as_ref(ctx).version(ctx));
+        self.save_in_flight = true;
 
         let result = match self.diff() {
             Some(DiffType::Update {
@@ -1182,6 +1192,7 @@ impl LocalCodeEditorView {
             // A synchronous save failure means no async `FileSaved` will arrive,
             // so clear the auto-save marker here.
             self.auto_save_in_flight = false;
+            self.save_in_flight = false;
             report_error!(&err);
             ctx.emit(LocalCodeEditorEvent::FailedToSave {
                 error: Arc::new(err),
@@ -1379,6 +1390,7 @@ impl LocalCodeEditorView {
     fn on_file_loaded(&mut self, ctx: &mut ViewContext<Self>) {
         self.apply_diffs_if_any(ctx);
         self.file_loaded.set();
+        self.apply_language_for_path(ctx);
 
         // Apply any pending scroll position that was set before the file finished loading.
         if let Some(position) = self.pending_scroll_on_load.take() {
@@ -1436,12 +1448,111 @@ impl LocalCodeEditorView {
         self
     }
 
+    /// The path that language overrides and recognition look at: the path on the server for a file
+    /// opened from one with Warp Sync.
+    fn language_path(&self, app: &AppContext) -> Option<String> {
+        let path = self.file_path()?;
+        let remote_path = remote_edit::is_enabled()
+            .then(|| RemoteEditModel::as_ref(app).get(path))
+            .flatten()
+            .map(|file| file.remote_path.clone());
+        Some(remote_path.unwrap_or_else(|| path.to_string_lossy().into_owned()))
+    }
+
+    /// Highlights the file with the language chosen for its path, or the one recognized from its
+    /// path or `#!` line.
+    fn apply_language_for_path(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(path) = self.language_path(ctx) else {
+            return;
+        };
+        let text = self.editor.as_ref(ctx).text(ctx).into_string();
+        let first_line = text.lines().next().map(|line| {
+            let end = line.floor_char_boundary(MAX_SHEBANG_LEN);
+            line[..end].to_owned()
+        });
+        let overrides = CodeSettings::as_ref(ctx).language_overrides.value().clone();
+        let language = language_for_path(&overrides, &path, first_line.as_deref());
+        self.set_language_name(language, ctx);
+    }
+
+    /// Switches highlighting to `language`, or to plain text for `None`, when that changes it.
+    fn set_language_name(&mut self, language: Option<&str>, ctx: &mut ViewContext<Self>) {
+        let wanted = language.and_then(languages::language_by_name);
+        let current = self
+            .editor
+            .as_ref(ctx)
+            .model
+            .as_ref(ctx)
+            .language(ctx)
+            .cloned();
+        let unchanged = match (&wanted, &current) {
+            (Some(wanted), Some(current)) => Arc::ptr_eq(wanted, current),
+            (None, None) => true,
+            (Some(_), None) | (None, Some(_)) => false,
+        };
+        if !unchanged {
+            self.editor.update(ctx, |editor, ctx| {
+                editor.model.update(ctx, |model, ctx| match language {
+                    Some(name) => {
+                        model.set_language_with_name(name, ctx);
+                        model.rebuild_layout_with_syntax_highlighting(ctx);
+                    }
+                    None => model.clear_language(ctx),
+                })
+            });
+        }
+        self.sync_footer_language(ctx);
+    }
+
+    fn sync_footer_language(&self, ctx: &mut ViewContext<Self>) {
+        let Some(footer) = &self.footer else {
+            return;
+        };
+        let display_name = self
+            .editor
+            .as_ref(ctx)
+            .model
+            .as_ref(ctx)
+            .language(ctx)
+            .map(|language| language.display_name().to_owned());
+        footer.update(ctx, |footer, ctx| {
+            footer.set_language(display_name.as_deref(), ctx)
+        });
+    }
+
+    /// Remembers the language picked in the footer for this file's path, then applies it.
+    fn choose_language(&mut self, language: Option<&'static str>, ctx: &mut ViewContext<Self>) {
+        let Some(path) = self.language_path(ctx) else {
+            return;
+        };
+        CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
+            let updated = with_choice(settings.language_overrides.value(), &path, language);
+            if let Err(err) = settings.language_overrides.set_value(updated, ctx) {
+                report_error!(err.context("Failed to save the language chosen for a file"));
+            }
+        });
+        self.apply_language_for_path(ctx);
+    }
+
+    /// Tells the remote-edit table that this editor saved its file, which uploads it when the file
+    /// was opened from a server.
+    fn report_remote_edit_save(&self, auto_saved: bool, ctx: &mut ViewContext<Self>) {
+        let Some(path) = self.file_path().map(Path::to_path_buf) else {
+            return;
+        };
+        RemoteEditModel::handle(ctx)
+            .update(ctx, |model, ctx| model.file_saved(&path, auto_saved, ctx));
+    }
+
     /// Adds the LSP status footer to the editor view.
     pub(crate) fn add_footer(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(path) = self.file_path() {
             let footer =
                 ctx.add_typed_action_view(|ctx| CodeFooterView::new(path.to_path_buf(), ctx));
-            ctx.subscribe_to_view(&footer, |_, _, event, ctx| match event {
+            ctx.subscribe_to_view(&footer, |me, _, event, ctx| match event {
+                CodeFooterViewEvent::ChooseLanguage { language } => {
+                    me.choose_language(*language, ctx);
+                }
                 CodeFooterViewEvent::RunTabConfigSkill { path } => {
                     ctx.emit(LocalCodeEditorEvent::RunTabConfigSkill { path: path.clone() });
                 }
@@ -1487,6 +1598,7 @@ impl LocalCodeEditorView {
             }
 
             self.footer = Some(footer);
+            self.sync_footer_language(ctx);
         }
     }
 
@@ -1699,10 +1811,14 @@ impl LocalCodeEditorView {
                     let auto_saved = std::mem::take(&mut me.auto_save_in_flight);
                     me.base_content_version = Some(*content_version);
                     me.has_remote_conflict = false;
+                    if std::mem::take(&mut me.save_in_flight) && remote_edit::is_enabled() {
+                        me.report_remote_edit_save(auto_saved, ctx);
+                    }
                     ctx.emit(LocalCodeEditorEvent::FileSaved { auto_saved });
                 }
                 GlobalBufferModelEvent::FailedToSave { error, .. } => {
                     me.auto_save_in_flight = false;
+                    me.save_in_flight = false;
                     me.base_content_version = GlobalBufferModel::as_ref(ctx).base_version(file_id);
                     ctx.emit(LocalCodeEditorEvent::FailedToSave {
                         error: error.clone(),

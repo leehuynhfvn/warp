@@ -1338,6 +1338,17 @@ impl CodeEditorModel {
         }
     }
 
+    /// Shows the buffer as plain text.
+    pub fn clear_language(&mut self, ctx: &mut ModelContext<Self>) {
+        self.syntax_tree
+            .update(ctx, |syntax_tree, _ctx| syntax_tree.clear_language());
+        self.rebuild_layout_with_syntax_highlighting(ctx);
+    }
+
+    pub fn language<'a>(&self, app: &'a AppContext) -> Option<&'a Arc<Language>> {
+        self.syntax_tree.as_ref(app).language()
+    }
+
     fn set_language(&mut self, language: Arc<Language>, ctx: &mut ModelContext<Self>) {
         let unit = language.indent_unit;
         self.content.update(ctx, |buffer, _ctx| {

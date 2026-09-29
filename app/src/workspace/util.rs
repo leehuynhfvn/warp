@@ -37,6 +37,7 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) header_dimming: MouseStateHandle,
     pub(super) right_panel_icon: MouseStateHandle,
     pub(super) notifications_mailbox: MouseStateHandle,
+    pub(super) warp_sync_mirror_in_editor: MouseStateHandle,
     pub(super) session_config_tab_config_chip_close: MouseStateHandle,
     pub(super) tools_panel_icon: MouseStateHandle,
     pub(super) title_bar_search_bar: MouseStateHandle,

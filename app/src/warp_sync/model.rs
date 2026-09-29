@@ -14,7 +14,9 @@ use super::paths::{host_key, printable};
 use super::remote_check::RemoteCheck;
 use super::remote_script::ExtractMode;
 use super::remote_shell::{RemoteShell, SessionShell};
-use super::requester::{ConfirmationKind, ExternalReply, Finished, Requester, SyncReply};
+use super::requester::{
+    ConfirmationKind, ExternalReply, Finished, RemoteEditStep, Requester, SyncReply,
+};
 use super::risk::{UploadRisks, assess};
 use super::transfer::{
     CompareOutcome, CompareRequest, DownloadOutcome, DownloadRequest, DownloadResult,
@@ -65,6 +67,8 @@ pub struct UploadSummary {
     pub ownership_may_be_incomplete: bool,
     /// The last characters of the remote machine id, to tell apart hosts with the same name.
     pub server_id_tail: Option<String>,
+    /// What the upload changes, when it replaces a single text file.
+    pub diff: Option<Vec<String>>,
 }
 
 /// What a comparison of the local mirror with the remote host found. Only produced when there is
@@ -136,6 +140,19 @@ pub struct MirrorLocation {
     pub is_file: bool,
 }
 
+/// How an operation that edits a remote file in Warp's editor ended. Failures have already been
+/// reported to the user by then.
+#[derive(Debug, Clone)]
+pub enum RemoteEditOutcome {
+    Downloaded {
+        local_path: PathBuf,
+        remote_path: String,
+        remote_user: String,
+    },
+    Uploaded,
+    Failed(String),
+}
+
 /// Progress of Warp Sync operations. Every event names the window that started the operation, so
 /// that only that window reports it.
 #[derive(Debug, Clone)]
@@ -168,6 +185,12 @@ pub enum WarpSyncEvent {
         window_id: WindowId,
         error: WarpSyncError,
     },
+    /// Follows the event that reported an operation a [`Requester::RemoteEdit`] started.
+    RemoteEditFinished {
+        window_id: WindowId,
+        step: RemoteEditStep,
+        outcome: RemoteEditOutcome,
+    },
 }
 
 /// A sync in progress is identified by its host and remote path. The key is held from the moment
@@ -188,6 +211,7 @@ struct PendingDownload {
     shell: Arc<dyn RemoteShell>,
     request: DownloadRequest,
     window_id: WindowId,
+    edit: Option<RemoteEditStep>,
 }
 
 struct PendingUpload {
@@ -197,6 +221,7 @@ struct PendingUpload {
     /// folder of the machine that was found, and may carry a machine suffix.
     key: SyncKey,
     window_id: WindowId,
+    edit: Option<RemoteEditStep>,
 }
 
 /// An operation waiting for a local-control client's answer. It is kept apart from the operations
@@ -276,6 +301,7 @@ impl WarpSyncModel {
             mirror_root: begun.mirror_root,
             limits: begun.limits,
             allow_overwrite_local_changes: false,
+            require_file: matches!(requester.edit_step(), Some(RemoteEditStep::Open { .. })),
         };
         self.spawn_download(begun.shell, request, requester, ctx);
     }
@@ -284,7 +310,7 @@ impl WarpSyncModel {
         let Some(pending) = self.pending_downloads.remove(&id) else {
             return;
         };
-        let requester = Requester::Window(pending.window_id);
+        let requester = Requester::for_window(pending.window_id, pending.edit.clone());
         self.resume_download(pending, requester, ctx);
     }
 
@@ -386,7 +412,7 @@ impl WarpSyncModel {
         let Some(pending) = self.pending_uploads.remove(&id) else {
             return;
         };
-        let requester = Requester::Window(pending.window_id);
+        let requester = Requester::for_window(pending.window_id, pending.edit.clone());
         self.resume_upload(pending, requester, ctx);
     }
 
@@ -429,19 +455,14 @@ impl WarpSyncModel {
         }
     }
 
-    /// Opens `request` in the editor chosen for opening file links.
+    /// Opens `request` in the editor chosen for opening file links, or in VS Code.
     pub fn open_in_editor(
         &mut self,
         request: EditorRequest,
         window_id: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
-        let Some(cli) = EditorCli::from_settings(ctx) else {
-            return ctx.emit(WarpSyncEvent::Failed {
-                window_id,
-                error: WarpSyncError::NoEditor,
-            });
-        };
+        let cli = EditorCli::from_settings_or_vs_code(ctx);
         ctx.spawn(
             async move { launch(cli, &request) },
             move |_, launched, ctx| {
@@ -463,13 +484,17 @@ impl WarpSyncModel {
     }
 
     /// Discards an operation that is waiting for confirmation. Nothing has been changed by then.
-    pub fn cancel_pending(&mut self, id: PendingId) {
+    /// Returns the editing step the operation carried out, if it was started from Warp's editor.
+    pub fn cancel_pending(&mut self, id: PendingId) -> Option<RemoteEditStep> {
         if let Some(pending) = self.pending_downloads.remove(&id) {
             self.finish_sync(&(pending.request.host_key, pending.request.remote_path));
+            return pending.edit;
         }
         if let Some(pending) = self.pending_uploads.remove(&id) {
             self.finish_sync(&pending.key);
+            return pending.edit;
         }
+        None
     }
 
     /// Validates the session and marks the path as in progress.
@@ -651,9 +676,10 @@ impl WarpSyncModel {
             shell,
             request,
             window_id: requester.window_id(),
+            edit: requester.edit_step(),
         };
         match requester {
-            Requester::Window(window_id) => {
+            Requester::Window(window_id) | Requester::RemoteEdit { window_id, .. } => {
                 let id = self.next_pending_id();
                 self.pending_downloads.insert(id, pending);
                 ctx.emit(WarpSyncEvent::DownloadNeedsConfirmation {
@@ -706,15 +732,17 @@ impl WarpSyncModel {
                 .machine_id
                 .as_deref()
                 .map(|id| id[id.len().saturating_sub(SERVER_ID_TAIL_LEN)..].to_owned()),
+            diff: prepared.diff.clone(),
         };
         let pending = PendingUpload {
             shell,
             prepared,
             key,
             window_id: requester.window_id(),
+            edit: requester.edit_step(),
         };
         match requester {
-            Requester::Window(window_id) => {
+            Requester::Window(window_id) | Requester::RemoteEdit { window_id, .. } => {
                 let id = self.next_pending_id();
                 self.pending_uploads.insert(id, pending);
                 ctx.emit(WarpSyncEvent::UploadNeedsConfirmation {
@@ -739,7 +767,7 @@ impl WarpSyncModel {
 /// Tells the user, in the window whose shell is about to run commands, that an operation started.
 fn announce(requester: &Requester, description: String, ctx: &mut ModelContext<WarpSyncModel>) {
     let description = match requester {
-        Requester::Window(_) => description,
+        Requester::Window(_) | Requester::RemoteEdit { .. } => description,
         Requester::External { .. } => format!("{EXTERNAL_TOAST_PREFIX}{description}"),
     };
     ctx.emit(WarpSyncEvent::Started {
@@ -752,7 +780,35 @@ fn announce(requester: &Requester, description: String, ctx: &mut ModelContext<W
 fn report(requester: Requester, finished: Finished, ctx: &mut ModelContext<WarpSyncModel>) {
     match requester {
         Requester::Window(window_id) => ctx.emit(window_event(window_id, finished)),
+        Requester::RemoteEdit { window_id, step } => {
+            let outcome = remote_edit_outcome(&finished);
+            ctx.emit(window_event(window_id, finished));
+            if let Some(outcome) = outcome {
+                ctx.emit(WarpSyncEvent::RemoteEditFinished {
+                    window_id,
+                    step,
+                    outcome,
+                });
+            }
+        }
         Requester::External { reply, .. } => reply.send(finished.into_reply()),
+    }
+}
+
+/// Comparisons are never part of editing a file, so they have no outcome here.
+fn remote_edit_outcome(finished: &Finished) -> Option<RemoteEditOutcome> {
+    match finished {
+        Finished::Downloaded {
+            remote_path,
+            outcome,
+        } => Some(RemoteEditOutcome::Downloaded {
+            local_path: outcome.local_path.clone(),
+            remote_path: remote_path.clone(),
+            remote_user: outcome.remote_user.clone(),
+        }),
+        Finished::Uploaded { .. } => Some(RemoteEditOutcome::Uploaded),
+        Finished::Failed(error) => Some(RemoteEditOutcome::Failed(error.to_string())),
+        Finished::Compared { .. } => None,
     }
 }
 

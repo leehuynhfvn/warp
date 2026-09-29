@@ -1,13 +1,15 @@
 use std::ops::Deref;
 
 use serde::{Serialize, Serializer};
+use warp_util::path::LineAndColumnArg;
 use warpui::ViewContext;
 use warpui::platform::Cursor;
 
 use crate::terminal::TerminalModel;
 use crate::terminal::model::RespectObfuscatedSecrets;
-use crate::terminal::model::grid::grid_handler::Link;
+use crate::terminal::model::grid::grid_handler::{ContainsPoint, Link};
 use crate::terminal::model::index::Point;
+use crate::terminal::model::session::SessionId;
 use crate::terminal::model::terminal_model::{WithinBlock, WithinModel};
 
 cfg_if::cfg_if! {
@@ -22,7 +24,7 @@ cfg_if::cfg_if! {
         use unicode_general_category::{get_general_category, GeneralCategory};
         use unicode_width::UnicodeWidthChar;
         use warp_util::path::CleanPathResult;
-        use warp_util::path::LineAndColumnArg;
+        use crate::warp_sync::remote_edit;
     }
 }
 
@@ -30,6 +32,7 @@ cfg_if::cfg_if! {
 use warp_errors::report_error;
 
 use super::{FindLinkArg, TerminalEditor};
+use crate::warp_sync::WarpSyncError;
 
 // "a/" and "b/" are prefixes specific to Git Diff
 #[cfg(feature = "local_fs")]
@@ -112,12 +115,31 @@ fn path_without_trailing_sentence_punctuation(
     })
 }
 
+/// A path on the server of a remote block. It is recognized by how it looks only, since checking
+/// it would mean running a command in the user's shell; opening it finds out whether it exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFileLink {
+    pub link: Link,
+    /// The session of the block the path was printed in.
+    pub session_id: SessionId,
+    /// Normalized absolute path on the server.
+    pub remote_path: String,
+    pub line_and_column_num: Option<LineAndColumnArg>,
+}
+
+impl ContainsPoint for RemoteFileLink {
+    fn contains(&self, point: Point) -> bool {
+        self.link.contains(point)
+    }
+}
+
 /// Highlighted link within a terminal model grid.
 #[derive(Debug, Clone)]
 pub enum GridHighlightedLink {
     Url(WithinModel<Link>),
     #[cfg(feature = "local_fs")]
     File(WithinModel<FileLink>),
+    RemoteFile(WithinModel<RemoteFileLink>),
     /// OSC 8 hyperlink span. Carries the URI directly because — unlike `Url`
     /// — it isn't recoverable from the cell text.
     Hyperlink {
@@ -132,6 +154,7 @@ impl GridHighlightedLink {
             GridHighlightedLink::Url(url) => url.contains(position),
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(file_link) => file_link.contains(position),
+            GridHighlightedLink::RemoteFile(remote_link) => remote_link.contains(position),
             GridHighlightedLink::Hyperlink { link, .. } => link.contains(position),
         }
     }
@@ -150,6 +173,7 @@ impl GridHighlightedLink {
             }
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(_) => "Open file",
+            GridHighlightedLink::RemoteFile(_) => "Edit in Warp",
             GridHighlightedLink::Url(_) => "Open link",
             GridHighlightedLink::Hyperlink { .. } => "Open link",
         }
@@ -172,6 +196,9 @@ impl Serialize for GridHighlightedLink {
             GridHighlightedLink::Hyperlink { .. } => {
                 serializer.serialize_unit_variant("HighlightedLink", 2, "Hyperlink")
             }
+            GridHighlightedLink::RemoteFile(_) => {
+                serializer.serialize_unit_variant("HighlightedLink", 3, "RemoteFile")
+            }
         }
     }
 }
@@ -184,6 +211,9 @@ impl TryFrom<GridHighlightedLink> for Link {
             GridHighlightedLink::Url(WithinModel::AltScreen(url)) => Ok(url),
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(WithinModel::AltScreen(file_link)) => Ok(file_link.link),
+            GridHighlightedLink::RemoteFile(WithinModel::AltScreen(remote_link)) => {
+                Ok(remote_link.link)
+            }
             GridHighlightedLink::Hyperlink {
                 link: WithinModel::AltScreen(link),
                 ..
@@ -204,6 +234,9 @@ impl TryFrom<GridHighlightedLink> for WithinBlock<Link> {
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(WithinModel::BlockList(file_link)) => {
                 Ok(file_link.map(|file_link| file_link.link))
+            }
+            GridHighlightedLink::RemoteFile(WithinModel::BlockList(remote_link)) => {
+                Ok(remote_link.map(|remote_link| remote_link.link))
             }
             GridHighlightedLink::Hyperlink {
                 link: WithinModel::BlockList(link),
@@ -297,6 +330,23 @@ impl HighlightedLinkOption {
                     model
                         .alt_screen_mut()
                         .set_smart_select_override(file_link.link.range.clone());
+                }
+            },
+            GridHighlightedLink::RemoteFile(within_model) => match within_model {
+                WithinModel::BlockList(within_block) => {
+                    let point_range = WithinBlock::new(
+                        within_block.inner.link.range.clone(),
+                        within_block.block_index,
+                        within_block.grid,
+                    );
+                    model
+                        .block_list_mut()
+                        .set_smart_select_override(point_range);
+                }
+                WithinModel::AltScreen(remote_link) => {
+                    model
+                        .alt_screen_mut()
+                        .set_smart_select_override(remote_link.link.range.clone());
                 }
             },
             GridHighlightedLink::Hyperlink {
@@ -510,6 +560,9 @@ impl super::TerminalView {
                     self.open_file_path(path.clone(), link.line_and_column_num, ctx);
                 }
             }
+            GridHighlightedLink::RemoteFile(remote_link) => {
+                self.open_remote_file_link(remote_link.get_inner(), ctx);
+            }
             GridHighlightedLink::Url(url) => {
                 let uri = self
                     .model
@@ -521,6 +574,23 @@ impl super::TerminalView {
                 self.open_hyperlink_uri(uri, ctx);
             }
         };
+    }
+
+    /// Opens a remote path in Warp's editor through the session that printed it. Whether it is a
+    /// file that exists is only found out now, by the download.
+    pub(super) fn open_remote_file_link(
+        &mut self,
+        remote_link: &RemoteFileLink,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let request = self
+            .sessions
+            .as_ref(ctx)
+            .get(remote_link.session_id)
+            .filter(|session| !session.is_local())
+            .map(|session| (session, remote_link.remote_path.clone()))
+            .ok_or(WarpSyncError::NotRemoteSession);
+        self.warp_sync_edit(request, remote_link.line_and_column_num, ctx);
     }
 
     pub(super) fn open_rich_content_link(
@@ -569,6 +639,18 @@ impl super::TerminalView {
         from_editor: TerminalEditor,
         ctx: &mut ViewContext<Self>,
     ) {
+        if matches!(from_editor, TerminalEditor::No)
+            && let Some(remote_link) = self.remote_file_link_at(position, ctx)
+        {
+            let mut model = self.model.lock();
+            self.highlighted_link.take(&mut model);
+            self.highlighted_link
+                .set(GridHighlightedLink::RemoteFile(remote_link), &mut model);
+            ctx.set_cursor_shape(Cursor::PointingHand);
+            ctx.notify();
+            return;
+        }
+
         // For AltScreen we scan for relative path with the current working directory.
         // For BlockList we scan for relative path with the pwd of the hovered block.
         let pwd_to_scan_for = match position {
@@ -623,6 +705,81 @@ impl super::TerminalView {
             }
             _ => (),
         };
+    }
+
+    /// The remote path under `position` when it lies in the output of a remote block. Nothing
+    /// runs on the server: the word under the cursor is taken as a path if it looks like one.
+    fn remote_file_link_at(
+        &self,
+        position: WithinModel<Point>,
+        ctx: &ViewContext<Self>,
+    ) -> Option<WithinModel<RemoteFileLink>> {
+        if !remote_edit::is_enabled() {
+            return None;
+        }
+        let WithinModel::BlockList(point) = position else {
+            return None;
+        };
+        let model = self.model.lock();
+        let block = model.block_list().block_at(point.block_index)?;
+        let session_id = block.session_id()?;
+        if !self.is_block_considered_remote(Some(session_id), None, ctx) {
+            return None;
+        }
+        let pwd = block.pwd()?.clone();
+        let candidates = model.possible_file_paths_at_point(position);
+        drop(model);
+        Self::remote_link_from_candidates(candidates, &pwd, session_id, self.size_info.columns)
+    }
+
+    /// Picks the widest candidate whose path holds no separator, so that quotes, brackets and a
+    /// `:line` suffix around the path are left out, then drops trailing sentence punctuation.
+    fn remote_link_from_candidates(
+        candidates: impl Iterator<Item = WithinModel<grid_handler::PossiblePath>>,
+        pwd: &str,
+        session_id: SessionId,
+        max_columns: usize,
+    ) -> Option<WithinModel<RemoteFileLink>> {
+        let word = candidates
+            .filter(|candidate| {
+                !candidate
+                    .get_inner()
+                    .path
+                    .path
+                    .chars()
+                    .any(|c| c.is_whitespace() || grid_handler::is_file_link_separator(c))
+            })
+            .max_by_key(|candidate| {
+                let range = &candidate.get_inner().range;
+                (*range.end(), std::cmp::Reverse(*range.start()))
+            })?;
+        let possible_path = word.get_inner();
+        let (token, range) =
+            match path_without_trailing_sentence_punctuation(&possible_path.path.path) {
+                Some(trimmed) => (
+                    trimmed.path,
+                    *possible_path.range.start()
+                        ..=possible_path
+                            .range
+                            .end()
+                            .wrapping_sub(max_columns, trimmed.removed_width),
+                ),
+                None => (
+                    possible_path.path.path.as_str(),
+                    possible_path.range.clone(),
+                ),
+            };
+        let remote_path = remote_edit::remote_link_path(token, pwd)?;
+        let link = RemoteFileLink {
+            link: Link {
+                range,
+                is_empty: false,
+            },
+            session_id,
+            remote_path,
+            line_and_column_num: possible_path.path.line_and_column_num,
+        };
+        Some(word.replace_inner(link))
     }
 
     fn compute_valid_paths(

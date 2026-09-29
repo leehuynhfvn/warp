@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use futures::channel::oneshot;
 use uuid::Uuid;
+use warp_util::path::LineAndColumnArg;
 use warpui::WindowId;
 
 use super::WarpSyncError;
@@ -13,12 +14,34 @@ use super::paths::printable;
 use super::remote_check::{RemoteCheck, RemoteConflicts};
 use super::risk::UploadRisks;
 use super::transfer::{CompareOutcome, DownloadOutcome, UploadOutcome};
+use crate::terminal::model::session::SessionId;
+
+/// The part of editing a remote file in Warp's own editor that an operation carries out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteEditStep {
+    /// Downloads a file so that it can be opened; folders are refused.
+    Open {
+        session_id: SessionId,
+        hostname: String,
+        /// Where to put the cursor once the file is open.
+        line: Option<LineAndColumnArg>,
+    },
+    /// Uploads the mirror copy at `local_path` after it was saved.
+    Save { local_path: PathBuf },
+}
 
 /// The party that started an operation.
 pub enum Requester {
     /// A Warp window: progress and results are events that the window turns into toasts and
     /// dialogs.
     Window(WindowId),
+    /// A Warp window that edits a remote file in Warp's own editor. It is told everything a
+    /// `Window` is told, and also how the operation ended, so that it can open the file or track
+    /// its upload.
+    RemoteEdit {
+        window_id: WindowId,
+        step: RemoteEditStep,
+    },
     /// A local-control client that has no window of its own: results are handed back as a
     /// [`SyncReply`], and the user only sees the operation start in `window_id`, the window whose
     /// shell runs the commands.
@@ -51,15 +74,32 @@ impl Requester {
         (requester, receiver)
     }
 
+    /// A requester for a window, as it was before its operation waited for a dialog.
+    pub(super) fn for_window(window_id: WindowId, edit: Option<RemoteEditStep>) -> Self {
+        match edit {
+            Some(step) => Self::RemoteEdit { window_id, step },
+            None => Self::Window(window_id),
+        }
+    }
+
     pub(super) fn window_id(&self) -> WindowId {
         match self {
-            Self::Window(window_id) | Self::External { window_id, .. } => *window_id,
+            Self::Window(window_id)
+            | Self::RemoteEdit { window_id, .. }
+            | Self::External { window_id, .. } => *window_id,
+        }
+    }
+
+    pub(super) fn edit_step(&self) -> Option<RemoteEditStep> {
+        match self {
+            Self::RemoteEdit { step, .. } => Some(step.clone()),
+            Self::Window(_) | Self::External { .. } => None,
         }
     }
 
     pub(super) fn expected_host_key(&self) -> Option<String> {
         match self {
-            Self::Window(_) => None,
+            Self::Window(_) | Self::RemoteEdit { .. } => None,
             Self::External {
                 expected_host_key, ..
             } => expected_host_key.clone(),
@@ -233,6 +273,7 @@ impl ConfirmationKind {
             missing_locally: printable_all(summary.missing_locally),
             remote_check: printable_check(summary.remote_check),
             server_id_tail: summary.server_id_tail.as_deref().map(printable),
+            diff: summary.diff.map(printable_all),
             ..summary
         }))
     }

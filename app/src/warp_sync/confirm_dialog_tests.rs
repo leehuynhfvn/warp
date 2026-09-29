@@ -25,6 +25,7 @@ fn summary() -> UploadSummary {
         remote_check: RemoteCheck::Checked(RemoteConflicts::default()),
         ownership_may_be_incomplete: false,
         server_id_tail: Some("ab12".to_owned()),
+        diff: None,
     }
 }
 
@@ -125,6 +126,7 @@ fn upload_text_escapes_what_the_server_and_the_manifest_chose() {
         remote_path: "/root/a\u{1b}b".to_owned(),
         creates_under: Some("/ro\u{202e}ot".to_owned()),
         server_id_tail: None,
+        diff: None,
         ..summary()
     };
 
@@ -337,4 +339,42 @@ fn control_characters_in_remote_paths_are_escaped() {
     let list = bullet_list(&["/etc/a\nb".to_owned()]);
 
     assert_eq!(list, "• /etc/a\\nb");
+}
+
+#[test]
+fn upload_body_shows_the_diff_of_a_single_file() {
+    let summary = UploadSummary {
+        diff: Some(vec![
+            "@@ -1 +1 @@".to_owned(),
+            "-worker_processes 1;".to_owned(),
+            "+worker_processes 4;".to_owned(),
+        ]),
+        ..summary()
+    };
+
+    let body = upload_body(&summary);
+
+    assert!(body.contains(
+        "Changes since the last sync:\n@@ -1 +1 @@\n-worker_processes 1;\n+worker_processes 4;"
+    ));
+}
+
+#[test]
+fn upload_body_says_when_a_single_file_did_not_change() {
+    let summary = UploadSummary {
+        diff: Some(Vec::new()),
+        ..summary()
+    };
+
+    assert!(upload_body(&summary).contains("No changes since the last sync."));
+}
+
+#[test]
+fn upload_body_escapes_the_diff() {
+    let summary = UploadSummary {
+        diff: Some(vec!["+\u{1b}[2Jcleared".to_owned()]),
+        ..summary()
+    };
+
+    assert!(!upload_body(&summary).contains('\u{1b}'));
 }

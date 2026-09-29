@@ -335,3 +335,30 @@ fn commit_messages_cannot_add_lines() {
         "Upload /etc/a\\rb as root"
     );
 }
+
+#[test]
+fn the_synced_content_is_what_was_last_recorded_not_the_edited_copy() {
+    let dir = TempDir::new().unwrap();
+    let host = dir.path().join("prod-1");
+    write(&host, "etc/nginx/nginx.conf", "worker_processes 1;\n");
+    download(&host, "/etc/nginx/nginx.conf");
+    write(&host, "etc/nginx/nginx.conf", "worker_processes 4;\n");
+
+    assert_eq!(
+        synced_content(&host, "/etc/nginx/nginx.conf"),
+        Some(b"worker_processes 1;\n".to_vec())
+    );
+}
+
+#[test]
+fn there_is_no_synced_content_without_a_baseline_or_for_an_unknown_file() {
+    let dir = TempDir::new().unwrap();
+    let host = dir.path().join("prod-1");
+    write(&host, "etc/hosts", "127.0.0.1 localhost\n");
+
+    assert_eq!(synced_content(&host, "/etc/hosts"), None);
+    assert!(!host.join(GIT_DIR_NAME).exists());
+
+    download(&host, "/etc/hosts");
+    assert_eq!(synced_content(&host, "/etc/fstab"), None);
+}

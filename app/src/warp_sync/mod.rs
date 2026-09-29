@@ -10,11 +10,13 @@ mod diff;
 pub mod editor;
 mod error;
 pub mod external;
+mod file_diff;
 mod manifest;
 mod model;
 pub mod path_prompt;
 pub(crate) mod paths;
 pub mod remote_check;
+pub mod remote_edit;
 pub(crate) mod remote_script;
 mod remote_shell;
 pub mod requester;
@@ -26,11 +28,11 @@ use std::time::Duration;
 pub use config::SyncConfig;
 pub use diff::{FileChange, FileDifference};
 pub use error::WarpSyncError;
-pub use model::{MirrorLocation, UploadSummary, WarpSyncEvent, WarpSyncModel};
+pub use model::{MirrorLocation, RemoteEditOutcome, UploadSummary, WarpSyncEvent, WarpSyncModel};
 pub use paths::{
     host_dir_matches, host_mirror_dir, normalize_remote_path, printable, selection_to_remote_path,
 };
-pub use requester::{ConfirmationKind, ExternalReply, Requester, SyncReply};
+pub use requester::{ConfirmationKind, ExternalReply, RemoteEditStep, Requester, SyncReply};
 
 /// Default upper bound, in MiB, on the remote size (`du -sk`) of a download. Output travels
 /// through the PTY hex-encoded, which doubles its size.

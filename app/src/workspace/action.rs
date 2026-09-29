@@ -496,6 +496,9 @@ pub enum WorkspaceAction {
     WarpSyncCompareCurrentDirectory,
     /// Ask for a path on the active remote session's host and compare its local mirror with it.
     WarpSyncComparePath,
+    /// Ask for a file on the active remote session's host and open it in Warp's editor; saving it
+    /// uploads it through that session.
+    WarpSyncEditRemoteFile,
     /// Allow agents to use the active remote session, either fully or to read files only.
     AgentBridgeAttach {
         read_only: bool,
@@ -1140,6 +1143,7 @@ impl WorkspaceAction {
             | WarpSyncComparePath
             | WarpSyncDownloadPath
             | WarpSyncUploadPath
+            | WarpSyncEditRemoteFile
             | WarpSyncOpenMirror
             | WarpSyncOpenMirrorInEditor
             | WarpSyncOpenInEditor { .. }

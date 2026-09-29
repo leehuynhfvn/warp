@@ -543,7 +543,9 @@ use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, KeystrokeSource};
 use crate::view_components::find::{Event as FindEvent, Find, FindDirection, FindWithinBlockState};
 use crate::view_components::{DismissibleToast, ToastFlavor};
-use crate::warp_sync::{WarpSyncError, WarpSyncModel, selection_to_remote_path};
+use crate::warp_sync::{
+    RemoteEditStep, Requester, WarpSyncError, WarpSyncModel, remote_edit, selection_to_remote_path,
+};
 use crate::workflows::WorkflowSelectionSource;
 use crate::workflows::workflow::Workflow;
 use crate::workspace::sync_inputs::SyncedInputState;
@@ -1379,6 +1381,13 @@ pub enum BlockVisibilityMode {
 pub enum ContextMenuAction {
     InsertSelectedText,
     CopySelectedText,
+    /// Opens the selected remote file in Warp's editor; saving it uploads it.
+    WarpSyncEdit,
+    /// Downloads a remote path found in a block's output into the local Warp Sync mirror.
+    WarpSyncDownloadPath {
+        session_id: SessionId,
+        remote_path: String,
+    },
     /// Downloads the selected remote path into the local Warp Sync mirror.
     WarpSyncDownload,
     /// Uploads the selected remote path's local Warp Sync mirror back to the server.
@@ -1524,6 +1533,8 @@ impl fmt::Debug for ContextMenuAction {
         match self {
             InsertSelectedText => f.write_str("InsertSelectedText"),
             CopySelectedText => f.write_str("CopySelectedText"),
+            WarpSyncEdit => f.write_str("WarpSyncEdit"),
+            WarpSyncDownloadPath { .. } => f.write_str("WarpSyncDownloadPath"),
             WarpSyncDownload => f.write_str("WarpSyncDownload"),
             WarpSyncUpload => f.write_str("WarpSyncUpload"),
             WarpSyncCompare => f.write_str("WarpSyncCompare"),
@@ -17381,6 +17392,31 @@ impl TerminalView {
                         })
                         .unwrap_or_default()
                     }
+                    GridHighlightedLink::RemoteFile(remote_link) => {
+                        let remote_link = remote_link.get_inner();
+                        vec![
+                            MenuItemFields::new("Warp Sync: Edit in Warp")
+                                .with_on_select_action(TerminalAction::OpenGridLink(
+                                    highlighted_link.clone(),
+                                ))
+                                .into_item(),
+                            MenuItemFields::new("Warp Sync: Download to local mirror")
+                                .with_on_select_action(TerminalAction::ContextMenu(
+                                    ContextMenuAction::WarpSyncDownloadPath {
+                                        session_id: remote_link.session_id,
+                                        remote_path: remote_link.remote_path.clone(),
+                                    },
+                                ))
+                                .into_item(),
+                            MenuItemFields::new("Copy path")
+                                .with_on_select_action(TerminalAction::ContextMenu(
+                                    ContextMenuAction::CopyUrl {
+                                        url_content: remote_link.remote_path.clone(),
+                                    },
+                                ))
+                                .into_item(),
+                        ]
+                    }
                     GridHighlightedLink::Hyperlink { uri, .. } => {
                         // OSC 8 hyperlink right-click. "Copy link" copies the
                         // URI verbatim; "Open link" dispatches through
@@ -17453,8 +17489,17 @@ impl TerminalView {
                 if FeatureFlag::WarpSync.is_enabled()
                     && self.remote_selection_target(&model, ctx).is_some()
                 {
+                    fields.push(MenuItem::Separator);
+                    if remote_edit::is_enabled() {
+                        fields.push(
+                            MenuItemFields::new("Warp Sync: Edit in Warp")
+                                .with_on_select_action(TerminalAction::ContextMenu(
+                                    ContextMenuAction::WarpSyncEdit,
+                                ))
+                                .into_item(),
+                        );
+                    }
                     fields.extend([
-                        MenuItem::Separator,
                         MenuItemFields::new("Warp Sync: Download to local mirror")
                             .with_on_select_action(TerminalAction::ContextMenu(
                                 ContextMenuAction::WarpSyncDownload,
@@ -19249,6 +19294,10 @@ impl TerminalView {
                     .link_at_range(url, RespectObfuscatedSecrets::No);
                 ctx.notify();
                 ctx.open_url(&uri);
+            }
+            GridHighlightedLink::RemoteFile(remote_link) if remote_link.contains(position) => {
+                let remote_link = remote_link.get_inner().clone();
+                self.open_remote_file_link(&remote_link, ctx);
             }
             GridHighlightedLink::Hyperlink { link, uri } if link.contains(position) => {
                 self.open_hyperlink_uri(uri, ctx);
@@ -22157,6 +22206,55 @@ impl TerminalView {
         let remote_path =
             selection_to_remote_path(selected_text.as_deref(), target.pwd.as_deref())?;
         Ok((target.session, remote_path))
+    }
+
+    fn context_menu_warp_sync_edit(&mut self, ctx: &mut ViewContext<Self>) {
+        let request = self.warp_sync_selection_request(ctx);
+        self.warp_sync_edit(request, None, ctx);
+    }
+
+    /// Downloads a remote file and opens it in Warp's editor, at `line` if given, whose saves
+    /// upload it through the same session.
+    pub(super) fn warp_sync_edit(
+        &mut self,
+        request: Result<(Arc<Session>, String), WarpSyncError>,
+        line: Option<LineAndColumnArg>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let window_id = ctx.window_id();
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match request {
+            Ok((session, remote_path)) => {
+                let requester = Requester::RemoteEdit {
+                    window_id,
+                    step: RemoteEditStep::Open {
+                        session_id: session.id(),
+                        hostname: session.hostname().to_owned(),
+                        line,
+                    },
+                };
+                warp_sync.start_download(session, remote_path, requester, ctx)
+            }
+            Err(error) => warp_sync.report_failure(window_id, error, ctx),
+        });
+    }
+
+    fn context_menu_warp_sync_download_path(
+        &mut self,
+        session_id: SessionId,
+        remote_path: String,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.close_context_menu(ctx, true);
+        let window_id = ctx.window_id();
+        let session = self
+            .sessions
+            .as_ref(ctx)
+            .get(session_id)
+            .filter(|session| !session.is_local());
+        WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| match session {
+            Some(session) => warp_sync.start_download(session, remote_path, window_id, ctx),
+            None => warp_sync.report_failure(window_id, WarpSyncError::NotRemoteSession, ctx),
+        });
     }
 
     fn context_menu_warp_sync_download(&mut self, ctx: &mut ViewContext<Self>) {
@@ -25910,6 +26008,11 @@ impl TerminalView {
         match action {
             InsertSelectedText => self.context_menu_insert_selected_text(ctx),
             CopySelectedText => self.context_menu_copy_selected_text(ctx),
+            WarpSyncEdit => self.context_menu_warp_sync_edit(ctx),
+            WarpSyncDownloadPath {
+                session_id,
+                remote_path,
+            } => self.context_menu_warp_sync_download_path(*session_id, remote_path.clone(), ctx),
             WarpSyncDownload => self.context_menu_warp_sync_download(ctx),
             WarpSyncUpload => self.context_menu_warp_sync_upload(ctx),
             WarpSyncCompare => self.context_menu_warp_sync_compare(ctx),

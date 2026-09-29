@@ -6,6 +6,7 @@ use super::super::TerminalView;
 use super::{GridHighlightedLink, path_without_trailing_sentence_punctuation};
 use crate::terminal::model::grid::grid_handler::PossiblePath;
 use crate::terminal::model::index::Point;
+use crate::terminal::model::session::SessionId;
 use crate::terminal::model::terminal_model::WithinModel;
 
 #[test]
@@ -208,4 +209,93 @@ fn compute_valid_paths_keeps_trailing_fullwidth_punctuation_when_it_is_the_filen
             col: end_col,
         }
     );
+}
+
+/// Candidates for a hover at `hover_col` of `line`, the way the grid builds them: every span of
+/// whole fragments that covers the hover point, with any `:line[:col]` suffix parsed out.
+fn candidates_around(line: &str, hover_col: usize) -> Vec<WithinModel<PossiblePath>> {
+    let is_separator =
+        |c: char| crate::terminal::model::grid::grid_handler::is_file_link_separator(c) || c == ' ';
+    let mut bounds = vec![0];
+    for (index, c) in line.char_indices() {
+        if is_separator(c) {
+            bounds.extend([index, index + c.len_utf8()]);
+        }
+    }
+    bounds.push(line.len());
+    bounds.dedup();
+    let mut candidates = Vec::new();
+    for &start in bounds.iter().filter(|start| **start <= hover_col) {
+        for &end in bounds.iter().filter(|end| **end > hover_col) {
+            candidates.push(WithinModel::AltScreen(PossiblePath {
+                path: CleanPathResult::with_line_and_column_number(&line[start..end]),
+                range: Point { row: 0, col: start }..=Point {
+                    row: 0,
+                    col: end - 1,
+                },
+            }));
+        }
+    }
+    candidates
+}
+
+fn remote_link(line: &str, word: &str, pwd: &str) -> Option<(String, Option<usize>, usize, usize)> {
+    let hover_col = line.find(word).expect("word is in the line") + 1;
+    TerminalView::remote_link_from_candidates(
+        candidates_around(line, hover_col).into_iter(),
+        pwd,
+        SessionId::from(1),
+        1000,
+    )
+    .map(|link| {
+        let link = link.get_inner();
+        (
+            link.remote_path.clone(),
+            link.line_and_column_num.map(|line| line.line_num),
+            link.link.range.start().col,
+            link.link.range.end().col,
+        )
+    })
+}
+
+#[test]
+fn a_file_name_in_ls_output_links_to_the_file_in_the_blocks_directory() {
+    let line = "-rw-r--r-- 1 root root 1447 Sep 29 nginx.conf";
+    let start = line.find("nginx.conf").unwrap();
+
+    assert_eq!(
+        remote_link(line, "nginx.conf", "/etc/nginx"),
+        Some((
+            "/etc/nginx/nginx.conf".to_owned(),
+            None,
+            start,
+            line.len() - 1
+        ))
+    );
+    assert_eq!(remote_link(line, "root", "/etc/nginx"), None);
+    assert_eq!(remote_link(line, "1447", "/etc/nginx"), None);
+}
+
+#[test]
+fn a_path_with_a_line_number_in_an_error_links_to_that_line() {
+    let line = "nginx: [emerg] unknown directive \"foo\" in /etc/nginx/conf.d/a.conf:12";
+
+    let (path, line_num, _, end) = remote_link(line, "/etc/nginx", "/root").unwrap();
+
+    assert_eq!(path, "/etc/nginx/conf.d/a.conf");
+    assert_eq!(line_num, Some(12));
+    assert_eq!(end, line.len() - 1);
+}
+
+#[test]
+fn quotes_commas_and_a_final_period_are_left_out_of_the_link() {
+    let line = "edit \"/etc/hosts\", then /etc/fstab.";
+
+    let (path, _, start, end) = remote_link(line, "/etc/hosts", "/").unwrap();
+    assert_eq!(path, "/etc/hosts");
+    assert_eq!((start, end), (6, 15));
+
+    let (path, _, _, end) = remote_link(line, "/etc/fstab", "/").unwrap();
+    assert_eq!(path, "/etc/fstab");
+    assert_eq!(end, line.len() - 2);
 }

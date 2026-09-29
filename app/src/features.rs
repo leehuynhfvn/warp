@@ -107,6 +107,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::SshDragAndDrop,
         #[cfg(feature = "warp_sync")]
         FeatureFlag::WarpSync,
+        #[cfg(feature = "warp_sync_remote_edit")]
+        FeatureFlag::WarpSyncRemoteEdit,
         #[cfg(feature = "agent_bridge")]
         FeatureFlag::AgentBridge,
         #[cfg(feature = "agent_ops_policy")]

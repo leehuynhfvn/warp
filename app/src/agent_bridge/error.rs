@@ -94,6 +94,7 @@ impl From<WarpSyncError> for AgentBridgeError {
             WarpSyncError::Executor(message) => Self::Executor(message),
             WarpSyncError::LocalIo(message) => Self::Io(message),
             WarpSyncError::NotFound(_)
+            | WarpSyncError::NotAFile(_)
             | WarpSyncError::PermissionDenied { .. }
             | WarpSyncError::SpecialMode(_)
             | WarpSyncError::TooLarge { .. }
@@ -104,7 +105,6 @@ impl From<WarpSyncError> for AgentBridgeError {
             | WarpSyncError::NotMirrored(_)
             | WarpSyncError::Manifest(_)
             | WarpSyncError::AlreadyInProgress
-            | WarpSyncError::NoEditor
             | WarpSyncError::Editor(_)
             | WarpSyncError::Baseline(_)
             | WarpSyncError::PendingNotFound

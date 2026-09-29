@@ -24,6 +24,17 @@ pub struct EditorCli {
 }
 
 impl EditorCli {
+    pub const VS_CODE: Self = Self {
+        program: "code",
+        name: "VS Code",
+    };
+
+    /// The editor chosen for opening file links, or VS Code when that editor cannot show the
+    /// mirror.
+    pub fn from_settings_or_vs_code(ctx: &AppContext) -> Self {
+        Self::from_settings(ctx).unwrap_or(Self::VS_CODE)
+    }
+
     pub fn from_settings(ctx: &AppContext) -> Option<Self> {
         match *EditorSettings::as_ref(ctx).open_file_editor {
             EditorChoice::ExternalEditor(editor) => Self::for_editor(editor),
@@ -33,7 +44,7 @@ impl EditorCli {
 
     pub fn for_editor(editor: Editor) -> Option<Self> {
         let (program, name) = match editor {
-            Editor::VSCode => ("code", "VS Code"),
+            Editor::VSCode => return Some(Self::VS_CODE),
             Editor::VSCodeInsiders => ("code-insiders", "VS Code Insiders"),
             Editor::Cursor => ("cursor", "Cursor"),
             Editor::Windsurf => ("windsurf", "Windsurf"),

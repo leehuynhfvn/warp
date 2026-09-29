@@ -501,9 +501,12 @@ use crate::warp_sync::confirm_dialog::{
 };
 use crate::warp_sync::editor::{EditorCli, EditorRequest};
 use crate::warp_sync::path_prompt::{PathPromptKind, WarpSyncPathPrompt, WarpSyncPathPromptEvent};
+use crate::warp_sync::remote_edit::{
+    self, RemoteEditEvent, RemoteEditFile, RemoteEditModel, UploadResult,
+};
 use crate::warp_sync::{
-    MirrorLocation, SyncConfig, WarpSyncError, WarpSyncEvent, WarpSyncModel, host_mirror_dir,
-    normalize_remote_path, printable,
+    MirrorLocation, RemoteEditOutcome, RemoteEditStep, Requester, SyncConfig, WarpSyncError,
+    WarpSyncEvent, WarpSyncModel, host_mirror_dir, normalize_remote_path, printable,
 };
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -700,6 +703,8 @@ const NOTIFICATIONS_MAILBOX_POSITION_ID: &str = "workspace:notifications_mailbox
 pub(crate) const JUMP_TO_LATEST_TOAST_BINDING_NAME: &str = "workspace:jump_to_latest_toast";
 pub(crate) const TOGGLE_NOTIFICATION_MAILBOX_BINDING_NAME: &str =
     "workspace:toggle_notification_mailbox";
+pub(crate) const WARP_SYNC_OPEN_MIRROR_IN_EDITOR_BINDING_NAME: &str =
+    "workspace:warp_sync_open_mirror_in_editor";
 
 // these won't have to be public after we deprecate the code mode v1 project explorer which is defined in terminal
 pub(crate) const TOGGLE_PROJECT_EXPLORER_BINDING_NAME: &str = "workspace:toggle_project_explorer";
@@ -3267,6 +3272,11 @@ impl Workspace {
         if FeatureFlag::WarpSync.is_enabled() {
             ctx.subscribe_to_model(&WarpSyncModel::handle(ctx), |me, _, event, ctx| {
                 me.handle_warp_sync_event(event, ctx);
+            });
+        }
+        if remote_edit::is_enabled() {
+            ctx.subscribe_to_model(&RemoteEditModel::handle(ctx), |me, _, event, ctx| {
+                me.handle_remote_edit_event(event, ctx);
             });
         }
         if FeatureFlag::AgentOpsPolicy.is_enabled() {
@@ -19147,6 +19157,17 @@ impl Workspace {
             (Ok((session, remote_path)), PathPromptKind::Download) => {
                 warp_sync.start_download(session, remote_path, window_id, ctx)
             }
+            (Ok((session, remote_path)), PathPromptKind::Edit) => {
+                let requester = Requester::RemoteEdit {
+                    window_id,
+                    step: RemoteEditStep::Open {
+                        session_id: session.id(),
+                        hostname: session.hostname().to_owned(),
+                        line: None,
+                    },
+                };
+                warp_sync.start_download(session, remote_path, requester, ctx)
+            }
             (Ok((session, remote_path)), PathPromptKind::Upload) => {
                 warp_sync.start_upload(session, remote_path, window_id, ctx)
             }
@@ -19155,7 +19176,10 @@ impl Workspace {
             }
             (
                 Err(error),
-                PathPromptKind::Download | PathPromptKind::Upload | PathPromptKind::Compare,
+                PathPromptKind::Download
+                | PathPromptKind::Upload
+                | PathPromptKind::Compare
+                | PathPromptKind::Edit,
             ) => warp_sync.report_failure(window_id, error, ctx),
         });
     }
@@ -19222,7 +19246,8 @@ impl Workspace {
             | WarpSyncEvent::UploadNeedsConfirmation { window_id, .. }
             | WarpSyncEvent::CompareFinished { window_id, .. }
             | WarpSyncEvent::Succeeded { window_id, .. }
-            | WarpSyncEvent::Failed { window_id, .. } => *window_id,
+            | WarpSyncEvent::Failed { window_id, .. }
+            | WarpSyncEvent::RemoteEditFinished { window_id, .. } => *window_id,
         };
         if window_id != ctx.window_id() {
             return;
@@ -19273,7 +19298,148 @@ impl Workspace {
                     self.show_warp_sync_confirm_dialog(request, ctx);
                 }
             }
+            WarpSyncEvent::RemoteEditFinished { step, outcome, .. } => {
+                self.handle_remote_edit_finished(step, outcome, ctx);
+            }
         }
+    }
+
+    fn handle_remote_edit_finished(
+        &mut self,
+        step: &RemoteEditStep,
+        outcome: &RemoteEditOutcome,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match (step, outcome) {
+            (
+                RemoteEditStep::Open {
+                    session_id,
+                    hostname,
+                    line,
+                },
+                RemoteEditOutcome::Downloaded {
+                    local_path,
+                    remote_path,
+                    remote_user,
+                },
+            ) => {
+                let file = RemoteEditFile::new(
+                    *session_id,
+                    ctx.window_id(),
+                    remote_path.clone(),
+                    remote_user.clone(),
+                    hostname.clone(),
+                );
+                RemoteEditModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.register(local_path.clone(), file, ctx)
+                });
+                let layout = *EditorSettings::as_ref(ctx).open_file_layout;
+                self.open_file_with_target(
+                    local_path.clone(),
+                    FileTarget::CodeEditor(layout),
+                    *line,
+                    CodeSource::Link {
+                        path: local_path.clone(),
+                        range_start: None,
+                        range_end: None,
+                    },
+                    ctx,
+                );
+            }
+            (RemoteEditStep::Save { local_path }, RemoteEditOutcome::Uploaded) => {
+                self.finish_remote_edit_upload(local_path, UploadResult::Uploaded, ctx);
+            }
+            (RemoteEditStep::Save { local_path }, RemoteEditOutcome::Failed(message)) => {
+                let result = UploadResult::Failed(message.clone());
+                self.finish_remote_edit_upload(local_path, result, ctx);
+            }
+            (
+                RemoteEditStep::Open { .. },
+                RemoteEditOutcome::Uploaded | RemoteEditOutcome::Failed(_),
+            )
+            | (RemoteEditStep::Save { .. }, RemoteEditOutcome::Downloaded { .. }) => {}
+        }
+    }
+
+    fn finish_remote_edit_upload(
+        &mut self,
+        local_path: &Path,
+        result: UploadResult,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        RemoteEditModel::handle(ctx).update(ctx, |model, ctx| {
+            model.upload_finished(local_path, result, ctx)
+        });
+    }
+
+    /// Reports that a dialog that was waiting for a decision was dismissed without one.
+    fn warp_sync_pending_cancelled(
+        &mut self,
+        step: Option<RemoteEditStep>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match step {
+            Some(RemoteEditStep::Save { local_path }) => {
+                self.finish_remote_edit_upload(&local_path, UploadResult::Cancelled, ctx);
+            }
+            Some(RemoteEditStep::Open { .. }) | None => {}
+        }
+    }
+
+    fn handle_remote_edit_event(&mut self, event: &RemoteEditEvent, ctx: &mut ViewContext<Self>) {
+        match event {
+            RemoteEditEvent::UploadRequested {
+                window_id,
+                local_path,
+                session_id,
+                remote_path,
+            } if *window_id == ctx.window_id() => {
+                let Some(session) = self.live_session(*session_id, ctx) else {
+                    let error = "the terminal session that opened this file has ended. Open the \
+                                 file again from a session connected to the server.";
+                    self.finish_remote_edit_upload(
+                        local_path,
+                        UploadResult::Failed(error.to_owned()),
+                        ctx,
+                    );
+                    self.show_warp_sync_toast(
+                        DismissibleToast::error(format!("Not uploaded: {error}")),
+                        ctx,
+                    );
+                    return;
+                };
+                let requester = Requester::RemoteEdit {
+                    window_id: *window_id,
+                    step: RemoteEditStep::Save {
+                        local_path: local_path.clone(),
+                    },
+                };
+                let remote_path = remote_path.clone();
+                WarpSyncModel::handle(ctx).update(ctx, |warp_sync, ctx| {
+                    warp_sync.start_upload(session, remote_path, requester, ctx)
+                });
+            }
+            RemoteEditEvent::UploadRequested { .. } | RemoteEditEvent::StateChanged { .. } => {}
+        }
+    }
+
+    /// The session with `session_id` if it is still the active session of one of this window's
+    /// terminal panes: a session that was exited, or whose tab was closed, is not.
+    fn live_session(
+        &self,
+        session_id: SessionId,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<Arc<Session>> {
+        self.tab_views()
+            .flat_map(|pane_group| pane_group.as_ref(ctx).terminal_views(ctx))
+            .find_map(|terminal| {
+                terminal
+                    .as_ref(ctx)
+                    .active_session()
+                    .as_ref(ctx)
+                    .session(ctx)
+                    .filter(|session| session.id() == session_id)
+            })
     }
 
     fn show_warp_sync_toast(
@@ -19295,7 +19461,9 @@ impl Workspace {
             .warp_sync_confirm_dialog
             .update(ctx, |dialog, ctx| dialog.set_request(request, ctx));
         if let Some(id) = replaced.and_then(|replaced| replaced.kind.pending_id()) {
-            WarpSyncModel::handle(ctx).update(ctx, |warp_sync, _| warp_sync.cancel_pending(id));
+            let step =
+                WarpSyncModel::handle(ctx).update(ctx, |warp_sync, _| warp_sync.cancel_pending(id));
+            self.warp_sync_pending_cancelled(step, ctx);
         }
         self.current_workspace_state
             .is_warp_sync_confirm_dialog_open = true;
@@ -19347,7 +19515,9 @@ impl Workspace {
             },
             WarpSyncConfirmEvent::Cancel { request } => {
                 if let Some(id) = request.kind.pending_id() {
-                    WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_pending(id));
+                    let step =
+                        WarpSyncModel::handle(ctx).update(ctx, |model, _| model.cancel_pending(id));
+                    self.warp_sync_pending_cancelled(step, ctx);
                 }
             }
         }
@@ -22218,6 +22388,52 @@ impl Workspace {
         .finish()
     }
 
+    /// Opens the Warp Sync mirror of the active remote session's host in VS Code (or the editor
+    /// chosen for file links). Only shown while the active pane is in a remote session.
+    fn render_warp_sync_mirror_button(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        if !FeatureFlag::WarpSync.is_enabled() {
+            return None;
+        }
+        let session = self
+            .active_tab_pane_group()
+            .as_ref(ctx)
+            .active_session_view(ctx)?
+            .as_ref(ctx)
+            .active_session()
+            .as_ref(ctx)
+            .session(ctx)
+            .filter(|session| !session.is_local())?;
+        let tooltip = format!(
+            "Open the mirror of {}@{} in {}",
+            printable(session.user()),
+            printable(session.hostname()),
+            EditorCli::from_settings_or_vs_code(ctx).name()
+        );
+        Some(
+            Align::new(
+                self.render_tab_bar_icon_button(
+                    appearance,
+                    icons::Icon::Code2,
+                    &self.mouse_states.warp_sync_mirror_in_editor,
+                    WorkspaceAction::WarpSyncOpenMirrorInEditor,
+                    tooltip,
+                    keybinding_name_to_display_string(
+                        WARP_SYNC_OPEN_MIRROR_IN_EDITOR_BINDING_NAME,
+                        ctx,
+                    ),
+                    false,
+                    false,
+                )
+                .finish(),
+            )
+            .finish(),
+        )
+    }
+
     /// Adds the configurable right-side toolbar items plus the fixed controls
     /// (update pill, offline indicator, avatar, etc.) that are not configurable.
     fn add_configurable_right_side_tab_bar_controls(
@@ -22242,6 +22458,14 @@ impl Workspace {
             target.add_child(
                 Container::new(self.render_offline_button(appearance))
                     .with_margin_right(4.)
+                    .finish(),
+            );
+        }
+
+        if let Some(button) = self.render_warp_sync_mirror_button(appearance, ctx) {
+            target.add_child(
+                Container::new(button)
+                    .with_margin_left(TAB_BAR_ICON_PADDING)
                     .finish(),
             );
         }
@@ -25860,6 +26084,7 @@ impl TypedActionView for Workspace {
             WarpSyncComparePath => self.open_warp_sync_path_prompt(PathPromptKind::Compare, ctx),
             WarpSyncDownloadPath => self.open_warp_sync_path_prompt(PathPromptKind::Download, ctx),
             WarpSyncUploadPath => self.open_warp_sync_path_prompt(PathPromptKind::Upload, ctx),
+            WarpSyncEditRemoteFile => self.open_warp_sync_path_prompt(PathPromptKind::Edit, ctx),
             AgentBridgeAttach { read_only } => self.agent_bridge_attach(*read_only, ctx),
             AgentBridgeRevoke => self.agent_bridge_revoke(ctx),
             AgentBridgeRevokeAll => self.agent_bridge_revoke_all(ctx),

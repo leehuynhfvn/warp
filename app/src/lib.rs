@@ -1886,6 +1886,7 @@ pub(crate) fn initialize_app(
 
     ctx.add_singleton_model(remote_server::manager::RemoteServerManager::new);
     ctx.add_singleton_model(|_ctx| warp_sync::WarpSyncModel::new());
+    ctx.add_singleton_model(|_ctx| warp_sync::remote_edit::RemoteEditModel::new());
     ctx.add_singleton_model(|_ctx| agent_bridge::model::AgentBridgeModel::default());
     #[cfg(not(target_family = "wasm"))]
     ctx.add_singleton_model(remote_server::codebase_index_model::RemoteCodebaseIndexModel::new);
