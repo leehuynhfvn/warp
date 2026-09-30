@@ -255,6 +255,29 @@ thường; tag còn nguyên sau khi sửa ở cả hai phía; `~/.ssh/config` do
 ngoài dòng `Include`); G2 chỉ bật sau gate O2; kênh exec trực tiếp (G3) đo
 được song song trên host `sudo NOPASSWD`; G4 có lịch sử + rollback thử trên host lab.
 
+### LC — Chạy hoàn toàn local (thêm 2026-09-30, làm ngay sau G2a, trước G3)
+
+Mục tiêu: bản build hằng ngày của người dùng **không phụ thuộc cloud của Warp** (đăng nhập, Drive, AI của
+Warp, autoupdate, SSH extension tải binary từ `app.warp.dev`, crash report) và không chạy tính năng không
+dùng tới. Agent Ops (Bridge, policy, danh bạ, open_session, Warp Sync, E) vốn đã local.
+
+Hiện trạng (đọc code 2026-09-30): binary `warp-oss` đã không có telemetry/crash/autoupdate config; Drive và
+AI của Warp đang tắt (palette không có chip Workflows/Notebooks/Drive/Conversations). Thứ còn bật thêm là do
+cargo feature `release_bundle`: nó nạp `RELEASE_FLAGS` (`Autoupdate`, `Changelog`, `CrashReporting`,
+`VideoRecording`, `ImeMarkedText`, `SshRemoteServer`) — nguồn của hộp thoại "Install Warp's SSH extension" và
+lỗi log autoupdate. Người dùng chỉ cần `release_bundle` để VS Code mở tab trong Warp đang chạy.
+
+- **LC1 (code xong 2026-09-30, chờ thử):** cargo feature `single_instance` (Linux) bật riêng việc chuyển lần mở thứ hai sang
+  tab mới của Warp đang chạy, không kéo `RELEASE_FLAGS`. Build hằng ngày bỏ `release_bundle`. Autoupdate không
+  poll trên kênh không có bản phát hành.
+- **LC2:** cargo feature `local_only`: sau khi khởi tạo cờ, tắt cứng danh sách cờ cloud/không dùng (tối thiểu
+  `SshRemoteServer`, `Autoupdate`, `Changelog`, `CrashReporting`, `VideoRecording`, computer use của agent Warp,
+  `CommandPaletteFileSearch`), và ẩn các lối vào tương ứng (chip `files` của palette: hiện chạy tìm file ở
+  **mọi** lần gõ palette, `run_when_unfiltered`). Không dùng `--no-default-features` (hơn 200 feature mặc định,
+  dễ vỡ build; phần lớn tính năng cloud đã tự tắt khi không đăng nhập).
+- **LC3:** kiểm chứng: chạy Warp một giờ dùng bình thường với `strace -f -e trace=connect` (hoặc chặn mạng ra
+  ngoài trừ SSH) và liệt kê mọi kết nối ra ngoài; mỗi kết nối còn lại phải có lý do hoặc được tắt ở LC2.
+
 ### O3 — Bộ công cụ quan sát + runbook (hầu như không sửa Warp)
 
 - Gắn **`grafana/mcp-grafana`** (MCP chính thức của Grafana) cho Claude Code / Codex / Gemini CLI.
@@ -355,6 +378,7 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 - [x] O2 Policy + duyệt phía Warp (plan: `specs/agent-ops/O2_POLICY_PLAN.md`; xong 2026-09-29, CHECKPOINT P1–P3 đạt, gồm fix toast pairing P28) · [ ] gate O2 (≥ 1 tuần dùng hằng ngày trên host lab: 2026-09-29 → sớm nhất 2026-10-06)
 - [x] E sửa file từ xa ngay trong Warp (plan: `specs/agent-ops/E_REMOTE_EDIT_PLAN.md`; xong 2026-09-29, CHECKPOINT EA–EC đạt; flag `WarpSyncRemoteEdit`, cargo feature `warp_sync_remote_edit`) · [x] E1 luồng Edit in Warp (+ nút tab bar mở mirror trong VS Code) · [x] E2 bấm đường dẫn trong output SSH (hover, Cmd/Ctrl-click, chuột phải) · [x] E3 tô màu file cấu hình hệ thống (7 grammar, bộ chọn ngôn ngữ ở footer, `code.editor.language_overrides`)
 - [x] G1 danh bạ server (xong 2026-09-30, CHECKPOINT HA–HD đạt: G1a kho · G1b tự nhập từ ssh config · G1c ghi ngược + tag · quick connect · G1d nối Warp Sync + `list_hosts`; agent chỉ *đọc* danh bạ, chưa mở được session) · [ ] G2 agent tự mở session (sau O2) · [ ] G3 transport theo host · [ ] G4 sửa file qua mirror Warp Sync · [ ] G5 dòng thời gian (plan: `specs/agent-ops/G_GATEWAY_PLAN.md`, hiện chỉ chi tiết G1, đã xong)
+- [ ] LC chạy hoàn toàn local · [ ] LC1 `single_instance` thay `release_bundle` (code xong, chờ người dùng thử VS Code) · [ ] LC2 `local_only` · [ ] LC3 kiểm chứng kết nối ra ngoài
 - [ ] O3 mcp-grafana + `ops-runbooks` · [ ] gate O3
 - [ ] O4 spike HolmesGPT · [ ] runner · [ ] shadow 2 tuần
 - [ ] O5a MCP incident tools · [ ] O5b panel GUI
@@ -379,3 +403,4 @@ nhiều lượt. Ưu tiên thấp; mỗi lần rebase upstream sẽ tốn công.
 | AO13 | 2026-09-29 | Người dùng giao Claude quyết định thiết kế và thứ tự roadmap; người dùng giữ các CHECKPOINT test tay và gate có số liệu. Thứ tự sau CHECKPOINT P3: bắt đầu tuần dùng thử gate O2, **song song** viết `G_GATEWAY_PLAN.md` và làm G1 (do người thao tác, không phụ thuộc O2); O3 chạy song song khi người dùng sửa được các MCP `grafana-*` (vẫn `CONNECTION_CLOSED` ngày 2026-09-29); G2+ chỉ sau gate O2 như AO7 | Tuần dùng thử O2 là thời gian chờ, không cần code mới; G1 là việc lớn nhất không bị chặn và là nền của G2–G4; test tay vừa bắt được lỗi toast pairing (P28 của O2) nên không bỏ bước đó |
 | AO14 | 2026-09-29 | Thêm phase **E** (sửa file từ xa ngay trong Warp) và làm **trước G1**; sau E mới tới G1. Gate O2 (tuần dùng thử) chạy song song | Người dùng yêu cầu; E là thao tác của người nên không phụ thuộc O2; E xây đường ống download → sửa → upload → commit mà G4 dùng lại cho agent |
 | AO15 | 2026-09-29 | Tô màu cú pháp giữ **cục bộ** bằng tree-sitter có sẵn (`arborium`), mở rộng bằng grammar nhúng + ánh xạ `glob → ngôn ngữ` trong settings. **Không** dùng "syntax server công khai" | Tô màu không cần mạng và đã nhanh; gửi nội dung file `/etc` (mật khẩu, khoá) lên dịch vụ công khai là lộ bí mật; LSP là việc khác (chẩn đoán lỗi, gợi ý), không cần cho file cấu hình |
+| AO16 | 2026-09-30 | Thêm phase **LC** (chạy hoàn toàn local), làm ngay sau G2a và trước G3; G2b chưa làm tới khi người dùng yêu cầu. Tắt tính năng cloud bằng cờ runtime dưới một cargo feature `local_only`, không bằng `--no-default-features`; `release_bundle` thay bằng `single_instance` | Người dùng muốn dùng hoàn toàn local và dùng thử các tính năng hiện có trước khi yêu cầu thêm; `release_bundle` đang kéo theo autoupdate, SSH extension, crash report |

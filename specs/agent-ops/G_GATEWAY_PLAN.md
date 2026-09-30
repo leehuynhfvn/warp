@@ -462,41 +462,397 @@ liên quan; **cuối phase 5**: test liên quan → clippy (`-p warp -p local_co
 
 ### G2.4 Checklist test tay (người dùng) — ⛔ CHECKPOINT H2A
 
-Build: `./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,warp_sync_remote_edit,agent_ops_hosts,agent_ops_open_session,release_bundle`.
-`W=…/target/debug/warp-oss`; `P=~/.warp/agent-ops/policy.toml` (`chmod 600`); tuần tự, dùng một VM/host **lab** có
-key (không mật khẩu) đã có trong Servers (ví dụ alias `lab-x`) và một host khác không có luật (ví dụ `prod-y`, **đừng** dùng
-prod thật). Sau mỗi bước xem `tail -3 ~/.warp/agent-bridge/audit.jsonl`.
+Mỗi bước có 4 phần: **Làm** (lệnh/thao tác cụ thể), **Kỳ vọng**, **Ghi lại** (cái cần báo lại cho Claude), **Dọn** (đưa về trạng thái ban đầu
+cho bước sau). Làm tuần tự; bước nào lệch kỳ vọng thì **dừng** và dán cho Claude: câu bạn gõ, kết quả Claude trả, 3 dòng audit cuối.
 
-**H2A.1 — Chưa pair:** thêm MCP server thứ hai chạy `warpctrl mcp --no-pair` (tên `warp-bridge-nopair`); `open_session`
-host `lab-x` → lỗi `policy_denied` "not paired"; không có tab mới, không hộp thoại.
-**H2A.2 — Hỏi (mặc định):** `P` không có `[open]` (hoặc không có file). Từ Claude Code (đã pair) `open_session {host:"lab-x",
-access:"read_only", purpose:"kiểm tra dung lượng đĩa"}` → toast không tự tắt "'claude-code' wants to open a session to lab-x" +
-hộp thoại: agent "(paired)", Access, Purpose, `Connects as`, tag; Enter không làm gì; Esc đóng (request vẫn chờ); **Deny** → Claude
-nhận "the user denied it"; **không** có tab mới.
-**H2A.3 — Approve:** lặp lại, Approve → tab `Agent · lab-x` nằm trong nhóm **Agents** (mở rộng), tab bạn đang xem **không bị đổi**;
-ssh chạy, Warpify xong; Claude nhận `ready` với `session_id`, `user@host`, read-only. `list_sessions` thấy nó đã attach;
-`read_file /etc/hostname` được; `exec` bị từ chối (chỉ đọc). Header pane của tab đó hiện "Agents · read-only". *(Tab nền có bootstrap
-được không — ghi kết quả.)*
-**H2A.4 — Luật allow:** `[[open.hosts]] match="lab-*" mode="allow" max_access="full"`: `open_session lab-x access:full` → mở **không
-hỏi**; `exec` đầu tiên trên đó vẫn hỏi như O2. `prod-y` (không luật) vẫn hỏi. `mode="deny"` cho một host → từ chối ngay, không tab.
-**H2A.5 — Vượt mức:** `max_access="read_only"` + `open_session … access:full` → hỏi (không tự hạ xuống read-only).
-**H2A.6 — Giới hạn:** mở `lab-x` lần thứ 3 trong khi `max_sessions_per_host=2` → `policy_denied` nêu "already has 2 sessions"; hạ
-`max_sessions_per_agent=1` → lần mở thứ 2 (host khác) bị từ chối.
-**H2A.7 — close_session:** đóng session do agent mở → tab biến mất (**ghi nhận có hộp thoại xác nhận hay không**), attach mất;
-`close_session` với session bạn mở tay và attach tay → từ chối "not opened by this agent"; đóng lại session đã đóng → lỗi rõ.
-**H2A.8 — Đóng tay:** bạn tự đóng một tab do agent mở → mở lại được (giới hạn được giải phóng).
-**H2A.9 — Giành lại quyền:** bấm Revoke trên header tab agent → Claude nhận `session_not_attached`; tab còn; `close_session` vẫn đóng được.
-**H2A.10 — Chậm/hỏi:** `wait_secs:15` với host cần passphrase hoặc host key mới → sau 15 s Claude nhận `connecting` (không phải lỗi);
-gõ passphrase trong tab → Warpify xong → session **tự attach** (không cần Claude gọi lại; `list_sessions` thấy `attached`).
-**H2A.11 — Alias xấu:** `hosts.toml` có `a;b`, `open_session host:"a;b"` và `host:"-oProxyCommand=x"` → `invalid_params`; host `missing`/không có → từ chối,
-gợi ý `list_hosts`.
-**H2A.12 — Song song:** hai `open_session lab-x` liên tiếp → hai tab, hai session; `exec` song song trên hai session.
-**H2A.13 — Audit:** có `remote.session.open`/`close` với `agent`, `agent_id`, `request_id`, `purpose`, `access`, `policy_decision`; không có nội dung nào giống bí mật.
-**H2A.14 — Khởi động lại Warp:** registry và attach mất; tab (nếu khôi phục) không attach; mở lại được.
-**H2A.15 — Không cờ:** bản build **không** có `agent_ops_open_session` → `open_session` trả `unsupported_action`; `list_hosts`/`exec` không đổi.
-**H2A.16 — Lên root (nếu muốn thử):** host `sudo_nopasswd` (Settings > Servers) + `added_subshell_commands` có `sudo -i`: `open_session … root:true`
-→ hộp thoại ghi "Runs sudo -i for you"; sau Approve tab tự chạy `sudo -i`, Warpify, Claude nhận `elevation: elevated`, user `root`.
-Host `sudo_password` hoặc thiếu `sudo -i` trong Warpify → session mở ở mức user, `elevation: skipped` + lý do.
+#### Chuẩn bị (làm một lần)
+
+**P0 — Chọn host thử.** Dùng host homelab có key, không mật khẩu, **đừng dùng prod**. Trong `~/.ssh/config` của bạn có sẵn:
+
+| Vai trò | Alias | Ghi chú |
+|---|---|---|
+| `LAB` | `home-docker-02` | `root@192.168.100.211:22`, key `~/.ssh/id_rsa`. Host chính để mở session |
+| `OTHER` | `home-docker-03` | `root@192.168.100.212:22`. Host **không có luật** `[open]`, dùng cho H2A.2, H2A.4, H2A.6, H2A.10 |
+
+Đổi sang host khác nếu muốn, nhưng phải có trong Settings > Servers (không `missing`) và đăng nhập được bằng key. Kiểm ngay ngoài Warp
+(kết quả phải là hostname, **không** hỏi gì, không treo):
+
+```bash
+ssh -o BatchMode=yes home-docker-02 hostname
+ssh -o BatchMode=yes home-docker-03 hostname
+```
+
+Lỗi `Permission denied` hoặc `Host key verification failed` ⇒ sửa trước (`ssh home-docker-02` một lần, gõ `yes`, nhập passphrase), nếu không H2A.3
+sẽ treo mà bạn không biết vì sao. Trong Warp, xác nhận `list_hosts` (hoặc Settings > Servers) thấy cả hai alias.
+
+**P1 — Build và chạy Warp.**
+
+```bash
+cd /projects/github/warp-agent-bridge
+./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,warp_sync_remote_edit,agent_ops_hosts,agent_ops_open_session,release_bundle
+```
+
+`release_bundle` tuỳ chọn như các lần trước. Chạy xong Warp mở lên là bản để test; **không** đóng nó trừ khi bước yêu cầu (H2A.14, H2A.15).
+Cờ `agent_ops_open_session` là thứ bật `open_session`; thiếu nó thì mọi bước dưới đều trả `unsupported_action`.
+
+**P2 — Hai hàm shell** (dán vào terminal **ngoài Warp** hoặc một tab local, dùng suốt buổi test):
+
+```bash
+# Xem N dòng audit cuối, gọn, không hiện nội dung lệnh dài
+aud() { tail -n "${1:-3}" ~/.warp/agent-bridge/audit.jsonl | jq -c '{ts_unix, action, host, session_id, result, agent, agent_id, request_id, purpose, access, policy_decision}'; }
+
+# Ghi lại policy.toml = bản gốc + phần bạn truyền qua stdin (heredoc). `setopen </dev/null` = về bản gốc.
+setopen() { cp ~/.warp/agent-ops/policy.toml.bak-h2a ~/.warp/agent-ops/policy.toml && cat >> ~/.warp/agent-ops/policy.toml && chmod 600 ~/.warp/agent-ops/policy.toml; }
+```
+
+**P3 — Sao lưu policy gốc** (một lần; file hiện chưa có mục `[open]`, tức là mọi host đều **hỏi**):
+
+```bash
+cp -p ~/.warp/agent-ops/policy.toml ~/.warp/agent-ops/policy.toml.bak-h2a
+chmod 600 ~/.warp/agent-ops/policy.toml.bak-h2a
+grep -c '^\[open' ~/.warp/agent-ops/policy.toml     # phải in 0
+```
+
+`policy.toml` được đọc lại ở **mỗi request**, sửa xong có hiệu lực ngay, không restart. Nếu file sai cú pháp hoặc không phải `0600` thì mọi request bị từ chối
+kèm lý do, đó là fail-closed chứ không phải lỗi của bước.
+
+**P4 — Đăng ký MCP server thứ hai** (chỉ H2A.1 cần; làm sớm để khỏi quên). Đây là **cùng binary**, thêm cờ `--no-pair` nên nó không bao giờ gửi token đã pair:
+
+```bash
+claude mcp add --scope user warp-bridge-nopair -- /projects/github/warp-agent-bridge/target/debug/warp-oss --warpctrl mcp --no-pair
+claude mcp list          # phải thấy warp-bridge và warp-bridge-nopair, cả hai Connected
+```
+
+Claude Code chỉ nạp MCP server mới khi **mở phiên mới** (hoặc gõ `/mcp` để kết nối lại). Tool của server này tên `mcp__warp-bridge-nopair__open_session`;
+tool của server đã pair tên `mcp__warp-bridge__open_session`. Xong buổi test: `claude mcp remove warp-bridge-nopair --scope user`.
+
+**P5 — Cách ra lệnh cho Claude Code.** Nói thẳng tên tool và tham số, kèm yêu cầu trả nguyên văn, ví dụ:
+
+> Dùng tool `open_session` của MCP `warp-bridge` (không phải tool nào khác): host `home-docker-02`, access `read_only`, purpose `kiểm tra dung lượng đĩa`.
+> Đừng tự thử lại hay tự sửa nếu bị từ chối; dán **nguyên văn** kết quả hoặc lỗi trả về.
+
+Với server không pair: đổi thành "MCP `warp-bridge-nopair`". Các câu mẫu khác dùng cùng khuôn: đổi host, `access`, `purpose`, `wait_secs`, `root`.
+
+**P6 — Cần nhìn ở đâu trong Warp.**
+
+- **Tab và nhóm `Agents`:** thanh tab (hoặc panel tab dọc). Nhóm `Agents` chỉ hiện khi có tab do agent mở (`GroupedTabs` bật mặc định). Tab đặt tên `Agent · <alias>`.
+- **Toast** "wants to open a session to …" và nút **Review** mở hộp thoại duyệt. Toast không tự tắt cho tới khi bạn xử lý hoặc hết giờ (5 phút thì tự Deny).
+- **Palette:** `Ctrl+Shift+P`, gõ `Agent Bridge`: `Allow agents to control this session` (full), `Allow agents to read this session (read-only)`, `Revoke access to this session`, `Revoke all sessions`.
+- **Session nào đang attach:** bảo Claude gọi `list_sessions` (cho biết `attached` và mức `read-only`/`full`).
+- **Audit:** `aud 3` (P2).
+
+**P7 — Mẫu báo kết quả** (dán vào chat cuối buổi hoặc theo từng bước): `H2A.n: đạt / không đạt / bỏ qua — ghi chú`. Các mục **Ghi lại** bên dưới là những thông tin
+Claude cần để chốt các câu hỏi còn treo ở mục G2.1 (tab nền, Warpify có hỏi trước, đóng tab có hộp thoại, `sudo -i`).
+
+---
+
+#### H2A.1 — Chưa pair
+
+**Làm**
+1. Đảm bảo P4 đã xong và phiên Claude Code mới thấy `warp-bridge-nopair`.
+2. Bảo Claude: "Dùng tool `open_session` của MCP `warp-bridge-nopair`: host `home-docker-02`, access `read_only`, purpose `test chưa pair`. Dán nguyên văn kết quả."
+3. `aud 2`.
+
+**Kỳ vọng**
+- Claude nhận lỗi `policy_denied`, nội dung có "needs an agent that is paired with Warp … without --no-pair".
+- **Không** có tab mới, **không** toast, **không** hộp thoại.
+- Audit: không có dòng `started` nào cho lần gọi này (nếu có dòng từ chối thì cũng không kèm tab).
+
+**Ghi lại:** đúng mã lỗi và câu chữ; có dòng audit mới hay không.
+**Dọn:** không cần. (Server `warp-bridge-nopair` để nguyên tới hết buổi, mọi bước sau dùng `warp-bridge`.)
+
+#### H2A.2 — Hỏi (mặc định, chưa có luật)
+
+**Làm**
+1. `setopen </dev/null` (về policy gốc, không có `[open]`).
+2. Bảo Claude (MCP `warp-bridge`): host `home-docker-02`, access `read_only`, purpose `kiểm tra dung lượng đĩa`, `wait_secs` `120`.
+3. Trong Warp: xem toast, bấm **Review**, đọc hộp thoại.
+4. Thử phím **Enter** (không được làm gì), rồi **Esc** (đóng hộp thoại, request vẫn chờ, toast vẫn còn). Mở lại bằng Review.
+5. Bấm **Deny**.
+6. `aud 4`.
+
+**Kỳ vọng**
+- Toast không tự tắt: "'claude-code' wants to open a session to home-docker-02".
+- Hộp thoại có: agent `claude-code (paired)`, `Access: read-only`, `Purpose: kiểm tra dung lượng đĩa`, `Connects as: root@192.168.100.211:22` (có thể chưa có nếu `ssh -G` chậm),
+  tag (nếu có), dòng root nói không lên root. Chỉ có **Deny** / **Approve**, không có "Allow in session".
+- Sau Deny: Claude nhận "the user denied it". **Không** có tab mới.
+- Audit: `approval_requested`, rồi dòng kết thúc từ chối; `purpose` và `access` có mặt.
+
+**Ghi lại:** hộp thoại thiếu/dư trường nào; Enter có làm gì không; toast có tắt không.
+**Dọn:** không cần.
+
+#### H2A.3 — Approve
+
+**Làm**
+1. Đứng ở **tab A** bất kỳ (ghi nhớ tab nào), gõ dở vài chữ vào prompt của tab A (để thử "không cướp focus").
+2. Lặp lại yêu cầu của H2A.2, lần này **Approve**.
+3. Quan sát ngay lúc tab mới hiện: tab đang xem có đổi không, chữ đang gõ có còn ở tab A không.
+4. Chờ Claude nhận kết quả. Trong tab `Agent · home-docker-02` xem ssh chạy và Warpify (khối/banner xuất hiện).
+5. Bảo Claude: gọi `list_sessions`; `read_file` `/etc/hostname` trên session đó; rồi `exec` `hostname` trên session đó (phải bị từ chối vì read-only).
+6. Nhìn header pane của tab agent.
+
+**Kỳ vọng**
+- Tab `Agent · home-docker-02` nằm trong nhóm **Agents** (nhóm mở rộng). Tab bạn đang xem **không đổi** (nhưng chỉ số tab có thể dịch 1 vì nhóm `Agents` nằm đầu, GD38: kiểm bằng *tab nào* đang được chọn, không bằng số thứ tự).
+- Claude nhận `ready` gồm `session_id`, `root@home-docker-02` (hoặc user@host), `read-only`, `elevation: not_requested`.
+- `list_sessions` thấy session đó `attached`; `read_file` được; `exec` bị từ chối vì chỉ đọc.
+- Header pane hiện "Agents · read-only".
+
+**Ghi lại:** *(quan trọng)* tab **nền** có bootstrap ssh/Warpify bình thường không, hay đứng im tới khi bạn bấm vào tab (nếu đứng im thì GD30 lùi về "kích hoạt tab mới"). Chữ đang gõ có bị nhảy tab không. Thời gian từ Approve tới `ready`.
+**Dọn:** để session mở cho H2A.7 (hoặc đóng bằng H2A.7 ngay).
+
+#### H2A.4 — Luật `allow`
+
+**Làm**
+1. Đặt luật cho LAB:
+```bash
+setopen <<'EOF'
+
+[open]
+[[open.hosts]]
+match = "home-docker-02"
+mode = "allow"
+max_access = "full"
+EOF
+```
+2. Bảo Claude: `open_session` host `home-docker-02`, access `full`, purpose `thử luật allow`.
+3. Bảo Claude `exec` `hostname` trên session vừa mở. Xem hộp thoại O2 (hỏi quyền chạy lệnh).
+4. Bảo Claude: `open_session` host `home-docker-03` (OTHER, không luật), access `read_only`. → phải hỏi; bấm **Deny**.
+5. Đổi luật, thêm deny cho OTHER:
+```bash
+setopen <<'EOF'
+
+[open]
+[[open.hosts]]
+match = "home-docker-02"
+mode = "allow"
+max_access = "full"
+[[open.hosts]]
+match = "home-docker-03"
+mode = "deny"
+EOF
+```
+6. Lại `open_session` `home-docker-03`. `aud 5`.
+
+**Kỳ vọng**
+- Bước 2: mở tab **ngay**, không toast, không hộp thoại; `ready` với `full`.
+- Bước 3: `exec` đầu tiên **vẫn hỏi** như O2 (tự attach không cấp quyền chạy lệnh); Approve thì chạy được.
+- Bước 4: OTHER vẫn hỏi.
+- Bước 6: từ chối **ngay** (`policy_denied`), không tab, không hộp thoại.
+- Audit: `policy_decision` khác nhau giữa allow / ask / deny.
+
+**Ghi lại:** `policy_decision` của từng dòng; có hộp thoại thừa/thiếu không.
+**Dọn:** đóng tab agent đã mở (`close_session` hoặc tay). Giữ luật cho bước sau tuỳ bước.
+
+#### H2A.5 — Vượt mức `max_access`
+
+**Làm**
+1. Đặt luật (dán vào terminal ngoài Warp):
+```bash
+setopen <<'EOF'
+
+[open]
+[[open.hosts]]
+match = "home-docker-02"
+mode = "allow"
+max_access = "read_only"
+EOF
+```
+2. `open_session` `home-docker-02`, access `full`, purpose `thử vượt mức`.
+3. Đọc hộp thoại rồi **Deny**.
+4. `open_session` `home-docker-02`, access `read_only` → phải mở không hỏi. Đóng nó.
+
+**Kỳ vọng**
+- Bước 2: **hỏi** (không tự hạ xuống read-only), hộp thoại ghi `Access: full`.
+- Bước 4: mở ngay, không hỏi.
+
+**Ghi lại:** hộp thoại ghi `full` hay `read-only`. **Dọn:** đóng tab agent.
+
+#### H2A.6 — Giới hạn
+
+Giới hạn tính **theo từng agent** (không tính session bạn mở tay).
+
+**Làm**
+1. Đặt luật (dán vào terminal ngoài Warp):
+```bash
+setopen <<'EOF'
+
+[open]
+max_sessions_per_host = 2
+[[open.hosts]]
+match = "home-docker-02"
+mode = "allow"
+max_access = "read_only"
+EOF
+```
+2. `open_session` `home-docker-02` (read_only) **3 lần liên tiếp** (mỗi lần chờ `ready`, đừng đóng).
+3. Đóng cả hai tab agent (`close_session` hoặc tay), rồi:
+```bash
+setopen <<'EOF'
+
+[open]
+max_sessions_per_agent = 1
+[[open.hosts]]
+match = "home-docker-02"
+mode = "allow"
+max_access = "read_only"
+EOF
+```
+4. `open_session` `home-docker-02` (mở được), rồi `open_session` `home-docker-03` (host khác).
+
+**Kỳ vọng**
+- Bước 2: hai lần đầu `ready`; lần 3 lỗi `policy_denied`: "you already have 2 sessions open on home-docker-02; close one with close_session first." Không có tab thứ ba, không hộp thoại.
+- Bước 4: lần 2 lỗi: "you already have 1 sessions open; close one with close_session first." và **không** hiện hộp thoại (giới hạn kiểm **trước** policy).
+
+**Ghi lại:** câu chữ lỗi thật. **Dọn:** `setopen </dev/null`, đóng tab agent.
+
+#### H2A.7 — `close_session`
+
+**Làm**
+1. Mở một session agent (luật allow như H2A.6 cho nhanh, hoặc Approve).
+2. Bảo Claude gọi `close_session` với `session_id` đó.
+3. Quan sát tab. Gọi lại `close_session` lần hai với cùng id.
+4. Tự mở **tay** một tab ssh tới `home-docker-02` (`ssh home-docker-02`, Warpify), attach tay (palette `Agent Bridge: Allow agents to read this session (read-only)`), rồi bảo Claude `close_session` với `session_id` của tab tay đó (lấy từ `list_sessions`).
+
+**Kỳ vọng**
+- Bước 3: tab biến mất, attach mất; lần gọi thứ hai lỗi rõ "cannot find that session any more".
+- Bước 4: từ chối "this session was not opened by you, so it is not yours to close. Sessions the user opened stay open until the user closes them." Tab tay còn nguyên.
+
+**Ghi lại:** *(quan trọng)* khi đóng tab agent có **hộp thoại xác nhận** (kiểu "process still running") không? Nếu có, Claude bị treo hay nhận lỗi?
+**Dọn:** đóng tab tay.
+
+#### H2A.8 — Đóng tay
+
+**Làm**
+1. Với luật `max_sessions_per_host = 2` (như H2A.6 bước 1): mở 2 session agent tới `home-docker-02`. Xác nhận lần 3 bị từ chối.
+2. Tự đóng **một** tab agent bằng nút × trên tab (hoặc `Ctrl+Shift+W`).
+3. Bảo Claude mở lần nữa.
+
+**Kỳ vọng:** lần mở ở bước 3 thành công (giới hạn được giải phóng, không cần Claude gọi `close_session`).
+**Ghi lại:** bước 2 có hộp thoại xác nhận đóng không. **Dọn:** đóng hết tab agent.
+
+#### H2A.9 — Giành lại quyền
+
+**Làm**
+1. Mở một session agent (read-only), xác nhận `read_file` chạy được.
+2. Trong tab agent: bấm **Revoke** trên header pane (hoặc palette `Agent Bridge: Revoke access to this session`).
+3. Bảo Claude `read_file` lại trên session đó, rồi `close_session`.
+
+**Kỳ vọng:** `read_file` ở bước 3 trả `session_not_attached`; tab **vẫn còn**; `close_session` vẫn đóng được (session do agent mở nên vẫn thuộc agent).
+**Ghi lại:** câu lỗi thật. **Dọn:** không cần.
+
+#### H2A.10 — Chậm / hỏi (passphrase hoặc host key mới)
+
+**Làm** (tạo tình huống "host key mới" bằng cách quên host key của OTHER; ssh sẽ hỏi `yes/no`):
+1. `ssh-keygen -R 192.168.100.212` (ghi `known_hosts.old` làm bản sao; muốn khôi phục thì `mv ~/.ssh/known_hosts.old ~/.ssh/known_hosts` hoặc trả lời `yes` lần sau).
+Nếu `HashKnownHosts` bật vẫn dùng đúng lệnh này. Kiểm: `ssh -o BatchMode=yes home-docker-03 hostname` phải **lỗi** `Host key verification failed`.
+2. Cho OTHER một luật allow để không vướng hộp thoại, hoặc Approve tay:
+```bash
+setopen <<'EOF'
+
+[open]
+[[open.hosts]]
+match = "home-docker-03"
+mode = "allow"
+EOF
+```
+3. Bảo Claude: `open_session` `home-docker-03`, read_only, `wait_secs` `15`.
+4. Đợi 15 s. Chuyển sang tab `Agent · home-docker-03`: thấy dòng "Are you sure you want to continue connecting (yes/no)?". Gõ `yes`, Enter.
+5. Chờ Warpify xong. Bảo Claude `list_sessions` (không mở lại).
+
+**Kỳ vọng**
+- Sau ~15 s Claude nhận `status: connecting` (**không phải lỗi**) kèm note nói người dùng có thể phải trả lời câu hỏi trong tab.
+- Sau bước 4, Warpify xong, session **tự attach**: `list_sessions` thấy `attached`, mức read-only, không cần Claude mở lại.
+
+**Ghi lại:** *(quan trọng)* Warpify có hiện hộp thoại hỏi cài extension (`SshExtensionInstallMode::AlwaysAsk`) không; nếu có và bạn không bấm, tab đứng im bao lâu.
+**Dọn:** đóng tab agent; `setopen </dev/null`; đảm bảo host key OTHER đã có lại (`ssh -o BatchMode=yes home-docker-03 hostname` chạy được).
+
+#### H2A.11 — Alias xấu, host không có
+
+**Làm**: bảo Claude gọi lần lượt `open_session` (purpose bất kỳ) với `host`:
+1. `a;b`
+2. `-oProxyCommand=x`
+3. `does-not-exist`
+4. (tuỳ chọn) một alias từng có trong `~/.ssh/config` nhưng bạn đã xoá (host `missing` trong Settings > Servers).
+
+Ngoài ra thử `purpose` rỗng, `purpose` chứa xuống dòng, và `wait_secs` `0` hoặc `999`.
+
+**Kỳ vọng**
+- 1 và 2: `invalid_params` ngay, **không** vào bước policy, không tab, không hộp thoại.
+- 3: từ chối "there is no server "does-not-exist" in the user's server list; see list_hosts".
+- 4: từ chối "is no longer in the user's SSH configuration".
+- `purpose`/`wait_secs` sai: `invalid_params` nêu đúng tham số.
+
+**Ghi lại:** câu chữ lỗi; xác nhận **không có tab nào mở** cho các trường hợp này. **Dọn:** không cần.
+
+#### H2A.12 — Song song
+
+**Làm**
+1. Đặt luật allow cho `home-docker-02` (read_only) như H2A.6 bước 1.
+2. Bảo Claude gọi `open_session` `home-docker-02` **hai lần liên tiếp** rồi `list_sessions`.
+3. Bảo Claude `read_file` `/etc/hostname` trên **cả hai** session **trong cùng một lượt** (song song).
+4. (Tuỳ chọn, thử `exec`) đổi luật thành `max_access = "full"`, mở hai session `access: full`, bảo Claude `exec` `hostname` trên cả hai trong một lượt và Approve từng hộp thoại.
+
+**Kỳ vọng:** hai tab riêng, hai `session_id` khác nhau, cả hai `attached`; hai lệnh chạy độc lập không lẫn kết quả.
+**Ghi lại:** hai tab có cùng tên `Agent · home-docker-02` (phân biệt bằng gì); có lần nào nhầm session không.
+**Dọn:** đóng cả hai.
+
+#### H2A.13 — Audit
+
+**Làm:** `aud 30` sau khi đã làm các bước trên; đọc các dòng `remote.session.open` và `remote.session.close`.
+
+**Kỳ vọng:** mỗi dòng có `agent`, `agent_id`, `request_id`, `purpose`, `access`, `policy_decision`; `session_id` = id pane; dòng `started` có **trước** dòng kết thúc của cùng `request_id`; **không** có nội dung giống bí mật. Kiểm nhanh:
+
+```bash
+grep -E 'remote\.session\.(open|close)' ~/.warp/agent-bridge/audit.jsonl | tail -20 | grep -iE 'password|passphrase|token|BEGIN .*KEY' || echo "sạch"
+```
+
+**Ghi lại:** dòng nào thiếu trường.
+
+#### H2A.14 — Khởi động lại Warp
+
+**Làm**
+1. Mở một session agent (Approve hoặc luật allow), giữ nó mở.
+2. Thoát hẳn Warp rồi chạy lại (P1, hoặc mở lại `target/debug/warp-oss`).
+3. Nếu Warp khôi phục tab, xem tab `Agent · …`. Bảo Claude `list_sessions`, rồi `open_session` lại.
+
+**Kỳ vọng:** registry và attach **mất** sau khởi động lại; tab khôi phục (nếu có) **không** ở trạng thái attach; `open_session` mới chạy bình thường, không bị giới hạn oan.
+**Ghi lại:** tab có được khôi phục không, nhóm `Agents` còn không.
+
+#### H2A.15 — Không cờ
+
+**Làm**
+1. Thoát Warp. Build lại **không** có `agent_ops_open_session`:
+```bash
+./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,warp_sync_remote_edit,agent_ops_hosts,release_bundle
+```
+2. Bảo Claude `open_session` `home-docker-02`; rồi `list_hosts`; rồi `exec` trên một session attach tay.
+
+**Kỳ vọng:** `open_session` lỗi `unsupported_action`; `list_hosts` và `exec` **không đổi** hành vi.
+**Dọn:** build lại bản có cờ nếu còn bước cần.
+
+#### H2A.16 — Lên root (tuỳ chọn)
+
+Cả hai host homelab ở trên đăng nhập thẳng bằng `root` nên chỉ thử được nhánh `already_root`. Muốn thử `sudo -i` thật cần một host đăng nhập **không phải root** và
+`sudo` không hỏi mật khẩu; nếu không có, bỏ qua phần b.
+
+**Làm**
+- **a) Đã là root:** trong Settings > Servers đặt `home-docker-02` là `root_login = root`. Luật `allow_root = true` cho host này. `open_session` `home-docker-02` `root: true`.
+- **b) `sudo -i`:** host `sudo_nopasswd` (Settings > Servers) + Settings > Warpify > Added commands có `sudo -i`. `open_session … root: true`.
+- **c) Không đủ điều kiện:** host `sudo_password` hoặc thiếu `sudo -i` trong Warpify. `open_session … root: true`.
+
+**Kỳ vọng**
+- a) hộp thoại (nếu hỏi) ghi "Signs in as root"; kết quả `elevation: already_root`.
+- b) hộp thoại ghi "Runs sudo -i for you"; sau Approve tab tự gõ `sudo -i`, Warpify lần hai, Claude nhận `elevation: elevated`, user `root`.
+- c) session mở ở mức user, `elevation: skipped` + lý do (ví dụ "thêm `sudo -i` vào Settings > Warpify > Added commands").
+
+**Ghi lại:** *(quan trọng, chỉ b)* `sudo -i` do wrapper gõ có tự Warpify không, hay Warp hiện banner hỏi bạn (nếu hỏi, `elevation` sẽ là `pending` hay `skipped`).
+
+---
+
+#### Sau khi xong
+
+1. Khôi phục: `cp -p ~/.warp/agent-ops/policy.toml.bak-h2a ~/.warp/agent-ops/policy.toml`; đóng mọi tab agent; `claude mcp remove warp-bridge-nopair --scope user`.
+2. Báo Claude bảng `H2A.n: đạt/không đạt — ghi chú` và các mục **Ghi lại** quan trọng (H2A.3, H2A.7, H2A.10, H2A.16). Claude sẽ tick CHECKPOINT H2A ở mục 7, ghi nhật ký, và quyết định GD30/GD32 nếu cần.
 
 ### G2.5 G2b — Mật khẩu SSH/sudo (chỉ thiết kế, không code cho tới khi người dùng xác nhận G2a)
 
@@ -504,16 +860,16 @@ Mục tiêu (AO8): host `auth = password` và `root_login = sudo_password` dùng
 lịch sử shell. Cần khảo sát thêm trước khi code (ghi ở đây để khỏi đoán):
 
 1. **Kho:** `warpui_extras::secure_storage`, khoá `host:<alias>:ssh_password` / `:sudo_password` / `:ssh_passphrase`. Nhập ở Settings > Servers (ô che chữ, chỉ ghi,
-   có "Forget"); danh bạ vẫn không chứa bí mật; `list_hosts` chỉ báo `has_secret: bool`.
+có "Forget"); danh bạ vẫn không chứa bí mật; `list_hosts` chỉ báo `has_secret: bool`.
 2. **Askpass:** ssh local đọc mật khẩu từ helper (`warp --warpctrl askpass <prompt>`) do `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force` chỉ tới. Hai câu hỏi mở phải
-   trả lời bằng khảo sát: (a) đưa biến môi trường vào **tab của agent** thế nào khi lệnh phải là `ssh <alias>` (Warpify chỉ bắt lệnh mở đầu bằng `ssh`, `terminal/ssh/util.rs:202`,
-   nên `VAR=x ssh …` mất Warpify) — hướng ưu tiên: đặt env cho shell của tab lúc spawn (xem `PaneTemplateType`/terminal manager) thay vì gõ `export`; (b) prompt
-   `yes/no` của host key: helper **không bao giờ trả lời**, ssh sẽ thất bại (không quay về tty khi `force`) ⇒ host phải có sẵn trong `known_hosts` (báo lỗi rõ: "kết nối tay một lần").
+trả lời bằng khảo sát: (a) đưa biến môi trường vào **tab của agent** thế nào khi lệnh phải là `ssh <alias>` (Warpify chỉ bắt lệnh mở đầu bằng `ssh`, `terminal/ssh/util.rs:202`,
+nên `VAR=x ssh …` mất Warpify) — hướng ưu tiên: đặt env cho shell của tab lúc spawn (xem `PaneTemplateType`/terminal manager) thay vì gõ `export`; (b) prompt
+`yes/no` của host key: helper **không bao giờ trả lời**, ssh sẽ thất bại (không quay về tty khi `force`) ⇒ host phải có sẵn trong `known_hosts` (báo lỗi rõ: "kết nối tay một lần").
 3. **Broker:** vé một lần (32 byte ngẫu nhiên, RAM, sống 60 s, gắn alias + pane) truyền qua env; helper gửi `{ticket, prompt}` tới bridge bằng cơ chế credential/UID có sẵn
-   (`local_control::auth`); Warp **chỉ trả lời** prompt khớp regex neo đúng cho alias đó (`^<user>@<host>'s password: $`, `^Enter passphrase for key '<path của key>': $`), mỗi vé một lần,
-   sai/lạ thì trả lỗi (không im lặng). Không ghi prompt đầy đủ vào log.
+(`local_control::auth`); Warp **chỉ trả lời** prompt khớp regex neo đúng cho alias đó (`^<user>@<host>'s password: $`, `^Enter passphrase for key '<path của key>': $`), mỗi vé một lần,
+sai/lạ thì trả lỗi (không im lặng). Không ghi prompt đầy đủ vào log.
 4. **sudo:** chỉ khi chính Warp vừa gõ `sudo -i` (phase 4) và block output kết thúc bằng `^\[sudo\] password for <user>: $` trong 15 s: ghi mật khẩu một lần thẳng vào PTY (không qua ô
-   input/lịch sử/AI context), rồi xoá cờ; prompt giả khác (chương trình khác in dòng giống hệt) không có cờ nên không được điền.
+input/lịch sử/AI context), rồi xoá cờ; prompt giả khác (chương trình khác in dòng giống hệt) không có cờ nên không được điền.
 5. **Kiểm thử:** hàm thuần khớp prompt (bảng dương/âm gồm prompt giả), vé hết hạn/dùng lại, test log không chứa mật khẩu (grep), audit không chứa mật khẩu.
 Tách thành phase B1 (kho + Settings), B2 (askpass + vé), B3 (sudo) khi được duyệt.
 
@@ -555,7 +911,7 @@ Tách thành phase B1 (kho + Settings), B2 (askpass + vé), B3 (sudo) khi đư�
 - [x] G2a phase 3: 3.1 tool MCP · 3.2 timeout client · 3.3 test
 - [x] G2a phase 4: 4.1 wrapper subshell · 4.2 luồng root · 4.3 test
 - [x] G2a phase 5: review + test + clippy + format
-- [ ] ⛔ CHECKPOINT H2A (người dùng test tay) — **đang chờ**
+- [x] ⛔ CHECKPOINT H2A (người dùng test đạt, 2026-09-30)
 - [ ] G2b (chỉ thiết kế xong; code sau khi người dùng xác nhận G2a)
 
 ### Quyết định
@@ -674,3 +1030,7 @@ Tách thành phase B1 (kho + Settings), B2 (askpass + vé), B3 (sudo) khi đư�
   -- -D warnings` sạch; `cargo check -p warp` (không feature) sạch; `./script/format` một lần ở cuối. Chưa chạy GUI/ssh thật, không commit, không tick G2 trong `ROADMAP.md`.
   Điều chưa kiểm chứng (dành cho H2A): tab nền có bootstrap ssh không (H2A.3), Warpify có hỏi trước khi cài extension không (H2A.10), đóng pane cuối của tab có hỏi xác nhận không (H2A.7), `sudo -i` gõ bằng
   wrapper có tự Warpify không (H2A.16). Dừng ở ⛔ CHECKPOINT H2A.
+- 2026-09-30 — Viết lại checklist G2.4 (H2A) thành hướng dẫn từng bước: mục chuẩn bị P0–P7 (chọn host `home-docker-02`/`home-docker-03`, hàm `aud`/`setopen`, sao lưu policy, đăng ký MCP `--no-pair`, cách ra lệnh cho Claude, nơi quan sát) và H2A.1–H2A.16 theo khuôn Làm / Kỳ vọng / Ghi lại / Dọn, câu lỗi lấy từ code. Chỉ sửa tài liệu, không đổi code; vẫn dừng ở ⛔ CHECKPOINT H2A.
+- 2026-09-30 — H2A.3 lần đầu: tab `Agent · home-pi-01` Warpify xong nhưng không tự attach. Log chẩn đoán (`Agent session tab …`) cho thấy `remote: true, ssh host: None`: session đăng nhập qua **SSH wrapper** (ControlMaster) không có `subshell_info`, nên `ssh_connection_info.host` rỗng và `on_bootstrapped` bỏ qua (GD10 chỉ đúng cho đường subshell; Q2 trong G2.1 đã nhầm). Sửa: `opened::typed_ssh_host` lấy host từ subshell nếu có, không thì phân tích `spawning_command` (chính dòng `ssh <alias>` đã gõ) bằng `parse_interactive_ssh_command`; 3 test mới; giữ `log::info!` trong `follow_open`. Còn nghi vấn cùng gốc: `RemoteShell::ssh_host` của Warp Sync (`warp_sync/remote_shell.rs`) cũng đọc `subshell_info` nên trả `None` với session wrapper. Chờ người dùng chạy lại H2A.3. Cũng nên đặt `warpify.ssh.ssh_extension_install_mode = "never_install"` trước khi test (hộp thoại extension chặn bootstrap).
+- 2026-09-30 — H2A.3 lần hai: vẫn `ssh host: None`. Session wrapper không mang host ở đâu cả: `init_shell` gọi `reinit_shell` nên `spawning_command` của nó không phải dòng `ssh <alias>`, và socket ControlMaster chỉ đặt theo `WARP_SESSION_ID`. Đổi `on_bootstrapped`: session remote **không có** host ⇒ coi là kết quả của `ssh <alias>` Warp gõ (session remote đầu tiên của tab khi còn `Connecting`); có host thì vẫn phải khớp alias. Rủi ro còn lại (chấp nhận): ssh của Warp thất bại rồi người dùng tự `ssh` host khác trong chính tab agent trước khi hết `OPEN_PENDING_TTL` ⇒ session đó được attach với mức agent xin; mọi lệnh ghi vẫn qua `authorize`. Test `an_ssh_session_to_another_host_is_ignored` bỏ nhánh không-host, thêm `a_session_through_the_ssh_wrapper_is_attached_without_a_host`. `agent_bridge::|open_session` 360/360, clippy sạch, format.
+- 2026-09-30 — CHECKPOINT H2A: người dùng test đạt (sau hai lần sửa khớp session SSH wrapper ở trên). Việc ngoài G2 cùng lúc: `autoupdate::start_polling` không chạy vòng poll trên kênh `Local`/`Integration`/`Oss` (`channel_ships_updates`), vì `release_bundle` bật `Autoupdate` trong bản build local và mỗi lần poll ghi lỗi "don't support autoupdate". Hộp thoại GNOME "Remote Desktop / Allow Remote Interaction" chỉ do `computer_use` (AI agent của Warp dùng máy tính trên Wayland) mở trong Warp; chưa xác định tiến trình nào gọi, chờ người dùng bắt bằng `dbus-monitor`. Chưa tick G2 trong `ROADMAP.md` (G2b còn chờ).
