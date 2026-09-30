@@ -885,6 +885,9 @@ agent_bridge = []
 agent_ops_policy = []
 agent_ops_hosts = []
 agent_ops_open_session = []
+# Linux: a second launch (e.g. VS Code's external terminal) opens a tab in the running Warp
+# instead of a new instance, without the rest of `release_bundle`.
+single_instance = []
 cycle_next_command_suggestion = []
 multi_workspace = []
 ime_marked_text = []

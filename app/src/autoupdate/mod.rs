@@ -138,7 +138,10 @@ impl AutoupdateState {
         if self.polling_started {
             return;
         }
-        if FeatureFlag::Autoupdate.is_enabled() && AppExecutionMode::as_ref(ctx).can_autoupdate() {
+        if FeatureFlag::Autoupdate.is_enabled()
+            && AppExecutionMode::as_ref(ctx).can_autoupdate()
+            && channel_ships_updates(&ChannelState::channel())
+        {
             log::info!("Starting autoupdate polling loop");
             self.polling_started = true;
             // Initiate the polling loop.
@@ -767,6 +770,15 @@ fn new_update_id() -> String {
 }
 
 /// Fetch the current version on the given channel.
+/// Local and open-source builds can have `Autoupdate` on (e.g. with `release_bundle`), but their
+/// channels have no releases to poll for.
+fn channel_ships_updates(channel: &Channel) -> bool {
+    match channel {
+        Channel::Stable | Channel::Preview | Channel::Dev => true,
+        Channel::Integration | Channel::Local | Channel::Oss => false,
+    }
+}
+
 async fn fetch_version(
     channel: &Channel,
     is_daily: bool,
