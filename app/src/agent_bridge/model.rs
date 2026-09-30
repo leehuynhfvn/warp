@@ -11,7 +11,7 @@ use super::approval::{ApprovalDecision, ApprovalQueue, ApprovalRequest};
 use super::attachments::{Access, AttachmentStatus, Attachments};
 use super::error::AgentBridgeError;
 use super::opened::{
-    Bootstrapped, LimitError, OpenState, Opened, OpenedSessions, SUDO_COMMAND, Step,
+    Bootstrapped, LimitError, OpenState, Opened, OpenedSessions, SUDO_COMMAND, Step, typed_ssh_host,
 };
 use super::operations::{OperationKind, Operations};
 use super::policy::OpenLimits;
@@ -331,19 +331,37 @@ impl AgentBridgeModel {
         event: &SessionBootstrappedEvent,
         ctx: &mut ModelContext<Self>,
     ) {
-        let ssh_host = event
-            .subshell_info
-            .as_ref()
-            .and_then(|info| info.ssh_connection_info.as_ref())
-            .and_then(|info| info.host.as_deref());
+        let ssh_host = typed_ssh_host(
+            event
+                .subshell_info
+                .as_ref()
+                .and_then(|info| info.ssh_connection_info.as_ref())
+                .and_then(|info| info.host.as_deref()),
+            &event.spawning_command,
+        );
+        let ssh_host = ssh_host.as_deref();
         self.opened.expire(Instant::now());
+        let is_remote = matches!(event.session_type, BootstrapSessionType::WarpifiedRemote);
         let step = self.opened.on_bootstrapped(
             pane,
             Bootstrapped {
                 session: event.session_id,
-                is_remote: matches!(event.session_type, BootstrapSessionType::WarpifiedRemote),
+                is_remote,
                 ssh_host,
                 spawning_command: &event.spawning_command,
+            },
+        );
+        log::info!(
+            "Agent session tab {pane}: session {:?} finished Warpifying (remote: {is_remote}, \
+             ssh host: {ssh_host:?}, command: {:?}, expected: {:?}, state now: {:?}), next \
+             step: {}",
+            event.session_id,
+            event.spawning_command,
+            self.opened.get(pane).map(|opened| opened.alias.as_str()),
+            self.opened.get(pane).map(|opened| &opened.state),
+            match step {
+                Step::Ignore => "ignore",
+                Step::Attach { .. } => "attach",
             },
         );
         let Step::Attach {

@@ -232,11 +232,30 @@ fn an_ssh_session_to_another_host_is_ignored() {
         registry.on_bootstrapped("1", ssh_session(11, "lab-2")),
         Step::Ignore
     );
-    let no_host = Bootstrapped {
+    assert_eq!(
+        registry.get("1").map(|opened| opened.state),
+        Some(OpenState::Connecting)
+    );
+}
+
+#[test]
+fn a_session_through_the_ssh_wrapper_is_attached_without_a_host() {
+    let now = Instant::now();
+    let mut registry = registry(&[("1", "claude", "lab-1")], now);
+    let wrapper = Bootstrapped {
         ssh_host: None,
+        spawning_command: "",
         ..ssh_session(11, "lab-1")
     };
-    assert_eq!(registry.on_bootstrapped("1", no_host), Step::Ignore);
+    assert_eq!(
+        registry.on_bootstrapped("1", wrapper),
+        Step::Attach {
+            session: session(11),
+            access: Access::ReadOnly,
+            replaces: None,
+            elevate: false,
+        }
+    );
 }
 
 #[test]
@@ -449,4 +468,31 @@ fn servers_that_need_a_password_or_have_no_way_to_root_are_not_elevated() {
             ElevationPlan::Skipped(_)
         ));
     }
+}
+
+#[test]
+fn the_ssh_host_comes_from_the_subshell_when_it_has_one() {
+    assert_eq!(
+        typed_ssh_host(Some("root@lab-x"), "ssh other"),
+        Some("root@lab-x".to_owned())
+    );
+}
+
+#[test]
+fn a_session_signed_in_through_the_ssh_wrapper_gets_its_host_from_the_command() {
+    assert_eq!(
+        typed_ssh_host(None, "ssh home-pi-01"),
+        Some("home-pi-01".to_owned())
+    );
+    assert_eq!(
+        typed_ssh_host(None, "  ssh root@home-pi-01 "),
+        Some("root@home-pi-01".to_owned())
+    );
+}
+
+#[test]
+fn a_command_that_is_not_an_interactive_ssh_login_has_no_host() {
+    assert_eq!(typed_ssh_host(None, ""), None);
+    assert_eq!(typed_ssh_host(None, "ls -la"), None);
+    assert_eq!(typed_ssh_host(None, "ssh home-pi-01 uptime"), None);
 }

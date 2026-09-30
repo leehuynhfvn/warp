@@ -12,6 +12,7 @@ use super::policy::OpenLimits;
 use super::{OPEN_MAX_TOTAL, OPEN_PENDING_TTL};
 use crate::host_directory::{RootLogin, alias_of_ssh_host};
 use crate::terminal::model::session::SessionId;
+use crate::terminal::ssh::util::parse_interactive_ssh_command;
 
 /// The exact command that becomes root. It has to match one of Warpify's subshell commands, so
 /// what is typed and what is checked can never differ.
@@ -83,12 +84,24 @@ pub(crate) struct Opened {
     pub(crate) state: OpenState,
 }
 
+/// What the user typed after `ssh` to reach a session that finished Warpifying. Sessions
+/// Warpified as a subshell carry it in `subshell_host`; those signed in through the SSH wrapper
+/// do not, but the command that started them is the `ssh` line itself.
+pub(crate) fn typed_ssh_host(
+    subshell_host: Option<&str>,
+    spawning_command: &str,
+) -> Option<String> {
+    subshell_host.map(str::to_owned).or_else(|| {
+        parse_interactive_ssh_command(spawning_command.trim()).and_then(|command| command.host)
+    })
+}
+
 /// A session that finished Warpifying in a tab an agent opened.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Bootstrapped<'a> {
     pub(crate) session: SessionId,
     pub(crate) is_remote: bool,
-    /// What the user typed after `ssh`, when the session is an SSH one.
+    /// What was typed after `ssh`, when the session knows it (see [`typed_ssh_host`]).
     pub(crate) ssh_host: Option<&'a str>,
     pub(crate) spawning_command: &'a str,
 }
@@ -223,10 +236,12 @@ impl OpenedSessions {
         };
         match opened.state {
             OpenState::Connecting => {
+                // A session signed in through the SSH wrapper says nothing about where it went,
+                // so the first remote one in the tab is taken as the `ssh <alias>` Warp typed.
                 let reached_alias = event.is_remote
                     && event
                         .ssh_host
-                        .is_some_and(|host| alias_of_ssh_host(host) == opened.alias);
+                        .is_none_or(|host| alias_of_ssh_host(host) == opened.alias);
                 if !reached_alias {
                     return Step::Ignore;
                 }
