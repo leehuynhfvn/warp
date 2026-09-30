@@ -26,7 +26,7 @@ use crate::warp_sync::{SyncConfig, printable, synced_paths};
 /// `ssh -G` runs `Match exec` commands of the user's own configuration, so a request may not keep
 /// running it indefinitely: hosts still unresolved when the budget is spent are listed without
 /// their connection.
-const RESOLVE_BUDGET: Duration = Duration::from_secs(5);
+pub(super) const RESOLVE_BUDGET: Duration = Duration::from_secs(5);
 
 pub(crate) fn host_list(
     request: &RequestEnvelope,
@@ -129,7 +129,7 @@ fn gather_details(
         .collect()
 }
 
-fn resolve_connection(
+pub(super) fn resolve_connection(
     host: &Host,
     resolver: &dyn SshResolver,
     deadline: Instant,

@@ -26634,6 +26634,26 @@ impl TerminalView {
         }
     }
 
+    /// Runs `command`, which starts a subshell, keeping whatever is in the input, and Warpifies
+    /// that subshell as soon as it starts instead of waiting for the user to accept a banner. The
+    /// command has to be one Warpify accepts as a subshell command. Returns `false`, having done
+    /// nothing, when the shell cannot take a command right now.
+    pub(crate) fn execute_subshell_command_and_warpify(
+        &mut self,
+        command: &str,
+        shell_type: ShellType,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        self.pending_auto_bootstrap_shell_type = Some(shell_type);
+        let sent = self.input.update(ctx, |input, ctx| {
+            input.try_execute_command_preserving_input(command, ctx)
+        });
+        if !sent {
+            self.pending_auto_bootstrap_shell_type = None;
+        }
+        sent
+    }
+
     /// Replace the terminal input buffer with the given command that is meant to open a subshell.
     /// Set a flag that we should automatically bootstrap AKA "warpify" the subshell when we
     /// receive the [`AfterBlockStarted`] event.

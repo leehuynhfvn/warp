@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 
 use local_control::protocol::{
     ErrorCode, RemoteAccess, RemoteAttachment, RemoteCommandBlock, RemoteHostMirror,
-    RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteRootLogin, RemoteSessionKind,
-    RemoteSessionSummary, RemoteStream, RemoteTransport,
+    RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteOpenElevation, RemoteOpenStatus,
+    RemoteRootLogin, RemoteSessionKind, RemoteSessionSummary, RemoteStream, RemoteTransport,
 };
 
 use super::*;
@@ -754,6 +754,8 @@ fn every_tool_has_a_schema_and_the_list_matches_the_dispatch() {
         [
             "list_sessions",
             "list_hosts",
+            "open_session",
+            "close_session",
             "exec",
             "exec_visible",
             "read_file",
@@ -1123,4 +1125,215 @@ fn list_hosts_reports_an_app_error_as_text() {
 #[test]
 fn the_instructions_mention_list_hosts() {
     assert!(INSTRUCTIONS.contains("list_hosts"));
+}
+
+// --- open_session / close_session ------------------------------------------------
+
+fn opened(status: RemoteOpenStatus, elevation: RemoteOpenElevation) -> RemoteSessionOpenResult {
+    let ready = status == RemoteOpenStatus::Ready;
+    RemoteSessionOpenResult {
+        status,
+        session_id: "Pane 9".to_owned(),
+        host_alias: "lab-1".to_owned(),
+        host: ready.then(|| "lab-1.internal".to_owned()),
+        user: ready.then(|| "ops".to_owned()),
+        access: RemoteAccess::ReadOnly,
+        elevation,
+        note: None,
+    }
+}
+
+#[test]
+fn open_session_sends_the_request_without_a_session_and_waits_for_the_user() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteSessionOpen,
+        opened(RemoteOpenStatus::Ready, RemoteOpenElevation::NotRequested),
+    );
+
+    let result = call(
+        &mut tools,
+        "open_session",
+        json!({ "host": "lab-1", "purpose": "check the disk", "access": "full", "root": true }),
+    );
+
+    assert!(!result.is_error, "{}", result.text);
+    let sent = tools.transport.calls.last().unwrap();
+    assert_eq!(sent.session, None);
+    assert_eq!(
+        sent.params,
+        json!({
+            "host": "lab-1",
+            "access": "full",
+            "purpose": "check the disk",
+            "root": true,
+            "wait_secs": 60,
+            "agent": "mcp-unknown",
+        })
+    );
+    assert_eq!(
+        sent.timeout,
+        Duration::from_secs(60) + APPROVAL_CLIENT_MARGIN + OPEN_CLIENT_MARGIN
+    );
+    for expected in [
+        "session_id \"Pane 9\"",
+        "lab-1",
+        "ops@lab-1.internal",
+        "read-only",
+    ] {
+        assert!(
+            result.text.contains(expected),
+            "{expected}: {}",
+            result.text
+        );
+    }
+}
+
+#[test]
+fn open_session_defaults_to_read_only_and_clamps_the_wait() {
+    let mut tools = tools();
+    for (requested, sent) in [(None, 60), (Some(0), 1), (Some(9999), 180), (Some(15), 15)] {
+        answer(
+            &mut tools,
+            ActionKind::RemoteSessionOpen,
+            opened(RemoteOpenStatus::Ready, RemoteOpenElevation::NotRequested),
+        );
+        let arguments = match requested {
+            Some(wait) => json!({ "host": "lab-1", "purpose": "x", "wait_secs": wait }),
+            None => json!({ "host": "lab-1", "purpose": "x" }),
+        };
+
+        call(&mut tools, "open_session", arguments);
+
+        let sent_call = tools.transport.calls.last().unwrap();
+        assert_eq!(sent_call.params["wait_secs"], json!(sent));
+        assert_eq!(sent_call.params["access"], json!("read_only"));
+        assert!(sent_call.params.get("root").is_none());
+    }
+}
+
+#[test]
+fn open_session_needs_a_host_and_a_purpose_and_refuses_anything_else() {
+    let mut tools = tools();
+    for arguments in [
+        json!({ "purpose": "x" }),
+        json!({ "host": "lab-1" }),
+        json!({ "host": "lab-1", "purpose": "x", "password": "hunter2" }),
+        json!({ "host": "lab-1", "purpose": "x", "access": "root" }),
+    ] {
+        let result = call(&mut tools, "open_session", arguments);
+        assert!(result.is_error);
+        assert!(result.text.contains("Invalid arguments for open_session"));
+    }
+}
+
+#[test]
+fn a_session_that_is_not_ready_is_reported_as_text_not_as_a_failure() {
+    let mut tools = tools();
+    let mut connecting = opened(RemoteOpenStatus::Connecting, RemoteOpenElevation::Pending);
+    connecting.note = Some("Answer the prompt in the tab.".to_owned());
+    answer(&mut tools, ActionKind::RemoteSessionOpen, connecting);
+
+    let result = call(
+        &mut tools,
+        "open_session",
+        json!({ "host": "lab-1", "purpose": "x" }),
+    );
+
+    assert!(!result.is_error);
+    assert!(result.text.contains("not ready yet"));
+    assert!(result.text.contains("sudo -i is not finished"));
+    assert!(result.text.contains("Answer the prompt"));
+}
+
+#[test]
+fn root_that_was_not_reached_says_so() {
+    let mut tools = tools();
+    let mut skipped = opened(RemoteOpenStatus::Ready, RemoteOpenElevation::Skipped);
+    skipped.note = Some("Not root: this server needs a sudo password.".to_owned());
+    answer(&mut tools, ActionKind::RemoteSessionOpen, skipped);
+
+    let result = call(
+        &mut tools,
+        "open_session",
+        json!({ "host": "lab-1", "purpose": "x", "root": true }),
+    );
+
+    assert!(result.text.contains("Root: not reached"));
+    assert!(result.text.contains("sudo password"));
+}
+
+#[test]
+fn a_refusal_from_warp_reaches_the_model_with_its_reason() {
+    let mut tools = tools();
+    fail(
+        &mut tools,
+        ActionKind::RemoteSessionOpen,
+        ControlError::new(
+            ErrorCode::PolicyDenied,
+            "Denied by Warp's agent policy: the user denied it.",
+        ),
+    );
+    let result = call(
+        &mut tools,
+        "open_session",
+        json!({ "host": "lab-1", "purpose": "x" }),
+    );
+    assert!(result.is_error);
+    assert!(result.text.contains("the user denied it"));
+}
+
+#[test]
+fn close_session_names_the_session_in_the_target() {
+    let mut tools = tools();
+    answer(
+        &mut tools,
+        ActionKind::RemoteSessionClose,
+        RemoteSessionCloseResult {
+            session_id: "Pane 9".to_owned(),
+            closed: true,
+        },
+    );
+
+    let result = call(
+        &mut tools,
+        "close_session",
+        json!({ "session_id": "Pane 9" }),
+    );
+
+    assert!(!result.is_error);
+    assert!(result.text.contains("Closed session_id \"Pane 9\""));
+    let sent = tools.transport.calls.last().unwrap();
+    assert_eq!(sent.session.as_deref(), Some("Pane 9"));
+    assert_eq!(sent.params, json!({ "agent": "mcp-unknown" }));
+    assert_eq!(sent.timeout, SESSIONS_CLIENT_TIMEOUT);
+}
+
+#[test]
+fn close_session_needs_a_session_id() {
+    let mut tools = tools();
+    let result = call(&mut tools, "close_session", json!({}));
+    assert!(result.is_error);
+    assert!(result.text.contains("Invalid arguments for close_session"));
+}
+
+#[test]
+fn the_instructions_explain_opening_and_closing_sessions() {
+    for expected in ["open_session", "close_session", "purpose", "approve"] {
+        assert!(INSTRUCTIONS.contains(expected), "{expected}");
+    }
+}
+
+#[test]
+fn the_new_tools_are_advertised_with_their_required_arguments() {
+    let definitions = tool_definitions();
+    let tools = definitions.as_array().expect("an array of tools");
+    let open = tools
+        .iter()
+        .find(|tool| tool["name"] == "open_session")
+        .expect("open_session is advertised");
+    assert_eq!(open["inputSchema"]["required"], json!(["host", "purpose"]));
+    assert_eq!(open["inputSchema"]["additionalProperties"], json!(false));
+    assert!(tools.iter().any(|tool| tool["name"] == "close_session"));
 }

@@ -8,7 +8,11 @@ use std::{fs, io};
 use regex::Regex;
 use serde::Deserialize;
 
-use super::{APPROVAL_MAX_COMMAND_BYTES, APPROVAL_MAX_COMMAND_LINES, POLICY_FILE};
+use super::attachments::Access;
+use super::{
+    APPROVAL_MAX_COMMAND_BYTES, APPROVAL_MAX_COMMAND_LINES, OPEN_DEFAULT_MAX_PER_AGENT,
+    OPEN_DEFAULT_MAX_PER_HOST, OPEN_MAX_PER_AGENT, OPEN_MAX_PER_HOST, POLICY_FILE,
+};
 
 /// Characters that make an `allow` entry more than a single literal command, so it is rejected at
 /// load time instead of being trusted to run unattended.
@@ -43,6 +47,52 @@ pub(crate) struct Policy {
     /// Kept alongside its source text so a Deny reason can quote the pattern that matched.
     deny_patterns: Vec<(String, RegexEq)>,
     deny_paths: Vec<String>,
+    open_hosts: Vec<OpenHostRule>,
+    open_limits: OpenLimits,
+}
+
+/// What an agent may do about opening sessions on a server the policy names (`[[open.hosts]]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenHostRule {
+    host_match: String,
+    tag: Option<String>,
+    mode: OpenMode,
+    max_access: Access,
+    allow_root: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OpenMode {
+    Allow,
+    Ask,
+    Deny,
+}
+
+/// How many sessions one agent may hold open, on one server and in all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OpenLimits {
+    pub(crate) per_host: usize,
+    pub(crate) per_agent: usize,
+}
+
+impl Default for OpenLimits {
+    fn default() -> Self {
+        Self {
+            per_host: OPEN_DEFAULT_MAX_PER_HOST,
+            per_agent: OPEN_DEFAULT_MAX_PER_AGENT,
+        }
+    }
+}
+
+/// An agent asking to open a session on its own.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OpenRequest<'a> {
+    pub(crate) alias: &'a str,
+    pub(crate) tags: &'a [String],
+    pub(crate) access: Access,
+    /// The agent wants a root shell, not just the login user's.
+    pub(crate) root: bool,
 }
 
 /// Wraps `Regex` so `Policy` can derive `PartialEq` for tests; regexes compare by source pattern.
@@ -95,6 +145,8 @@ struct RawPolicy {
     hosts: Vec<RawHostRule>,
     #[serde(default)]
     deny: RawDeny,
+    #[serde(default)]
+    open: RawOpen,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +167,37 @@ struct RawHostRule {
     mode: Mode,
     #[serde(default)]
     allow: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawOpen {
+    max_sessions_per_host: Option<usize>,
+    max_sessions_per_agent: Option<usize>,
+    #[serde(default)]
+    hosts: Vec<RawOpenHost>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOpenHost {
+    #[serde(rename = "match")]
+    host_match: String,
+    #[serde(default)]
+    tag: Option<String>,
+    mode: OpenMode,
+    #[serde(default)]
+    max_access: RawAccess,
+    #[serde(default)]
+    allow_root: bool,
+}
+
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum RawAccess {
+    #[default]
+    ReadOnly,
+    Full,
 }
 
 #[derive(Deserialize, Default)]
@@ -168,13 +251,65 @@ impl Policy {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let open_limits = OpenLimits {
+            per_host: open_limit(
+                "max_sessions_per_host",
+                raw.open.max_sessions_per_host,
+                OPEN_DEFAULT_MAX_PER_HOST,
+                OPEN_MAX_PER_HOST,
+            )?,
+            per_agent: open_limit(
+                "max_sessions_per_agent",
+                raw.open.max_sessions_per_agent,
+                OPEN_DEFAULT_MAX_PER_AGENT,
+                OPEN_MAX_PER_AGENT,
+            )?,
+        };
+        let open_hosts = raw
+            .open
+            .hosts
+            .into_iter()
+            .map(build_open_host)
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             defaults,
             require_pairing,
             hosts,
             deny_patterns,
             deny_paths: raw.deny.paths,
+            open_hosts,
+            open_limits,
         })
+    }
+
+    pub(crate) fn open_limits(&self) -> OpenLimits {
+        self.open_limits
+    }
+
+    /// Decides whether an agent may open a session on `request.alias`, per the first
+    /// `[[open.hosts]]` rule that names it. A server no rule names is asked about: nothing opens
+    /// on its own unless the user wrote a rule saying it may. An `allow` rule does not cover more
+    /// than its `max_access`, or a root shell it does not `allow_root` for: those are asked about
+    /// too, never silently lowered.
+    pub(crate) fn evaluate_open(&self, request: OpenRequest<'_>) -> Decision {
+        let Some(rule) = self.open_hosts.iter().find(|rule| rule.covers(request)) else {
+            return Decision::Ask;
+        };
+        match rule.mode {
+            OpenMode::Deny => Decision::Deny(format!(
+                "the policy does not let agents open sessions on {}.",
+                request.alias
+            )),
+            OpenMode::Ask => Decision::Ask,
+            OpenMode::Allow => {
+                if request.access > rule.max_access || (request.root && !rule.allow_root) {
+                    Decision::Ask
+                } else {
+                    Decision::Allow
+                }
+            }
+        }
     }
 
     /// Decides what to do with `request` on `hostname`, per the fixed rule order in mục 2.2 of
@@ -248,8 +383,61 @@ impl Default for Policy {
             hosts: Vec::new(),
             deny_patterns: Vec::new(),
             deny_paths: Vec::new(),
+            open_hosts: Vec::new(),
+            open_limits: OpenLimits::default(),
         }
     }
+}
+
+impl OpenHostRule {
+    fn covers(&self, request: OpenRequest<'_>) -> bool {
+        glob_matches(&self.host_match, request.alias, true)
+            && self
+                .tag
+                .as_ref()
+                .is_none_or(|tag| request.tags.iter().any(|candidate| candidate == tag))
+    }
+}
+
+fn open_limit(
+    key: &str,
+    value: Option<usize>,
+    default: usize,
+    cap: usize,
+) -> Result<usize, PolicyError> {
+    match value {
+        None => Ok(default),
+        Some(value) if (1..=cap).contains(&value) => Ok(value),
+        Some(_) => Err(PolicyError::Invalid(format!(
+            "[open] {key} must be between 1 and {cap}"
+        ))),
+    }
+}
+
+fn build_open_host(raw: RawOpenHost) -> Result<OpenHostRule, PolicyError> {
+    if raw.host_match.trim().is_empty() {
+        return Err(PolicyError::Invalid(
+            "an [[open.hosts]] entry has an empty 'match'".to_owned(),
+        ));
+    }
+    let tag = match raw.tag {
+        Some(tag) if tag.trim().is_empty() => {
+            return Err(PolicyError::Invalid(
+                "an [[open.hosts]] entry has an empty 'tag'".to_owned(),
+            ));
+        }
+        tag => tag.map(|tag| tag.trim().to_owned()),
+    };
+    Ok(OpenHostRule {
+        host_match: raw.host_match,
+        tag,
+        mode: raw.mode,
+        max_access: match raw.max_access {
+            RawAccess::ReadOnly => Access::ReadOnly,
+            RawAccess::Full => Access::Full,
+        },
+        allow_root: raw.allow_root,
+    })
 }
 
 fn build_rule(mode: Mode, allow: Vec<String>) -> Result<Rule, PolicyError> {
@@ -334,6 +522,14 @@ pub(crate) fn glob_matches(pattern: &str, text: &str, case_insensitive: bool) ->
         p += 1;
     }
     p == pattern.len()
+}
+
+/// Why every write is refused while the policy file cannot be loaded, for the agent.
+pub(crate) fn invalid_policy_reason(error: &PolicyError) -> String {
+    format!(
+        "the policy file ~/.warp/agent-ops/policy.toml is invalid ({error}). Ask the user to fix \
+         it."
+    )
 }
 
 /// Loads the policy from `home`'s `~/.warp/agent-ops/policy.toml`. A missing file is not an

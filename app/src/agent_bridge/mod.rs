@@ -8,6 +8,8 @@ pub(crate) mod audit;
 pub(crate) mod error;
 pub(crate) mod messages;
 pub(crate) mod model;
+pub(crate) mod open_audit;
+pub(crate) mod opened;
 pub(crate) mod operations;
 pub(crate) mod ops;
 pub(crate) mod pairing;
@@ -86,3 +88,20 @@ pub(crate) const AGENTS_FILE: &str = ".warp/agent-ops/agents.toml";
 /// Upper bound on how many approval requests a single session may have waiting at once, so a
 /// misbehaving agent cannot flood the queue.
 pub(crate) const MAX_PENDING_APPROVALS_PER_SESSION: usize = 8;
+
+/// How many sessions an agent may hold open on one server, and in all, unless the policy's
+/// `[open]` table says otherwise, and the most that table may ask for.
+pub(crate) const OPEN_DEFAULT_MAX_PER_HOST: usize = 2;
+pub(crate) const OPEN_DEFAULT_MAX_PER_AGENT: usize = 4;
+pub(crate) const OPEN_MAX_PER_HOST: usize = 8;
+pub(crate) const OPEN_MAX_PER_AGENT: usize = 16;
+
+/// Sessions agents hold open across all servers and agents.
+pub(crate) const OPEN_MAX_TOTAL: usize = 16;
+
+/// How long a session that has not finished Warpifying keeps being attached when it becomes ready
+/// late, for example because a person had to type a passphrase in its tab.
+pub(crate) const OPEN_PENDING_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// Requests to open a session that one agent may have waiting for a person at the same time.
+pub(crate) const MAX_PENDING_OPEN_APPROVALS_PER_AGENT: usize = 3;

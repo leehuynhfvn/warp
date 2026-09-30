@@ -5,11 +5,13 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use local_control::protocol::{
-    APPROVAL_TIMEOUT_SECS, ActionKind, AgentToken, ControlError, RemoteExecParams,
-    RemoteExecResult, RemoteExecVisibleParams, RemoteExecVisibleResult, RemoteFileReadParams,
-    RemoteFileReadResult, RemoteFileWriteParams, RemoteFileWriteResult, RemoteHostListParams,
-    RemoteHostListResult, RemoteOutputRecentParams, RemoteOutputRecentResult,
-    RemoteSessionListResult, RemoteSessionRef, WriteExpectation,
+    APPROVAL_TIMEOUT_SECS, ActionKind, AgentToken, ControlError, OPEN_WAIT_DEFAULT_SECS,
+    OPEN_WAIT_MAX_SECS, RemoteAccess, RemoteExecParams, RemoteExecResult, RemoteExecVisibleParams,
+    RemoteExecVisibleResult, RemoteFileReadParams, RemoteFileReadResult, RemoteFileWriteParams,
+    RemoteFileWriteResult, RemoteHostListParams, RemoteHostListResult, RemoteOutputRecentParams,
+    RemoteOutputRecentResult, RemoteSessionCloseParams, RemoteSessionCloseResult,
+    RemoteSessionListResult, RemoteSessionOpenParams, RemoteSessionOpenResult, RemoteSessionRef,
+    WriteExpectation,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -18,8 +20,8 @@ use sha2::{Digest, Sha256};
 
 use super::edit::{EditError, apply_edit};
 use super::format::{
-    edit_snippet, place, render_exec, render_exec_visible, render_hosts, render_read,
-    render_sessions,
+    edit_snippet, place, render_close, render_exec, render_exec_visible, render_hosts, render_open,
+    render_read, render_sessions,
 };
 use super::jsonrpc::{McpHandler, ToolResult};
 use super::redact::Redactor;
@@ -31,6 +33,10 @@ use crate::local_control::remote::{
 
 /// Audit name when the client does not say who it is.
 const UNKNOWN_AGENT: &str = "mcp-unknown";
+
+/// Extra time, beyond the wait for the session and for the user's approval, before this side
+/// gives up on an `open_session` request.
+const OPEN_CLIENT_MARGIN: Duration = Duration::from_secs(30);
 
 /// The app accepts agent names of at most this many bytes.
 const MAX_AGENT_NAME_BYTES: usize = 64;
@@ -68,7 +74,15 @@ write_file refuses to overwrite files that contain it.
 - Warp may ask the user to approve a write; the call then waits up to 5 minutes. If the result \
 says \"Denied by Warp's agent policy\", do not retry the same command or rephrase it to get \
 around the rule; tell the user why it was denied.
-- Keep commands short and single-purpose so the user can review them.";
+- Keep commands short and single-purpose so the user can review them.
+- open_session opens an SSH session to one of the user's servers (see list_hosts) in a new Warp \
+tab the user can watch. Only do it when you need the server, say the real reason in purpose, ask \
+for read_only unless you must change something, and ask for root only when the task needs it. \
+The user may be asked to approve; wait for it. If it is denied, do not open it again or work \
+around it. Open only as many sessions as you need, and call close_session on each when you are \
+done: you can close only sessions you opened. A result that says the session is not ready means \
+the user may need to answer a question in its tab; do not open another one, check list_sessions \
+later.";
 
 /// How the tools reach Warp; a fake in tests.
 pub(super) trait ControlTransport {
@@ -119,6 +133,22 @@ struct ListSessionsArgs {}
 struct ListHostsArgs {
     query: Option<String>,
     limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenSessionArgs {
+    host: String,
+    access: Option<RemoteAccess>,
+    purpose: String,
+    root: Option<bool>,
+    wait_secs: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseSessionArgs {
+    session_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,6 +274,41 @@ impl<T: ControlTransport> Tools<T> {
             SESSIONS_CLIENT_TIMEOUT,
         )?;
         Ok(render_hosts(&result))
+    }
+
+    fn open_session(&mut self, args: Value) -> Result<String, ToolError> {
+        let args: OpenSessionArgs = parse_args("open_session", args)?;
+        let wait_secs = args
+            .wait_secs
+            .unwrap_or(OPEN_WAIT_DEFAULT_SECS)
+            .clamp(1, OPEN_WAIT_MAX_SECS);
+        let params = RemoteSessionOpenParams {
+            host: args.host,
+            access: args.access.unwrap_or_default(),
+            purpose: args.purpose,
+            root: args.root.unwrap_or_default(),
+            wait_secs: Some(wait_secs),
+            agent: Some(self.agent.clone()),
+        };
+        let wait =
+            Duration::from_secs(wait_secs.into()) + APPROVAL_CLIENT_MARGIN + OPEN_CLIENT_MARGIN;
+        let result: RemoteSessionOpenResult =
+            self.call(ActionKind::RemoteSessionOpen, params, None, wait)?;
+        Ok(render_open(&result))
+    }
+
+    fn close_session(&mut self, args: Value) -> Result<String, ToolError> {
+        let args: CloseSessionArgs = parse_args("close_session", args)?;
+        let params = RemoteSessionCloseParams {
+            agent: Some(self.agent.clone()),
+        };
+        let result: RemoteSessionCloseResult = self.call(
+            ActionKind::RemoteSessionClose,
+            params,
+            Some(&args.session_id),
+            SESSIONS_CLIENT_TIMEOUT,
+        )?;
+        Ok(render_close(&result))
     }
 
     fn exec(&mut self, args: Value) -> Result<String, ToolError> {
@@ -573,6 +638,8 @@ impl<T: ControlTransport> McpHandler for Tools<T> {
         let outcome = match name {
             "list_sessions" => self.list_sessions(arguments),
             "list_hosts" => self.list_hosts(arguments),
+            "open_session" => self.open_session(arguments),
+            "close_session" => self.close_session(arguments),
             "exec" => self.exec(arguments),
             "exec_visible" => self.exec_visible(arguments),
             "read_file" => self.read_file(arguments),
@@ -714,6 +781,67 @@ fn tool_definitions() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true, "openWorldHint": false }
+        },
+        {
+            "name": "open_session",
+            "title": "Open a session to a server",
+            "description": "Open an SSH session to a server in the user's Warp server \
+                            directory, in a new tab the user can see, and attach it so the \
+                            other tools can use it. The user may be asked to approve; the \
+                            call waits for that. Returns the session_id to pass to the other \
+                            tools, or says the session is not ready yet.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "description": "Alias of the server, as shown by list_hosts."
+                    },
+                    "purpose": {
+                        "type": "string", "maxLength": 200,
+                        "description": "Why you need the session, in a few words; the user \
+                                        reads it before approving."
+                    },
+                    "access": {
+                        "type": "string", "enum": ["read_only", "full"],
+                        "description": "read_only (default) reads files and lists sessions; \
+                                        full may also run commands and write files, which \
+                                        the user's policy still decides one by one."
+                    },
+                    "root": {
+                        "type": "boolean",
+                        "description": "Become root with sudo -i once signed in, where the \
+                                        server's entry allows it (default false)."
+                    },
+                    "wait_secs": {
+                        "type": "integer", "minimum": 1, "maximum": 180,
+                        "description": "Seconds to wait for the session to be ready (default \
+                                        60), not counting the user's approval."
+                    }
+                },
+                "required": ["host", "purpose"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true }
+        },
+        {
+            "name": "close_session",
+            "title": "Close a session you opened",
+            "description": "Close a session that open_session opened, which ends the SSH \
+                            connection and closes its tab. Sessions the user opened, or \
+                            another agent opened, cannot be closed with it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "The session_id open_session returned."
+                    }
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": false }
         },
         {
             "name": "exec",

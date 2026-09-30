@@ -1,13 +1,25 @@
+use std::collections::{HashMap, HashSet};
+
 use futures::channel::oneshot;
 use instant::Instant;
 use uuid::Uuid;
-use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
+use warpui::{
+    Entity, ModelContext, ModelHandle, SingletonEntity, ViewHandle, WeakViewHandle, WindowId,
+};
 
 use super::approval::{ApprovalDecision, ApprovalQueue, ApprovalRequest};
 use super::attachments::{Access, AttachmentStatus, Attachments};
 use super::error::AgentBridgeError;
+use super::opened::{
+    Bootstrapped, LimitError, OpenState, Opened, OpenedSessions, SUDO_COMMAND, Step,
+};
 use super::operations::{OperationKind, Operations};
-use crate::terminal::model::session::SessionId;
+use super::policy::OpenLimits;
+use crate::terminal::model::session::{
+    BootstrapSessionType, SessionBootstrappedEvent, SessionId, Sessions, SessionsEvent,
+};
+use crate::terminal::shell::ShellType;
+use crate::terminal::view::TerminalView;
 
 /// Which sessions the user has allowed agents to control, and what is waiting for a person to
 /// decide on in them. Lives only in memory, so restarting Warp revokes everything and denies
@@ -17,6 +29,21 @@ pub struct AgentBridgeModel {
     attachments: Attachments,
     operations: Operations,
     approvals: ApprovalQueue,
+    opened: OpenedSessions,
+    /// The requests that opened a session and are still waiting for it to be ready, by pane.
+    open_waiters: HashMap<String, oneshot::Sender<OpenReady>>,
+}
+
+/// A session an agent asked to open is ready to be used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpenReady {
+    pub(crate) session: SessionId,
+    pub(crate) user: String,
+    pub(crate) host: String,
+    /// The session is the root shell that `sudo -i` started.
+    pub(crate) elevated: bool,
+    /// Why the root shell that was going to be started was not: the session is the login user's.
+    pub(crate) root_note: Option<String>,
 }
 
 /// What an observer of [`AgentBridgeModel`] beyond a plain `notify()` may care about.
@@ -179,6 +206,15 @@ impl AgentBridgeModel {
         self.approvals.has_pending_pairing()
     }
 
+    pub(crate) fn has_pending_open(&self) -> bool {
+        self.approvals.has_pending_open()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_open_request_ids(&self) -> Vec<Uuid> {
+        self.approvals.pending_open_request_ids()
+    }
+
     pub(crate) fn oldest_approval_for_session(&self, id: SessionId) -> Option<&ApprovalRequest> {
         self.approvals.oldest_for_session(id)
     }
@@ -216,6 +252,163 @@ impl AgentBridgeModel {
 
     pub(crate) fn is_session_trusted(&self, id: SessionId) -> bool {
         self.attachments.is_session_trusted(id, Instant::now())
+    }
+
+    /// Whether `agent_id` may open one more session on `alias`. Sessions whose pane is not in
+    /// `live_panes` any more (their tab was closed) stop counting first.
+    pub(crate) fn check_open_limits(
+        &mut self,
+        agent_id: &str,
+        alias: &str,
+        limits: OpenLimits,
+        live_panes: &HashSet<String>,
+    ) -> Result<(), LimitError> {
+        for pane in self.opened.retain_live(live_panes) {
+            self.open_waiters.remove(&pane);
+        }
+        self.opened.expire(Instant::now());
+        self.opened.check_limits(agent_id, alias, limits)
+    }
+
+    /// The session an agent opened in `pane`, if `agent_id` is the agent that opened it.
+    pub(crate) fn opened_by(&self, pane: &str, agent_id: &str) -> Option<&Opened> {
+        self.opened
+            .get(pane)
+            .filter(|opened| opened.agent_id == agent_id)
+    }
+
+    /// Starts following the session that the tab of `terminal_view` is about to open: attaches it
+    /// when it finishes Warpifying in `sessions` (see [`Step`]) and answers on the returned
+    /// receiver once it is ready to use. `terminal_view` is only needed to start the root shell,
+    /// and a tab that is gone by then just leaves the session as the login user's.
+    pub(crate) fn track_open(
+        &mut self,
+        pane: String,
+        opened: Opened,
+        sessions: &ModelHandle<Sessions>,
+        terminal_view: Option<WeakViewHandle<TerminalView>>,
+        ctx: &mut ModelContext<Self>,
+    ) -> oneshot::Receiver<OpenReady> {
+        let (sender, receiver) = oneshot::channel();
+        self.opened.register(pane.clone(), opened);
+        self.open_waiters.insert(pane.clone(), sender);
+        ctx.subscribe_to_model(sessions, move |me, sessions, event, ctx| {
+            if let SessionsEvent::SessionBootstrapped(event) = event {
+                let view = terminal_view.as_ref().and_then(|view| view.upgrade(ctx));
+                me.follow_open(&pane, view.as_ref(), &sessions, event, ctx);
+            }
+        });
+        ctx.notify();
+        receiver
+    }
+
+    /// Stops following the session of `pane`, which is being closed, and takes away what an agent
+    /// had of it. Returns what was known about it.
+    pub(crate) fn forget_opened(
+        &mut self,
+        pane: &str,
+        ctx: &mut ModelContext<Self>,
+    ) -> Option<Opened> {
+        self.open_waiters.remove(pane);
+        let opened = self.opened.remove(pane)?;
+        match opened.state {
+            OpenState::Ready { session } => {
+                self.detach(session, ctx);
+            }
+            OpenState::Elevating { user_session } => {
+                self.detach(user_session, ctx);
+            }
+            OpenState::Connecting | OpenState::Abandoned => {}
+        }
+        Some(opened)
+    }
+
+    fn follow_open(
+        &mut self,
+        pane: &str,
+        terminal_view: Option<&ViewHandle<TerminalView>>,
+        sessions: &ModelHandle<Sessions>,
+        event: &SessionBootstrappedEvent,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let ssh_host = event
+            .subshell_info
+            .as_ref()
+            .and_then(|info| info.ssh_connection_info.as_ref())
+            .and_then(|info| info.host.as_deref());
+        self.opened.expire(Instant::now());
+        let step = self.opened.on_bootstrapped(
+            pane,
+            Bootstrapped {
+                session: event.session_id,
+                is_remote: matches!(event.session_type, BootstrapSessionType::WarpifiedRemote),
+                ssh_host,
+                spawning_command: &event.spawning_command,
+            },
+        );
+        let Step::Attach {
+            session,
+            access,
+            replaces,
+            elevate,
+        } = step
+        else {
+            return;
+        };
+        self.attach(session, access, ctx);
+        if let Some(replaced) = replaces {
+            self.detach(replaced, ctx);
+        }
+        let Some(bootstrapped) = sessions.as_ref(ctx).get(session) else {
+            return;
+        };
+        let ready = OpenReady {
+            session,
+            user: bootstrapped.user().to_owned(),
+            host: bootstrapped.hostname().to_owned(),
+            elevated: replaces.is_some(),
+            root_note: None,
+        };
+        if !elevate {
+            self.notify_open_ready(pane, ready);
+            return;
+        }
+        let shell_type = event.shell.shell_type();
+        let sent = match (terminal_view, shell_type) {
+            (_, ShellType::PowerShell) => Err("the server's shell is PowerShell".to_owned()),
+            (None, _) => Err("the tab was closed".to_owned()),
+            (Some(view), ShellType::Zsh | ShellType::Bash | ShellType::Fish) => {
+                let sent = view.update(ctx, |view, ctx| {
+                    view.execute_subshell_command_and_warpify(SUDO_COMMAND, shell_type, ctx)
+                });
+                if sent {
+                    Ok(())
+                } else {
+                    Err("the shell was busy".to_owned())
+                }
+            }
+        };
+        if let Err(reason) = sent {
+            self.opened.give_up_elevation(pane);
+            self.notify_open_ready(
+                pane,
+                OpenReady {
+                    root_note: Some(format!(
+                        "'{SUDO_COMMAND}' was not run because {reason}; the session stays as the \
+                         login user."
+                    )),
+                    ..ready
+                },
+            );
+        }
+    }
+
+    fn notify_open_ready(&mut self, pane: &str, ready: OpenReady) {
+        if let Some(sender) = self.open_waiters.remove(pane)
+            && sender.send(ready).is_err()
+        {
+            log::debug!("An agent stopped waiting for the session it opened");
+        }
     }
 }
 

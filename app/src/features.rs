@@ -115,6 +115,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AgentOpsPolicy,
         #[cfg(feature = "agent_ops_hosts")]
         FeatureFlag::AgentOpsHosts,
+        #[cfg(feature = "agent_ops_open_session")]
+        FeatureFlag::AgentOpsOpenSession,
         #[cfg(feature = "drag_tabs_to_windows")]
         FeatureFlag::DragTabsToWindows,
         #[cfg(feature = "cycle_next_command_suggestion")]

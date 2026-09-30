@@ -61,6 +61,12 @@ pub(crate) struct AuditRecord {
     /// O2 plan) is wired up. Absent for an unpaired or untokened client.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Why an agent asked to open a session, in its own words. Only `remote.session.open` has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    /// The most an agent asked for in a session it opened: `read_only` or `full`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<&'static str>,
     pub duration_ms: u64,
     /// Bytes read or written.
     #[serde(skip_serializing_if = "Option::is_none")]

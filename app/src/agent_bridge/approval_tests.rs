@@ -289,8 +289,9 @@ fn a_command_toast_names_the_session_and_times_out() {
         req.toast_message(),
         "An agent is waiting for approval on root@lab-1"
     );
-    assert!(
-        !req.toast_is_persistent(),
+    assert_eq!(
+        req.persistent_toast_id(),
+        None,
         "the pane header keeps showing a waiting command after the toast is gone"
     );
 }
@@ -303,10 +304,77 @@ fn a_pairing_toast_names_the_agent_and_stays() {
         req.toast_message(),
         "'antigravity-client' wants to pair with Warp"
     );
-    assert!(
-        req.toast_is_persistent(),
+    assert_eq!(
+        req.persistent_toast_id(),
+        Some(PAIRING_TOAST_ID),
         "nothing else shows a waiting pairing request once the toast is gone"
     );
+}
+
+fn open_request(agent_id: Option<&str>, alias: &str) -> ApprovalRequest {
+    ApprovalRequest {
+        session: None,
+        session_label: String::new(),
+        agent: AgentLabel {
+            claimed: Some("claude-code".to_owned()),
+            agent_id: agent_id.map(str::to_owned),
+        },
+        subject: ApprovalSubject::OpenSession {
+            alias: alias.to_owned(),
+            access: Access::ReadOnly,
+            purpose: "check the disk".to_owned(),
+            tags: Vec::new(),
+            connection: None,
+            elevation: ElevationPlan::NotRequested,
+        },
+        ..request(session(1), window(1))
+    }
+}
+
+#[test]
+fn an_open_toast_names_the_paired_agent_and_the_server_and_stays() {
+    let req = open_request(Some("claude-code"), "lab-1");
+
+    assert_eq!(
+        req.toast_message(),
+        "'claude-code' wants to open a session to lab-1"
+    );
+    assert_eq!(req.persistent_toast_id(), Some(OPEN_TOAST_ID));
+}
+
+#[test]
+fn requests_to_open_a_session_are_counted_per_agent() {
+    let mut queue = ApprovalQueue::default();
+    assert!(!queue.has_pending_open());
+    let _waiting = queue
+        .push(open_request(Some("claude-code"), "lab-1"))
+        .unwrap();
+    let _waiting = queue.push(open_request(Some("codex"), "lab-1")).unwrap();
+    let _waiting = queue.push(request(session(1), window(1))).unwrap();
+
+    assert!(queue.has_pending_open());
+    assert_eq!(queue.count_open_for_agent("claude-code"), 1);
+    assert_eq!(queue.count_open_for_agent("codex"), 1);
+    assert_eq!(queue.count_open_for_agent("someone"), 0);
+    assert!(
+        !queue.has_pending_pairing(),
+        "opening a session is not a pairing"
+    );
+}
+
+#[test]
+fn one_agent_cannot_flood_the_queue_with_requests_to_open_sessions() {
+    let mut queue = ApprovalQueue::default();
+    for _ in 0..MAX_PENDING_OPEN_APPROVALS_PER_AGENT {
+        let _waiting = queue
+            .push(open_request(Some("claude-code"), "lab-1"))
+            .unwrap();
+    }
+    assert!(matches!(
+        queue.push(open_request(Some("claude-code"), "lab-2")),
+        Err(AgentBridgeError::PolicyDenied(_))
+    ));
+    assert!(queue.push(open_request(Some("codex"), "lab-2")).is_ok());
 }
 
 // --- wait_for_decision -------------------------------------------------------

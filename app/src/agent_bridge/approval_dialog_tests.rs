@@ -188,3 +188,95 @@ fn the_deadline_is_shown_as_a_clock_time() {
     let clock = &line["Denied automatically at ".len()..][..5];
     assert_eq!(clock.as_bytes()[2], b':', "{clock:?}");
 }
+
+fn open_request(
+    access: Access,
+    purpose: &str,
+    connection: Option<&str>,
+    elevation: ElevationPlan,
+) -> ApprovalRequest {
+    ApprovalRequest {
+        request_id: Uuid::new_v4(),
+        session: None,
+        session_label: String::new(),
+        agent: AgentLabel {
+            claimed: Some("claude-code".to_owned()),
+            agent_id: Some("claude-code".to_owned()),
+        },
+        subject: ApprovalSubject::OpenSession {
+            alias: "lab-1".to_owned(),
+            access,
+            purpose: purpose.to_owned(),
+            tags: vec!["lab".to_owned(), "web".to_owned()],
+            connection: connection.map(str::to_owned),
+            elevation,
+        },
+        deadline: SystemTime::now() + Duration::from_secs(300),
+        window_id: WindowId::from_usize(1),
+    }
+}
+
+#[test]
+fn opening_a_session_names_the_server_the_purpose_and_what_will_be_reachable() {
+    let (title, body) = content(&open_request(
+        Access::Full,
+        "check the disk",
+        Some("ops@10.0.0.5:22"),
+        ElevationPlan::NotRequested,
+    ));
+
+    assert_eq!(title, "Open a session to lab-1?");
+    assert!(body.contains("Agent: claude-code (paired)"));
+    assert!(body.contains("Access: full"));
+    assert!(body.contains("Purpose: check the disk"));
+    assert!(body.contains("Connects as: ops@10.0.0.5:22"));
+    assert!(body.contains("Tags: lab, web"));
+    assert!(!body.contains("Root:"), "root was not asked for: {body}");
+}
+
+#[test]
+fn a_read_only_request_says_so() {
+    let (_, body) = content(&open_request(
+        Access::ReadOnly,
+        "look",
+        None,
+        ElevationPlan::NotRequested,
+    ));
+    assert!(body.contains("Access: read-only"));
+    assert!(!body.contains("Connects as"));
+}
+
+#[test]
+fn the_dialog_says_how_root_will_be_reached_or_why_it_will_not() {
+    let run = content(&open_request(Access::Full, "x", None, ElevationPlan::Run)).1;
+    assert!(run.contains("sudo -i") && run.contains("without a password"));
+
+    let already = content(&open_request(
+        Access::Full,
+        "x",
+        None,
+        ElevationPlan::AlreadyRoot,
+    ))
+    .1;
+    assert!(already.contains("login is root already"));
+
+    let skipped = content(&open_request(
+        Access::Full,
+        "x",
+        None,
+        ElevationPlan::Skipped("this server needs a sudo password.".to_owned()),
+    ))
+    .1;
+    assert!(skipped.contains("stays as the login user") && skipped.contains("sudo password"));
+}
+
+#[test]
+fn what_an_agent_writes_as_its_purpose_cannot_smuggle_control_characters() {
+    let (_, body) = content(&open_request(
+        Access::ReadOnly,
+        "look\u{1b}[2J\rand more",
+        None,
+        ElevationPlan::NotRequested,
+    ));
+    assert!(!body.contains('\u{1b}') && !body.contains('\r'));
+}

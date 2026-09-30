@@ -626,6 +626,8 @@ impl Audit {
             policy_decision: target.policy_decision,
             policy_reason: None,
             agent_id: target.agent_id.clone(),
+            purpose: None,
+            access: None,
             duration_ms: 0,
             bytes: None,
             still_running: false,

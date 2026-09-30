@@ -1,8 +1,9 @@
 //! Text of the tool results, shaped like the output of Claude Code's own tools.
 use local_control::protocol::{
     RemoteAccess, RemoteExecResult, RemoteExecVisibleResult, RemoteHostListResult,
-    RemoteHostMirror, RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteRootLogin,
-    RemoteSessionKind, RemoteSessionRef, RemoteSessionSummary, RemoteStream, RemoteTransport,
+    RemoteHostMirror, RemoteHostSession, RemoteHostSource, RemoteHostSummary, RemoteOpenElevation,
+    RemoteOpenStatus, RemoteRootLogin, RemoteSessionCloseResult, RemoteSessionKind,
+    RemoteSessionOpenResult, RemoteSessionRef, RemoteSessionSummary, RemoteStream, RemoteTransport,
 };
 
 /// Longer lines are cut, as Claude Code's Read tool does.
@@ -231,6 +232,54 @@ fn render_session(session: &RemoteSessionSummary) -> String {
         "- session_id {id}{focus}: {}@{} cwd {cwd} shell {} — {status}",
         session.user, session.host, session.shell
     )
+}
+
+/// `open_session` result: who the new session is signed in as, or why it is not ready.
+pub(in crate::local_control) fn render_open(result: &RemoteSessionOpenResult) -> String {
+    let id = serde_json::Value::String(result.session_id.clone());
+    let access = match result.access {
+        RemoteAccess::ReadOnly => "read-only",
+        RemoteAccess::Full => "full access",
+    };
+    let mut text = match (&result.status, &result.user, &result.host) {
+        (RemoteOpenStatus::Ready, Some(user), Some(host)) => format!(
+            "Opened session_id {id} on {}: {user}@{host}, {access}.",
+            result.host_alias
+        ),
+        (RemoteOpenStatus::Ready, _, _) => {
+            format!("Opened session_id {id} on {}, {access}.", result.host_alias)
+        }
+        (RemoteOpenStatus::Connecting, _, _) => format!(
+            "The session_id {id} on {} is not ready yet ({access} once it is).",
+            result.host_alias
+        ),
+    };
+    let root = match result.elevation {
+        RemoteOpenElevation::NotRequested => None,
+        RemoteOpenElevation::AlreadyRoot => Some("Root: the login is root."),
+        RemoteOpenElevation::Elevated => Some("Root: yes, through sudo -i."),
+        RemoteOpenElevation::Pending => Some("Root: sudo -i is not finished yet."),
+        RemoteOpenElevation::Skipped => Some("Root: not reached."),
+    };
+    if let Some(root) = root {
+        text.push(' ');
+        text.push_str(root);
+    }
+    if let Some(note) = &result.note {
+        text.push(' ');
+        text.push_str(note);
+    }
+    text
+}
+
+/// `close_session` result.
+pub(in crate::local_control) fn render_close(result: &RemoteSessionCloseResult) -> String {
+    let id = serde_json::Value::String(result.session_id.clone());
+    if result.closed {
+        format!("Closed session_id {id}.")
+    } else {
+        format!("Session_id {id} was not closed.")
+    }
 }
 
 /// `list_hosts` result.

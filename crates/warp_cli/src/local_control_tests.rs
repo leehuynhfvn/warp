@@ -250,11 +250,17 @@ fn every_retained_catalog_action_has_a_parseable_cli_example() {
     }
     // `agent.pair` (mục 3.11 of the O2 agent-ops policy plan) is driven by the MCP transport's
     // pairing handshake, not typed by a person, so `warpctrl` gives it no subcommand — see the
-    // O2 plan's Task 4.5 decision log if that changes.
+    // O2 plan's Task 4.5 decision log if that changes. The two session-opening actions need the
+    // identity of a paired agent, which a person typing `warpctrl` never has (GD27 of the G plan).
+    let machine_only = [
+        ActionKind::AgentPair,
+        ActionKind::RemoteSessionOpen,
+        ActionKind::RemoteSessionClose,
+    ];
     let expected = ActionKind::ALL
         .iter()
         .copied()
-        .filter(|kind| *kind != ActionKind::AgentPair)
+        .filter(|kind| !machine_only.contains(kind))
         .collect::<HashSet<_>>();
     let missing = expected
         .difference(&covered)

@@ -10,8 +10,10 @@ use uuid::Uuid;
 use warpui::WindowId;
 use warpui::r#async::Timer;
 
-use super::MAX_PENDING_APPROVALS_PER_SESSION;
+use super::attachments::Access;
 use super::error::AgentBridgeError;
+use super::opened::ElevationPlan;
+use super::{MAX_PENDING_APPROVALS_PER_SESSION, MAX_PENDING_OPEN_APPROVALS_PER_AGENT};
 use crate::terminal::model::session::SessionId;
 
 /// What is being asked about. `Write`'s `preview` is already truncated to
@@ -35,6 +37,18 @@ pub(crate) enum ApprovalSubject {
     /// `agent.pair`: not tied to any session, so [`ApprovalRequest::session`] is `None` for this
     /// subject (mục 3.11 of the O2 plan).
     Pairing { name: String },
+    /// `remote.session.open`: no session exists yet, so [`ApprovalRequest::session`] is `None` for
+    /// this subject too.
+    OpenSession {
+        alias: String,
+        access: Access,
+        purpose: String,
+        tags: Vec<String>,
+        /// `user@host:port` as OpenSSH resolves the alias; absent when `ssh -G` did not answer.
+        connection: Option<String>,
+        /// What will be done about becoming root, worked out before asking.
+        elevation: ElevationPlan,
+    },
 }
 
 /// Who a request claims to be from: the name a client gave itself, and — once pairing resolves the
@@ -72,24 +86,38 @@ pub(crate) struct ApprovalRequest {
 /// time, so one id is enough to find and dismiss it.
 pub(crate) const PAIRING_TOAST_ID: &str = "agent_ops_pairing_request";
 
+/// `object_id` of the toast announcing requests to open a session. All of them share one toast:
+/// it goes away once none is waiting, and the palette reviews them oldest first.
+pub(crate) const OPEN_TOAST_ID: &str = "agent_ops_open_request";
+
 impl ApprovalRequest {
     /// The toast text announcing this request.
     pub(crate) fn toast_message(&self) -> String {
         match &self.subject {
             ApprovalSubject::Pairing { name } => format!("'{name}' wants to pair with Warp"),
+            ApprovalSubject::OpenSession { alias, .. } => {
+                let agent = self
+                    .agent
+                    .agent_id
+                    .as_deref()
+                    .or(self.agent.claimed.as_deref())
+                    .unwrap_or("An agent");
+                format!("'{agent}' wants to open a session to {alias}")
+            }
             ApprovalSubject::Command { .. } | ApprovalSubject::Write { .. } => {
                 format!("An agent is waiting for approval on {}", self.session_label)
             }
         }
     }
 
-    /// Whether the toast announcing this request stays until the request leaves the queue. A
-    /// pairing request needs that: it has no session, so no pane header shows it as waiting once
-    /// a short-lived toast is gone.
-    pub(crate) fn toast_is_persistent(&self) -> bool {
+    /// The `object_id` of the toast announcing this request when it stays until the request leaves
+    /// the queue, which one with no session must: no pane header shows it as waiting once a
+    /// short-lived toast is gone. `None` for a request that has a pane to show it.
+    pub(crate) fn persistent_toast_id(&self) -> Option<&'static str> {
         match self.subject {
-            ApprovalSubject::Pairing { .. } => true,
-            ApprovalSubject::Command { .. } | ApprovalSubject::Write { .. } => false,
+            ApprovalSubject::Pairing { .. } => Some(PAIRING_TOAST_ID),
+            ApprovalSubject::OpenSession { .. } => Some(OPEN_TOAST_ID),
+            ApprovalSubject::Command { .. } | ApprovalSubject::Write { .. } => None,
         }
     }
 }
@@ -131,6 +159,15 @@ impl ApprovalQueue {
         {
             return Err(AgentBridgeError::PolicyDenied(
                 "too many requests are waiting for approval in this session.".to_owned(),
+            ));
+        }
+        if let ApprovalSubject::OpenSession { .. } = request.subject
+            && let Some(agent_id) = &request.agent.agent_id
+            && self.count_open_for_agent(agent_id) >= MAX_PENDING_OPEN_APPROVALS_PER_AGENT
+        {
+            return Err(AgentBridgeError::PolicyDenied(
+                "too many requests to open a session are waiting for the user to decide."
+                    .to_owned(),
             ));
         }
         let (sender, receiver) = oneshot::channel();
@@ -207,6 +244,33 @@ impl ApprovalQueue {
         self.pending
             .iter()
             .any(|(request, _)| matches!(request.subject, ApprovalSubject::Pairing { .. }))
+    }
+
+    /// Whether a request to open a session ([`ApprovalSubject::OpenSession`]) is waiting.
+    pub(crate) fn has_pending_open(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|(request, _)| matches!(request.subject, ApprovalSubject::OpenSession { .. }))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_open_request_ids(&self) -> Vec<Uuid> {
+        self.pending
+            .iter()
+            .filter(|(request, _)| matches!(request.subject, ApprovalSubject::OpenSession { .. }))
+            .map(|(request, _)| request.request_id)
+            .collect()
+    }
+
+    /// How many requests to open a session `agent_id` has waiting.
+    pub(crate) fn count_open_for_agent(&self, agent_id: &str) -> usize {
+        self.pending
+            .iter()
+            .filter(|(request, _)| {
+                matches!(request.subject, ApprovalSubject::OpenSession { .. })
+                    && request.agent.agent_id.as_deref() == Some(agent_id)
+            })
+            .count()
     }
 
     /// The longest-waiting request whose session's pane is in `window_id`.

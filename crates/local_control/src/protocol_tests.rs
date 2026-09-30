@@ -198,7 +198,7 @@ fn malformed_and_removed_action_names_are_not_deserialized() {
 fn catalog_has_exactly_the_retained_and_sync_actions() {
     const RETAINED_ACTIONS: usize = 84;
     const SYNC_ACTIONS: usize = 6;
-    const REMOTE_ACTIONS: usize = 7;
+    const REMOTE_ACTIONS: usize = 9;
     const AGENT_ACTIONS: usize = 1;
     assert_eq!(
         ActionKind::ALL.len(),
@@ -817,4 +817,92 @@ fn agent_pair_result_serializes_its_status_as_a_string() {
     assert_eq!(value["status"], "already_paired");
     let parsed: AgentPairResult = serde_json::from_value(value).expect("round trips");
     assert_eq!(parsed, result);
+}
+
+#[test]
+fn session_open_and_close_actions_are_named_and_scoped() {
+    assert_eq!(
+        ActionKind::RemoteSessionOpen.as_str(),
+        "remote.session.open"
+    );
+    assert_eq!(
+        ActionKind::RemoteSessionOpen.metadata().target_scope,
+        TargetScope::Instance
+    );
+    assert_eq!(
+        ActionKind::RemoteSessionClose.as_str(),
+        "remote.session.close"
+    );
+    assert_eq!(
+        ActionKind::RemoteSessionClose.metadata().target_scope,
+        TargetScope::Session
+    );
+}
+
+#[test]
+fn session_open_params_default_to_read_only_and_no_root() {
+    let params: RemoteSessionOpenParams = serde_json::from_value(serde_json::json!({
+        "host": "lab-1",
+        "purpose": "check the disk",
+    }))
+    .expect("only host and purpose are required");
+    assert_eq!(params.access, RemoteAccess::ReadOnly);
+    assert!(!params.root);
+    assert_eq!(params.wait_secs, None);
+    assert_eq!(params.agent, None);
+
+    let value = serde_json::to_value(&params).expect("serializes");
+    assert!(value.get("root").is_none());
+    assert!(value.get("wait_secs").is_none());
+    assert_eq!(value["access"], "read_only");
+}
+
+#[test]
+fn session_open_params_deny_unknown_fields_and_need_a_purpose() {
+    assert!(
+        serde_json::from_value::<RemoteSessionOpenParams>(serde_json::json!({
+            "host": "lab-1",
+            "purpose": "x",
+            "password": "hunter2",
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<RemoteSessionOpenParams>(serde_json::json!({ "host": "lab-1" }))
+            .is_err()
+    );
+}
+
+#[test]
+fn session_open_result_names_its_states_as_strings() {
+    let result = RemoteSessionOpenResult {
+        status: RemoteOpenStatus::Connecting,
+        session_id: "12".to_owned(),
+        host_alias: "lab-1".to_owned(),
+        host: None,
+        user: None,
+        access: RemoteAccess::Full,
+        elevation: RemoteOpenElevation::Skipped,
+        note: Some("sudo -i is not a Warpify subshell command".to_owned()),
+    };
+    let value = serde_json::to_value(&result).expect("serializes");
+    assert_eq!(value["status"], "connecting");
+    assert_eq!(value["elevation"], "skipped");
+    assert_eq!(value["access"], "full");
+    assert!(value.get("host").is_none());
+    let parsed: RemoteSessionOpenResult = serde_json::from_value(value).expect("round trips");
+    assert_eq!(parsed, result);
+}
+
+#[test]
+fn session_close_params_deny_unknown_fields() {
+    assert_eq!(
+        serde_json::from_value::<RemoteSessionCloseParams>(serde_json::json!({}))
+            .expect("agent is optional"),
+        RemoteSessionCloseParams::default()
+    );
+    assert!(
+        serde_json::from_value::<RemoteSessionCloseParams>(serde_json::json!({ "force": true }))
+            .is_err()
+    );
 }

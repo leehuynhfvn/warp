@@ -910,17 +910,14 @@ fn evaluate_policy(
     };
     match policy::load(home) {
         Ok(policy) => policy.evaluate(hostname, request, paired),
-        Err(error) => Decision::Deny(format!(
-            "the policy file ~/.warp/agent-ops/policy.toml is invalid ({error}). Ask the user to \
-             fix it."
-        )),
+        Err(error) => Decision::Deny(policy::invalid_policy_reason(&error)),
     }
 }
 
 /// Resolves `token_sha256` (the hash of a request's `agent_token`, if it had one) against
 /// `~/.warp/agent-ops/agents.toml`, giving the paired agent's id (mục 3.11 of the plan). `None` for
 /// an untokened or unpaired client — that is not an error, just an unverified caller.
-fn resolve_agent_id(home: &Path, token_sha256: Option<&str>) -> Option<String> {
+pub(super) fn resolve_agent_id(home: &Path, token_sha256: Option<&str>) -> Option<String> {
     let token_sha256 = token_sha256?;
     let agents = pairing::load(home);
     pairing::find(&agents, token_sha256).map(|agent| agent.id.clone())

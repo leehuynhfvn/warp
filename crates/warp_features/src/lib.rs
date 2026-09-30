@@ -1022,6 +1022,11 @@ pub enum FeatureFlag {
     /// Gates the server directory: a list of the user's servers with tags, imported from
     /// `~/.ssh/config`, that can be connected to from the command palette.
     AgentOpsHosts,
+
+    /// Gates agents opening their own SSH sessions to servers in the server directory
+    /// (`remote.session.open`/`close`). Deliberately not in any rollout list: it is enabled only by
+    /// the `agent_ops_open_session` cargo feature.
+    AgentOpsOpenSession,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

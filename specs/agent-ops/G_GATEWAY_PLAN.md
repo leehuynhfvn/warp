@@ -1,9 +1,9 @@
 # G1 — Danh bạ server — Implementation plan (v1)
 
-> Viết ngày 2026-09-29 (Claude Sonnet 5.5), theo `ROADMAP.md` mục G và quyết định AO9–AO13. Plan này
-> chỉ chi tiết **G1**; G2–G5 giữ ở mức phác trong roadmap, sẽ viết thêm vào file này khi tới lượt
-> (G2+ chỉ sau gate O2, AO7). Người dùng giao Claude quyết định thiết kế (AO13); người dùng chỉ làm
-> các ⛔ CHECKPOINT test tay.
+> Viết ngày 2026-09-29 (Claude Sonnet 5.5), theo `ROADMAP.md` mục G và quyết định AO9–AO13. Các mục 0–6
+> chi tiết **G1** (xong); mục **G2** (trước mục 7) chi tiết G2a/G2b, viết 2026-09-30; G3–G5 giữ ở mức
+> phác trong roadmap, sẽ viết thêm vào file này khi tới lượt. Người dùng giao Claude quyết định thiết
+> kế (AO13); người dùng chỉ làm các ⛔ CHECKPOINT test tay.
 
 ---
 
@@ -337,6 +337,201 @@ Trước khi test, chạy `sha256sum ~/.ssh/config ~/.ssh/config.* > /tmp/ssh-be
 
 ---
 
+## G2. Agent tự mở session — Implementation plan (v1)
+
+> Viết ngày 2026-09-30 (Claude Sonnet 5.5) theo `ROADMAP.md` mục G2, AO7, AO13 và rủi ro của G. Người
+> dùng quyết định làm G2 **trước** khi gate O2 đủ 1 tuần (sớm nhất 2026-10-06) nên có ba chốt an toàn:
+> cờ riêng `AgentOpsOpenSession` (không vào DOGFOOD/PREVIEW/RELEASE), `open_session` chỉ nhận client đã
+> **pair**, và host chưa có quy tắc thì **hỏi**, không bao giờ tự mở. Quyết định ghi vào bảng `GD26+`
+> (mục 7), tiến độ và nhật ký cùng mục 7. Chia hai giai đoạn: **G2a** (host dùng key/agent, không có bí mật)
+> làm ngay; **G2b** (mật khẩu SSH/sudo) chỉ **thiết kế** ở đây, không code tới khi người dùng xác nhận G2a.
+
+### G2.1 Khảo sát: các câu hỏi phải trả lời bằng code (2026-09-30)
+
+| # | Câu hỏi | Trả lời (đã đọc code) | Bằng chứng |
+|---|---|---|---|
+| Q1 | Sự kiện tin cậy "session remote đã Warpify xong"? | **Có.** `Sessions` (model của mỗi terminal view) phát `SessionsEvent::SessionBootstrapped(SessionBootstrappedEvent { session_id, spawning_command, shell, subshell_info, session_type })` ngay sau khi `sessions.insert(session)` trong `initialize_bootstrapped_session`, nên `Sessions::get(session_id)` đã trả `Session`. `TerminalView::handle_session_bootstrapped` chỉ là một người nghe. GD12 ghi "không có sự kiện" là **sai**: cái thiếu là sự kiện **thất bại** (ssh sai mật khẩu, đang chờ người bấm Warpify) → phải có timeout (GD32). | `terminal/model/session.rs:143-161, 350-470`, `terminal/view.rs:10208, 14212`, `terminal/model_events.rs:314` |
+| Q2 | Nối tab mới với đúng `SessionId`? | Tab do Warp tạo nên biết `PaneId` và terminal view của nó (`tabs[active].pane_group` → `focused_pane_id` → `terminal_view_from_pane_id`). `TerminalView::sessions_model()` là `pub`, nên `AgentBridgeModel` **subscribe** thẳng vào `Sessions` của đúng view đó, không sửa `terminal/view.rs`. Session đầu tiên của tab là shell **local** (`session_type = Local`) → bỏ qua; session ssh có `session_type = WarpifiedRemote` và `subshell_info.ssh_connection_info.host` = alias gõ trong `ssh <alias>` (GD10, đã đúng ở HD). Khớp = cùng view + `WarpifiedRemote` + host (bỏ `user@`) = alias. `session_id` client dùng là `PaneId.to_string()`, còn attach theo `SessionId` của shell (đổi khi `sudo -i`) → registry giữ cả hai. | `terminal/ssh/util.rs:202`, `terminal/view.rs:8255`, `handlers/metadata.rs:927`, `handlers/remote.rs:982` |
+| Q3 | Chỗ đặt logic mở tab? | `Workspace::agent_ops_connect_to_server` (private) dựng `PaneTemplateType::PaneTemplate { commands: [ssh <alias>] }` rồi `add_tab_with_pane_layout` — hàm này **kích hoạt** tab mới. `local_control` gọi Workspace qua `workspace_for_window(..)` + `workspace.update` (mẫu `layout.rs::create_tab`). `Workspace` có field private ⇒ code mới phải là module con của `view`: `workspace/view/agent_session_tab.rs` (cạnh `tab_grouping.rs`). | `workspace/view.rs:19704, 13113`, `handlers/layout.rs:38`, `workspace/view/tab_grouping.rs` |
+| Q4 | Nhóm "Agents" luôn hiển thị? | Nhóm tab có thật: `tab_groups: HashMap<TabGroupId, TabGroup { name, collapsed, .. }>`, gate `FeatureFlag::GroupedTabs` (cargo `grouped_tabs` nằm trong `default`). Mẫu chèn tab vào nhóm: `new_tab_in_group` (`index_after_group` + `move_tab_to_index` + `expand_tab_group`). "Luôn hiển thị" = tạo nhóm tên `Agents` nếu chưa có và **mở rộng** mỗi lần thêm tab; nhóm tắt (`GroupedTabs` off) thì chỉ đặt tiêu đề tab `Agent · <alias>`. | `workspace/view.rs:7621, 7844`, `workspace/tab_group.rs`, `app/Cargo.toml:670` |
+| Q5 | Giới hạn theo host/agent, `close_session` chỉ đóng session của chính agent? | Chưa có gì: cần registry RAM mới `OpenedSessions` trong `AgentBridgeModel` (cạnh `attachments`), khoá theo `PaneId`, giữ `agent_id` (danh tính đã pair), alias, mức access, trạng thái. Đếm theo alias và theo agent, dọn mục có pane đã biến mất bằng `session_entries`. Đóng = `PaneGroup::close_pane` (như `pane.close`, không hộp thoại) sau khi kiểm chủ sở hữu. | `handlers/close.rs:110`, `pane_group/mod.rs:4802` |
+| Q6 | Đi qua policy O2 và hộp thoại duyệt? | `authorize` gắn với session đã attach (nhận `SessionId`); mở session **chưa có session** nên cần đường riêng, dùng lại phần hạ tầng: `ApprovalQueue` (đã cho `session: None` từ pairing), `wait_for_decision`, hộp thoại `AgentApprovalDialog`, toast persistent (P28), audit fail-closed. Thêm `ApprovalSubject::OpenSession`, một mục `[open]` trong `policy.toml` và `Policy::evaluate_open` (thuần). | `agent_bridge/approval.rs:18-72`, `handlers/agent.rs`, `agent_bridge/policy.rs` |
+| Q7 | Lên root có đáng tin cậy không? | Có cơ chế xác định: `TerminalView::set_and_execute_subshell_command(cmd, shell_type)` đặt `pending_auto_bootstrap_shell_type` rồi chạy lệnh, và `AfterBlockStarted` tự bootstrap subshell (không banner) **nếu** `WarpifySettings::is_compatible_subshell_command(cmd)` đúng. Máy người dùng có `added_subshell_commands = ["sudo -i"]` nên khớp đúng chuỗi `sudo -i`. Điều kiện kiểm được trước khi gõ; kết quả kiểm chứng được bằng sự kiện `SessionBootstrapped` thứ hai (`spawning_command == "sudo -i"`). Hàm đó private → thêm một wrapper `pub(crate)` nhỏ (patch duy nhất vào `terminal/view.rs`). | `terminal/view.rs:26647, 26873, 12611-12640`, `terminal/warpify/settings.rs:520`, `~/.config/warp-oss/settings.toml` |
+
+**Rủi ro/điều chưa chắc (không đoán, để CHECKPOINT xác nhận):** (a) tab **nền** (không active) có bootstrap
+ssh bình thường không (H2A.3) — nếu không, GD30 lùi về "kích hoạt tab mới"; (b) Warpify hỏi người dùng trước
+khi cài extension (`SshExtensionInstallMode::AlwaysAsk`) hoặc ssh hỏi passphrase/host key → session không
+bao giờ bootstrap tới khi người bấm → `open_session` trả `connecting` (H2A.10); (c) đóng pane cuối của tab
+có hiện hộp thoại xác nhận không (H2A.7).
+
+### G2.2 Thiết kế
+
+```
+agent ─open_session{host,access,purpose,root?}─► warpctrl mcp ─(agent_token)─► remote.session.open
+   1. cờ, tham số, alias (validate_alias, GD5), host có trong danh bạ và không `missing`
+   2. token → agent_id đã pair (chưa pair = từ chối, GD28)         [nền: agents.toml]
+   3. giới hạn (host/agent/tổng) trên registry đã dọn               [main]
+   4. policy.toml `[open]` → Allow | Ask | Deny                     [nền]   Ask ⇒ hộp thoại O2 (subject OpenSession)
+   5. audit `started` (fail-closed) → Workspace mở tab `ssh <alias>` (không cướp focus) → registry `Connecting`
+   6. AgentBridgeModel nghe `Sessions` của view đó: WarpifiedRemote + host==alias ⇒ `attach(session, access)`
+      (root: gõ `sudo -i` bằng wrapper subshell, chờ SessionBootstrapped thứ hai ⇒ chuyển attach sang session root)
+   7. trả `ready` {session_id = pane id, user@host, access, elevation} hoặc `connecting` khi hết `wait_secs`
+agent ─close_session{session_id}─► chỉ khi registry ghi đúng agent_id này đã mở ─► close_pane + detach
+```
+
+**Registry (`agent_bridge/opened.rs`, thuần + test):** `OpenedSessions { by_pane: HashMap<String, Opened> }`,
+`Opened { agent_id, alias, access, purpose, want_root, opened_at, state }`,
+`state = Connecting | Elevating { user_session } | Ready { session } | Abandoned`. Hàm thuần:
+`check_limits(agent_id, alias, limits, live_panes)`, `on_bootstrapped(pane, &Bootstrapped) -> Step
+{ Ignore, Attach{session}, RunSudo{session}, AttachRoot{session, replaces}}`, `expire(now)`, `elevation_plan(root_login,
+want_root, sudo_i_is_warpifiable) -> Elevation {NotRequested, AlreadyRoot, Run, Skipped(reason)}`.
+`AgentBridgeModel` giữ registry và các `oneshot::Sender` chờ `Ready`; đăng ký nghe bằng
+`ctx.subscribe_to_model(view.sessions_model(), ..)`.
+
+**Policy `[open]` (`policy.rs`, thêm — không đổi `[defaults]`/`[[hosts]]`/`[deny]`):**
+
+```toml
+[open]
+max_sessions_per_host  = 2      # mặc định 2, trần cứng 8
+max_sessions_per_agent = 4      # mặc định 4, trần cứng 16
+
+[[open.hosts]]
+match = "lab-*"                 # glob trên ALIAS (không phân biệt hoa thường), luật đầu tiên khớp thắng
+tag = "lab"                     # tuỳ chọn: host phải có tag này
+mode = "allow"                  # allow | ask | deny
+max_access = "full"             # read_only (mặc định) | full — mức tối đa được mở KHÔNG hỏi
+allow_root = false              # true: được tự lên root (sudo -i) mà không hỏi
+```
+
+`evaluate_open`: Deny/Ask/Allow theo luật đầu tiên khớp; **không có luật ⇒ Ask** (không đọc `[defaults]`);
+`allow` mà access xin > `max_access`, hoặc xin root mà `allow_root = false` ⇒ **Ask** (không tự hạ mức
+lặng lẽ); `deny` ⇒ Deny. File lỗi/quyền rộng ⇒ Deny (fail-closed như P8). Sau khi attach tự động, mọi
+`exec`/`write` vẫn qua `authorize` và `[[hosts]]`/`[deny]` cũ như trước: tự attach **không** cấp quyền chạy lệnh.
+"Mức tối đa theo root_login/tag": tag chọn luật; `root_login` của host trong danh bạ quyết định root có khả
+thi (`sudo_nopasswd` ⇒ chạy `sudo -i`; `root` ⇒ đã là root; `sudo_password`/`none` ⇒ không lên, nói rõ trong kết quả).
+
+**Hộp thoại duyệt:** `ApprovalSubject::OpenSession { alias, access, purpose, tags, connection, root }`
+(`connection` = `user@host:port` từ `ssh -G`, GD7/GD19, nền, tối đa 5 s). Title `Open a session to <alias>?`;
+body: agent (paired), `Access: read-only|full`, `Purpose: …`, `Connects as: …`, tag, dòng root theo kế hoạch
+lên root ("Runs sudo -i for you" / "Signs in as root" / "Stays as the login user: <lý do>"), hạn tự từ chối.
+Chỉ nút Deny / Approve (không có "Allow in session"). Toast persistent, mỗi request chờ một `object_id` chung
+`agent_ops_open_request` (gỡ khi không còn request mở nào chờ). Tối đa 3 request mở đang chờ mỗi agent.
+
+**Audit:** action `remote.session.open` / `remote.session.close`; `host` = alias, `agent`, `agent_id`,
+`request_id`, `policy_decision`, `policy_reason`, thêm hai trường `purpose` và `access`
+(`skip_serializing_if` rỗng). Dòng `approval_requested` (nếu Ask) → dòng `started` **trước** khi mở tab
+(fail-closed) → dòng kết thúc (`ok`/`error`, `session_id` = pane id). Không bao giờ ghi bí mật (G2a không
+có).
+
+**Giao thức (không đổi `PROTOCOL_VERSION`):**
+
+- `remote.session.open` (target `Instance`): `RemoteSessionOpenParams { host, access: RemoteAccess (mặc định
+  read_only), purpose (1–200 ký tự, không ký tự điều khiển), root: bool (mặc định false), wait_secs: 1–180
+  (mặc định 60), agent }`, kết quả `RemoteSessionOpenResult { status: ready|connecting, session_id, host_alias,
+  host?, user?, access, elevation: not_requested|already_root|elevated|pending|skipped, note? }`.
+- `remote.session.close` (target `Session`, id trong selector như `remote.exec`): `RemoteSessionCloseParams { agent }`,
+  kết quả `RemoteSessionCloseResult { session_id, closed }`.
+- Catalog 98 → 100 (`REMOTE_ACTIONS` 7 → 9). Không có subcommand `warpctrl` (như `agent.pair`, P25 của O2): hai
+  action này cần danh tính đã pair nên chỉ MCP dùng được; test ví dụ CLI loại trừ chúng.
+- MCP: `open_session {host, access?, purpose, root?, wait_secs?}`, `close_session {session_id}`; thời gian chờ client =
+  `wait_secs + APPROVAL_CLIENT_MARGIN + 30 s`. `INSTRUCTIONS` thêm: chỉ mở session khi thật cần, ghi `purpose` thật, mở
+  đúng số session cần, `close_session` khi xong, đừng thử lách khi bị từ chối, `connecting` nghĩa là người dùng có thể
+  phải trả lời một câu hỏi trong tab.
+
+**Lên root (`root: true`, G2a phase 4):** chỉ khi `elevation_plan == Run` (host `sudo_nopasswd`, shell bash/zsh/fish, và
+`is_compatible_subshell_command("sudo -i")` đúng); gõ **đúng** `sudo -i` bằng wrapper subshell (không bao giờ gõ mật
+khẩu ở G2a — nếu `sudo` hỏi mật khẩu, người dùng tự gõ trong tab); thành công khi có `SessionBootstrapped` thứ hai
+(`spawning_command == "sudo -i"`, cùng view, `WarpifiedRemote`), lúc đó attach chuyển sang session root và
+detach session user. Điều kiện không thoả ⇒ giữ nguyên session ở mức user, `elevation: skipped` + `note` nêu lý do
+(ví dụ "thêm `sudo -i` vào Settings > Warpify > Added commands").
+
+### G2.3 Các phase
+
+Thứ tự: 1 → 2 → 3 → 4 → 5 → ⛔ **CHECKPOINT H2A** (dừng, chờ người dùng test tay). Cuối mỗi phase: test nhỏ nhất
+liên quan; **cuối phase 5**: test liên quan → clippy (`-p warp -p local_control -p warp_cli`, features
+`warp/warp_control_cli,warp/warp_sync,warp/agent_bridge,warp/agent_ops_policy,warp/agent_ops_hosts,warp/agent_ops_open_session`)
+→ `./script/format` một lần. Không commit, không push, không tick G2 trong `ROADMAP.md`.
+
+| Phase | Nội dung | Kiểm |
+|---|---|---|
+| **1** Nền thuần | 1.1 cờ `AgentOpsOpenSession` + cargo feature `agent_ops_open_session` (không vào DOGFOOD/PREVIEW/RELEASE) + hằng số; 1.2 protocol: params/result, `ActionKind::RemoteSessionOpen/Close`, catalog, specs, resolver, loại khỏi test ví dụ CLI, đếm catalog (protocol_tests 7→9, mod_tests 98→100); 1.3 `policy.rs` `[open]` + `evaluate_open` + `open_limits`; 1.4 `agent_bridge/opened.rs` (registry, giới hạn, `on_bootstrapped`, `elevation_plan`, `expire`); 1.5 audit (`purpose`, `access`, hàm ghi open/close); 1.6 `ApprovalSubject::OpenSession` + nội dung hộp thoại + toast + giới hạn chờ | `nextest` nhỏ theo file |
+| **2** Mở/đóng | 2.1 `workspace/view/agent_session_tab.rs` (tab không cướp focus, nhóm `Agents`, tiêu đề); 2.2 `AgentBridgeModel`: registry, `watch_open` (subscribe `Sessions`), attach khi `Step::Attach`, gỡ khi detach; 2.3 handler `handlers/open_session.rs` (`open`, `close`) + arm trong `bridge.rs`; 2.4 test handler với `mock_workspace` | nextest `agent_bridge::|local_control::|workspace::` |
+| **3** MCP | 3.1 `open_session`/`close_session` trong `tools.rs`, `format.rs::render_open`, `INSTRUCTIONS`, `specs/agent-bridge/claude/SKILL.md`; 3.2 timeout client; 3.3 `tools_tests`/`format_tests`/`jsonrpc_tests` | nextest `warp_cli` gộp với `warp` |
+| **4** Lên root | 4.1 wrapper `pub(crate)` trong `terminal/view.rs`; 4.2 luồng `Elevating` (sự kiện thứ hai, chuyển attach); 4.3 test thuần + handler | nextest nhỏ |
+| **5** Review | tự review theo AGENTS.md/quy tắc security (input người dùng, thi hành lệnh, đường dẫn, log), test toàn bộ phần đụng tới, clippy, format một lần, nhật ký | như trên |
+
+### G2.4 Checklist test tay (người dùng) — ⛔ CHECKPOINT H2A
+
+Build: `./script/run --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,warp_sync_remote_edit,agent_ops_hosts,agent_ops_open_session,release_bundle`.
+`W=…/target/debug/warp-oss`; `P=~/.warp/agent-ops/policy.toml` (`chmod 600`); tuần tự, dùng một VM/host **lab** có
+key (không mật khẩu) đã có trong Servers (ví dụ alias `lab-x`) và một host khác không có luật (ví dụ `prod-y`, **đừng** dùng
+prod thật). Sau mỗi bước xem `tail -3 ~/.warp/agent-bridge/audit.jsonl`.
+
+**H2A.1 — Chưa pair:** thêm MCP server thứ hai chạy `warpctrl mcp --no-pair` (tên `warp-bridge-nopair`); `open_session`
+host `lab-x` → lỗi `policy_denied` "not paired"; không có tab mới, không hộp thoại.
+**H2A.2 — Hỏi (mặc định):** `P` không có `[open]` (hoặc không có file). Từ Claude Code (đã pair) `open_session {host:"lab-x",
+access:"read_only", purpose:"kiểm tra dung lượng đĩa"}` → toast không tự tắt "'claude-code' wants to open a session to lab-x" +
+hộp thoại: agent "(paired)", Access, Purpose, `Connects as`, tag; Enter không làm gì; Esc đóng (request vẫn chờ); **Deny** → Claude
+nhận "the user denied it"; **không** có tab mới.
+**H2A.3 — Approve:** lặp lại, Approve → tab `Agent · lab-x` nằm trong nhóm **Agents** (mở rộng), tab bạn đang xem **không bị đổi**;
+ssh chạy, Warpify xong; Claude nhận `ready` với `session_id`, `user@host`, read-only. `list_sessions` thấy nó đã attach;
+`read_file /etc/hostname` được; `exec` bị từ chối (chỉ đọc). Header pane của tab đó hiện "Agents · read-only". *(Tab nền có bootstrap
+được không — ghi kết quả.)*
+**H2A.4 — Luật allow:** `[[open.hosts]] match="lab-*" mode="allow" max_access="full"`: `open_session lab-x access:full` → mở **không
+hỏi**; `exec` đầu tiên trên đó vẫn hỏi như O2. `prod-y` (không luật) vẫn hỏi. `mode="deny"` cho một host → từ chối ngay, không tab.
+**H2A.5 — Vượt mức:** `max_access="read_only"` + `open_session … access:full` → hỏi (không tự hạ xuống read-only).
+**H2A.6 — Giới hạn:** mở `lab-x` lần thứ 3 trong khi `max_sessions_per_host=2` → `policy_denied` nêu "already has 2 sessions"; hạ
+`max_sessions_per_agent=1` → lần mở thứ 2 (host khác) bị từ chối.
+**H2A.7 — close_session:** đóng session do agent mở → tab biến mất (**ghi nhận có hộp thoại xác nhận hay không**), attach mất;
+`close_session` với session bạn mở tay và attach tay → từ chối "not opened by this agent"; đóng lại session đã đóng → lỗi rõ.
+**H2A.8 — Đóng tay:** bạn tự đóng một tab do agent mở → mở lại được (giới hạn được giải phóng).
+**H2A.9 — Giành lại quyền:** bấm Revoke trên header tab agent → Claude nhận `session_not_attached`; tab còn; `close_session` vẫn đóng được.
+**H2A.10 — Chậm/hỏi:** `wait_secs:15` với host cần passphrase hoặc host key mới → sau 15 s Claude nhận `connecting` (không phải lỗi);
+gõ passphrase trong tab → Warpify xong → session **tự attach** (không cần Claude gọi lại; `list_sessions` thấy `attached`).
+**H2A.11 — Alias xấu:** `hosts.toml` có `a;b`, `open_session host:"a;b"` và `host:"-oProxyCommand=x"` → `invalid_params`; host `missing`/không có → từ chối,
+gợi ý `list_hosts`.
+**H2A.12 — Song song:** hai `open_session lab-x` liên tiếp → hai tab, hai session; `exec` song song trên hai session.
+**H2A.13 — Audit:** có `remote.session.open`/`close` với `agent`, `agent_id`, `request_id`, `purpose`, `access`, `policy_decision`; không có nội dung nào giống bí mật.
+**H2A.14 — Khởi động lại Warp:** registry và attach mất; tab (nếu khôi phục) không attach; mở lại được.
+**H2A.15 — Không cờ:** bản build **không** có `agent_ops_open_session` → `open_session` trả `unsupported_action`; `list_hosts`/`exec` không đổi.
+**H2A.16 — Lên root (nếu muốn thử):** host `sudo_nopasswd` (Settings > Servers) + `added_subshell_commands` có `sudo -i`: `open_session … root:true`
+→ hộp thoại ghi "Runs sudo -i for you"; sau Approve tab tự chạy `sudo -i`, Warpify, Claude nhận `elevation: elevated`, user `root`.
+Host `sudo_password` hoặc thiếu `sudo -i` trong Warpify → session mở ở mức user, `elevation: skipped` + lý do.
+
+### G2.5 G2b — Mật khẩu SSH/sudo (chỉ thiết kế, không code cho tới khi người dùng xác nhận G2a)
+
+Mục tiêu (AO8): host `auth = password` và `root_login = sudo_password` dùng được, bí mật **không bao giờ** tới agent, audit, log,
+lịch sử shell. Cần khảo sát thêm trước khi code (ghi ở đây để khỏi đoán):
+
+1. **Kho:** `warpui_extras::secure_storage`, khoá `host:<alias>:ssh_password` / `:sudo_password` / `:ssh_passphrase`. Nhập ở Settings > Servers (ô che chữ, chỉ ghi,
+   có "Forget"); danh bạ vẫn không chứa bí mật; `list_hosts` chỉ báo `has_secret: bool`.
+2. **Askpass:** ssh local đọc mật khẩu từ helper (`warp --warpctrl askpass <prompt>`) do `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force` chỉ tới. Hai câu hỏi mở phải
+   trả lời bằng khảo sát: (a) đưa biến môi trường vào **tab của agent** thế nào khi lệnh phải là `ssh <alias>` (Warpify chỉ bắt lệnh mở đầu bằng `ssh`, `terminal/ssh/util.rs:202`,
+   nên `VAR=x ssh …` mất Warpify) — hướng ưu tiên: đặt env cho shell của tab lúc spawn (xem `PaneTemplateType`/terminal manager) thay vì gõ `export`; (b) prompt
+   `yes/no` của host key: helper **không bao giờ trả lời**, ssh sẽ thất bại (không quay về tty khi `force`) ⇒ host phải có sẵn trong `known_hosts` (báo lỗi rõ: "kết nối tay một lần").
+3. **Broker:** vé một lần (32 byte ngẫu nhiên, RAM, sống 60 s, gắn alias + pane) truyền qua env; helper gửi `{ticket, prompt}` tới bridge bằng cơ chế credential/UID có sẵn
+   (`local_control::auth`); Warp **chỉ trả lời** prompt khớp regex neo đúng cho alias đó (`^<user>@<host>'s password: $`, `^Enter passphrase for key '<path của key>': $`), mỗi vé một lần,
+   sai/lạ thì trả lỗi (không im lặng). Không ghi prompt đầy đủ vào log.
+4. **sudo:** chỉ khi chính Warp vừa gõ `sudo -i` (phase 4) và block output kết thúc bằng `^\[sudo\] password for <user>: $` trong 15 s: ghi mật khẩu một lần thẳng vào PTY (không qua ô
+   input/lịch sử/AI context), rồi xoá cờ; prompt giả khác (chương trình khác in dòng giống hệt) không có cờ nên không được điền.
+5. **Kiểm thử:** hàm thuần khớp prompt (bảng dương/âm gồm prompt giả), vé hết hạn/dùng lại, test log không chứa mật khẩu (grep), audit không chứa mật khẩu.
+Tách thành phase B1 (kho + Settings), B2 (askpass + vé), B3 (sudo) khi được duyệt.
+
+### G2.6 Rủi ro và để sau
+
+| Rủi ro | Giảm thiểu / chấp nhận |
+|---|---|
+| Agent tự mở session root ở máy chưa qua gate O2 | Cờ riêng (không vào DOGFOOD), phải pair, mặc định hỏi, root chỉ theo `sudo_nopasswd` + `allow_root`; mọi lệnh ghi sau đó vẫn qua `authorize` |
+| Nhiều hộp thoại mở session làm người dùng bấm theo phản xạ | Tối đa 3 request mở chờ mỗi agent; hộp thoại chỉ mở khi bấm Review; không Enter |
+| Tab nền không bootstrap | H2A.3 kiểm; lùi về kích hoạt tab (GD30) |
+| Session không bao giờ Warpify (hỏi passphrase, host key, extension, mạng) | `connecting` + `PENDING_TTL` 10 phút; vẫn tính vào giới hạn tới khi pane đóng; `close_session` đóng được |
+| `ssh -G` chạy `Match exec` khi dựng hộp thoại | Chỉ cho alias trong danh bạ đã `validate_alias`, timeout 5 s (GD7/GD19) |
+| Ai đó (cùng UID) gọi thẳng broker với token của agent khác | Giới hạn đã biết của mô hình O2 (danh tính, không ngăn được cùng UID) — chấp nhận |
+
+**Để sau:** tái dùng session cùng host (thay vì mở mới); G2b; kênh exec trực tiếp (G3); tự đóng session idle; danh sách "session do agent mở" trong Settings > Servers.
+
+---
+
 ## 7. Tiến độ, quyết định, nhật ký
 
 ### Tiến độ
@@ -350,7 +545,18 @@ Trước khi test, chạy `sha256sum ~/.ssh/config ~/.ssh/config.* > /tmp/ssh-be
 - [x] ⛔ CHECKPOINT HC (người dùng test đạt, 2026-09-30)
 - [x] 4.1 hook mirror · [x] 4.2 `remote.host.list` · [x] 4.3 MCP `list_hosts` + CLI `remote hosts` · [x] 4.4 nút Open mirror · [x] 4.5 review + clippy + format
 - [x] ⛔ CHECKPOINT HD (người dùng test đạt, 2026-09-30) · [x] tick G1 trong roadmap
-- [ ] 5 (tùy chọn)
+- [ ] 5 (tùy chọn; gộp vào G2b)
+
+**G2 — Agent tự mở session** (plan: mục G2 phía trên; người dùng làm trước gate O2, GD26)
+
+- [x] Plan G2 v1 (2026-09-30)
+- [x] G2a phase 1: 1.1 cờ · 1.2 protocol/catalog · 1.3 policy `[open]` · 1.4 registry `opened.rs` · 1.5 audit · 1.6 approval subject
+- [x] G2a phase 2: 2.1 tab agent · 2.2 model + nghe `Sessions` · 2.3 handler open/close · 2.4 test handler (kể cả e2e với `mock_workspace`)
+- [x] G2a phase 3: 3.1 tool MCP · 3.2 timeout client · 3.3 test
+- [x] G2a phase 4: 4.1 wrapper subshell · 4.2 luồng root · 4.3 test
+- [x] G2a phase 5: review + test + clippy + format
+- [ ] ⛔ CHECKPOINT H2A (người dùng test tay) — **đang chờ**
+- [ ] G2b (chỉ thiết kế xong; code sau khi người dùng xác nhận G2a)
 
 ### Quyết định
 
@@ -381,6 +587,21 @@ Trước khi test, chạy `sha256sum ~/.ssh/config ~/.ssh/config.* > /tmp/ssh-be
 | GD24 | 2026-09-30 | Thêm CLI `warpctrl remote hosts [--query] [--limit]` | Test bảng catalog đòi mọi `ActionKind` (trừ `agent.pair`) có ví dụ CLI; chi phí nhỏ, dùng chung `render_hosts` với MCP. Catalog 98 action |
 | GD25 | 2026-09-30 | Open mirror (4.4) chỉ là nút ở chi tiết host trong Settings, gọi thẳng `ViewContext::open_file_path_in_explorer` (cùng cách `WarpSyncOpenMirror`), **không** thêm `WorkspaceAction`/palette mới | `WarpSyncOpenMirror` lấy host từ session đang active nên không dùng được cho host chưa mở; palette cần chọn host, giá trị thấp |
 | GD10 | 2026-09-29 | Nối session ↔ alias bằng `ssh_connection_info.host` (alias người dùng gõ) | Warp đã có sẵn; đúng cho cả quick connect lẫn `ssh` gõ tay; không cần đoán từ hostname |
+| GD26 | 2026-09-30 | G2 làm **trước** gate O2 theo quyết định của người dùng, nên: `FeatureFlag::AgentOpsOpenSession` + cargo feature `agent_ops_open_session`, **không** vào `DOGFOOD_FLAGS`/`PREVIEW_FLAGS`/RELEASE; handler đòi đủ bốn cờ (`AgentBridge`, `AgentOpsPolicy`, `AgentOpsHosts`, `AgentOpsOpenSession`) | Roadmap ghi G2 chỉ sau gate O2 (AO7); người dùng chấp nhận rủi ro đổi lấy cờ riêng, pairing bắt buộc và mặc định hỏi |
+| GD27 | 2026-09-30 | Hai action mới `remote.session.open` (target `Instance`) và `remote.session.close` (target `Session`), MCP `open_session`/`close_session`, **không** có subcommand `warpctrl` (loại khỏi test ví dụ CLI như `agent.pair`, P25 của O2); catalog 98 → 100; không đổi `PROTOCOL_VERSION` | Cần danh tính đã pair nên chỉ client MCP dùng được; thêm action là additive (cùng lý do GD18) |
+| GD28 | 2026-09-30 | `open_session` **luôn** đòi `agent_token` đã xác minh (không phụ thuộc `require_pairing`); chưa pair → `policy_denied`. Chủ sở hữu session = `agent_id` đã pair; `close_session` cũng đòi pair | Không có danh tính đã xác minh thì "chỉ đóng session do chính agent mở" vô nghĩa (tên tự khai giả được) |
+| GD29 | 2026-09-30 | Sự kiện "Warpify xong" = `SessionsEvent::SessionBootstrapped` của `Sessions` thuộc terminal view của tab vừa mở, do `AgentBridgeModel` subscribe qua `TerminalView::sessions_model()` (không sửa `terminal/view.rs`); khớp = cùng view + `WarpifiedRemote` + `ssh_connection_info.host` (bỏ `user@`) = alias; session Local đầu tiên bị bỏ qua. **Đính chính GD12**: sự kiện này có, cái thiếu là sự kiện thất bại | Đọc code (G2.1 Q1/Q2); attach ngay trong callback của sự kiện nên không có khoảng hở giữa "xong" và "attach" |
+| GD30 | 2026-09-30 | Tab của agent **không cướp focus** (tạo rồi kích hoạt lại tab trước đó), tiêu đề `Agent · <alias>`, và khi `GroupedTabs` bật thì nằm trong nhóm `Agents` (tạo nếu chưa có, luôn mở rộng). Lệnh gõ vào tab giống hệt quick connect: `ssh <alias>` sau `validate_alias` (GD5). Code ở `workspace/view/agent_session_tab.rs` | Đang gõ dở mà tab đổi thì phím vào nhầm terminal (rủi ro thật khi tab đang hỏi passphrase); người dùng vẫn thấy tab và giành lại được. **Chưa kiểm chứng** tab nền bootstrap được (H2A.3): nếu không thì kích hoạt tab mới |
+| GD31 | 2026-09-30 | Registry `OpenedSessions` trong `AgentBridgeModel` (RAM, khoá `PaneId`, giữ `agent_id`, alias, access, purpose, trạng thái). Giới hạn: mặc định 2 session/host, 4/agent, trần cứng 8/host, 16/agent, 16 tổng; đếm cả mục `Connecting`; mục có pane đã biến mất bị dọn khi mở/đóng. Agent thấy `session_id` = pane id (như `list_sessions`) | Khớp cách client đang địa chỉ hoá session; RAM là đủ vì attach cũng chỉ ở RAM (D4) |
+| GD32 | 2026-09-30 | `wait_secs` mặc định 60 (1–180). Hết giờ chưa Warpify → **không** lỗi mà trả `status: connecting` kèm `session_id`; mục giữ trạng thái chờ tới `PENDING_TTL` 10 phút và vẫn tự attach nếu Warpify xong muộn (người dùng gõ passphrase), sau đó `Abandoned` (không attach nữa, vẫn tính vào giới hạn tới khi pane đóng, `close_session` đóng được). Kiểm trước khi mở tab: `enable_ssh_warpification` bật, alias không nằm trong `is_ssh_host_denylisted` (nếu không, lỗi rõ thay vì chờ vô ích) | Không có sự kiện thất bại (GD29) nên thời gian là tín hiệu duy nhất; tab thấy được nên người dùng xử lý được |
+| GD33 | 2026-09-30 | Policy `[open]`: `max_sessions_per_host`, `max_sessions_per_agent`, `[[open.hosts]] { match (glob alias), tag?, mode = allow|ask|deny, max_access = read_only|full, allow_root }`; luật đầu tiên khớp thắng; **không luật ⇒ Ask**, không đọc `[defaults]`; `allow` mà access xin > `max_access` hoặc xin root khi `allow_root = false` ⇒ Ask (không hạ mức lặng lẽ); file lỗi ⇒ Deny. `[defaults]`/`[[hosts]]`/`[deny]` không đổi và vẫn quyết định từng lệnh sau khi attach | Người dùng yêu cầu "host chưa có quy tắc là HỎI"; tự attach chỉ mở cửa, không thay quyết định ghi |
+| GD34 | 2026-09-30 | Duyệt mở session dùng lại `ApprovalQueue`/dialog/toast persistent (P28) với `ApprovalSubject::OpenSession` (`session: None`); một `object_id` toast chung `agent_ops_open_request`; tối đa 3 request mở chờ mỗi agent; dialog chỉ Approve/Deny; `connection` (`user@host:port`) lấy bằng `ssh -G` nền ≤ 5 s | Tái dùng hạ tầng đã test (P4/P28); người duyệt cần thấy host thật trước khi đồng ý |
+| GD35 | 2026-09-30 | Audit `remote.session.open`/`close` thêm `purpose` và `access` (bỏ khi rỗng); `started` ghi **trước** khi mở tab (fail-closed như P13); `host` = alias, `session_id` = pane id khi đã có | Truy vết được "agent nào mở gì, vì sao" |
+| GD36 | 2026-09-30 | Lên root (`root: true`) chỉ khi `root_login = sudo_nopasswd`, shell bash/zsh/fish và `is_compatible_subshell_command("sudo -i")`; gõ đúng `sudo -i` bằng wrapper `pub(crate)` quanh `set_and_execute_subshell_command`; thành công khi có `SessionBootstrapped` thứ hai (`spawning_command == "sudo -i"`), khi đó attach chuyển sang session root. Không đủ điều kiện ⇒ giữ session user + `elevation: skipped` + lý do. Không gõ mật khẩu ở G2a | Đọc code (G2.1 Q7): có cơ chế xác định thay vì gõ mù vào shell đang Warpify; bỏ GD12 "không tự lên root" chỉ ở phạm vi `open_session` |
+| GD37 | 2026-09-30 | Bước nền (`stage`) **không** đọc policy và **không** chạy `ssh -G` cho agent chưa pair; ở luồng chính `Deny` của policy được báo trước giới hạn số session | Không để client chưa pair kích hoạt `Match exec` của ssh config; lý do từ chối cụ thể hơn |
+| GD38 | 2026-09-30 | Nhóm `Agents` mới nằm **đầu** danh sách tab chưa ghim (như `create_new_tab_group`), nên chỉ số tab đang active của người dùng dịch đi 1 dù vẫn đúng tab đó; test so bằng `EntityId` của pane group, không so chỉ số | Phát hiện lúc viết test e2e: khẳng định "không cướp focus" phải theo danh tính tab, không theo chỉ số (ghi để H2A.3 không hiểu nhầm) |
+| GD39 | 2026-09-30 | `close_session` bắt buộc selector session dạng `Id` (không nhận `Active`), kiểm chủ sở hữu bằng `agent_id`, đóng bằng `PaneGroup::close_pane` (cách `pane.close`), rồi gỡ mục registry và attach; code ở `handlers/close_session.rs` (tách khỏi `open_session.rs` cho file < 800 dòng) | Không thể đóng nhầm tab đang active; khớp mô hình xác thực GD28 |
+| GD40 | 2026-09-30 | Test e2e chạy handler thật (`open`/`close`) trên `mock_workspace`, `$HOME` tạm (`#[serial]`) chứa `policy.toml`, `agents.toml`, `~/.ssh/config`, `hosts.toml`; sự kiện Warpify được **giả lập** bằng `Sessions::initialize_bootstrapped_session` trên `Sessions` của tab thật | Kiểm chứng toàn bộ dây nối (policy → duyệt → tab → subscribe → attach → trả lời → đóng) mà không cần ssh thật; phần ssh/Warpify thật để H2A |
 
 ### Nhật ký
 
@@ -427,3 +648,29 @@ Trước khi test, chạy `sha256sum ~/.ssh/config ~/.ssh/config.* > /tmp/ssh-be
 - 2026-09-30 — CHECKPOINT HC: người dùng test đạt.
 - 2026-09-30 — Phase 4 (Claude Sonnet 5.5). **4.1** file mới `host_directory/mirror.rs` (`MirrorLink`, `MirrorUpdate {Set, Warn, Keep}`, hàm thuần `mirror_link_update`, `apply_observation` đọc-sửa-ghi `hosts.toml`, `alias_of_ssh_host`, `mirror_dir`); `HostDirectoryModel::{alias_for_ssh_host, observe_mirror}` (toast qua `Notice`); `RemoteShell::ssh_host()` (mặc định `None`, `SessionShell` đọc `subshell_info().ssh_connection_info.host`); hook `link_host_mirror` + `read_mirror_link` trong `warp_sync/model.rs` (GD20–21). Không đổi hành vi Warp Sync. **4.2** `ActionKind::RemoteHostList` (`remote.host.list`, Instance, params `RemoteHostListParams`, kết quả `RemoteHostListResult`/`RemoteHostSummary`…) ở `local_control` (catalog, protocol, `ActionParameterSpec::RemoteHostList`), `app/src/local_control/handlers/hosts.rs` (cùng cổng `ensure_enabled` = Agent Bridge như `remote.session.list`, thêm cờ `AgentOpsHosts`), `remote::listed_sessions` (tách từ `session_list`, hành vi cũ giữ nguyên), `warp_sync::{synced_paths, is_mirror_key}` (GD18, 19, 22, 23). **4.3** MCP `list_hosts` (`tools.rs`, `format.rs::render_hosts`, dòng trong `INSTRUCTIONS`) + CLI `warpctrl remote hosts` (GD24); kết quả không có trường nào chứa bí mật (test khoá bộ khoá JSON). **4.4** nút "Open mirror of this server" trong chi tiết host (`servers_page.rs`, `servers_page_widgets.rs`; GD25). Test mới: `mirror_tests` (12+2), `hosts_tests` (19), 5 test e2e `host_list_*` qua `handle_control_request` trong `remote_tests.rs`, 2 `read_mirror_link` (`warp_sync/model_tests.rs`), `is_mirror_key`/`synced_paths`, `tools_tests`/`format_tests` cho `list_hosts`, cập nhật đếm catalog (98) và bảng ví dụ CLI. Lệnh: `cargo nextest run -p warp_cli -p local_control -p warp --lib --features warp/warp_sync,warp/warp_control_cli,warp/agent_bridge,warp/agent_ops_policy,warp/agent_ops_hosts -E 'package(warp_cli) | package(local_control) | test(/warp_sync::|local_control::|host_directory::/)'` → 1081/1081 pass (build `-p warp_cli` đơn lẻ hỏng vì `fontconfig.pc`, như Bridge 7.4); `cargo nextest run -p warp --lib --features warp_control_cli,warp_sync,agent_bridge,agent_ops_policy,agent_ops_hosts -E 'test(/warp_sync::|local_control::|host_directory::|settings_view::/)'` → 935/935 pass; `cargo clippy -p warp -p local_control -p warp_cli --features warp/warp_control_cli,warp/warp_sync,warp/agent_bridge,warp/agent_ops_policy,warp/agent_ops_hosts --all-targets --tests -- -D warnings` sạch; `cargo check -p warp` (không feature) sạch; `./script/format` một lần ở cuối. Chưa chạy GUI/MCP thật, chưa tick G1 trong ROADMAP: dừng ở ⛔ CHECKPOINT HD.
 - 2026-09-30 — CHECKPOINT HD: người dùng test đạt. G1 hoàn tất (Phase 1–4); đã tick G1 trong `ROADMAP.md`. Phase 5 (bí mật) vẫn tùy chọn, gộp vào G2.
+- 2026-09-30 — Plan G2 v1 (Claude Sonnet 5.5) sau khảo sát code (bảng G2.1, Q1–Q7): đọc `ROADMAP.md`, plan G1/O2/Bridge, `bridge.rs`, `handlers/{remote,agent,hosts,close,layout}.rs`,
+  `agent_bridge/{model,attachments,approval,approval_dialog,policy,audit,ops}.rs`, `terminal/model/session.rs`, `terminal/view.rs` (Warpify, subshell), `terminal/ssh/util.rs`,
+  `workspace/view.rs` + `view/tab_grouping.rs`, `pane_group/mod.rs`, `mcp/tools.rs`, catalog/protocol và test đếm; đọc thêm (chỉ đọc) `~/.config/warp-oss/settings.toml`, `~/.warp/agent-ops/`.
+  Kết quả chính: có sự kiện `SessionBootstrapped` đáng tin (đính chính GD12), nối tab ↔ session bằng subscribe `Sessions` của đúng view, cơ chế lên root xác định (`is_compatible_subshell_command` +
+  sự kiện thứ hai). Quyết định GD26–GD36. Chưa code.
+- 2026-09-30 — G2a phase 1–5 (Claude Sonnet 5.5). **1.1** `FeatureFlag::AgentOpsOpenSession` (`warp_features`) + cargo feature `agent_ops_open_session`
+  (`app/Cargo.toml`, `features.rs`), không vào DOGFOOD/PREVIEW/RELEASE; hằng số `OPEN_*` trong `agent_bridge/mod.rs`. **1.2** `local_control`: `RemoteSessionOpenParams/Result`,
+  `RemoteSessionCloseParams/Result`, `RemoteOpenStatus`, `RemoteOpenElevation`, `RemoteAccess: Default`, `ActionKind::RemoteSessionOpen/Close` + specs + `resolver.rs`; catalog 100 (`protocol_tests`
+  `REMOTE_ACTIONS` 9, `mod_tests` 100); test ví dụ CLI loại trừ hai action như `agent.pair` (GD27). **1.3** `policy.rs`: `[open]` (`max_sessions_per_*`, `[[open.hosts]]`),
+  `Policy::evaluate_open`/`open_limits`, `invalid_policy_reason` (dùng chung với `remote.rs`); 15 test mới. **1.4** `agent_bridge/opened.rs` (registry thuần: giới hạn, `on_bootstrapped`, `expire`,
+  `elevation_plan`, `give_up_elevation`) + 25 test. **1.5** `audit.rs` thêm `purpose`/`access`; `open_audit.rs` (`SessionRequestAudit`, fail-closed) + 6 test. **1.6** `ApprovalSubject::OpenSession`,
+  `persistent_toast_id` (thay `toast_is_persistent`), `OPEN_TOAST_ID`, giới hạn 3 request chờ mỗi agent, `has_pending_open`, nội dung hộp thoại + test. **2.1** `workspace/view/agent_session_tab.rs`
+  (`Workspace::open_agent_session_tab`: tab `Agent · <alias>`, nhóm `Agents`, không cướp focus) + 4 test. **2.2** `AgentBridgeModel`: `opened`, `open_waiters`, `track_open` (subscribe `Sessions`),
+  `follow_open`, `forget_opened`, `check_open_limits`, `opened_by`, `OpenReady` + 7 test. **2.3** `handlers/open_session.rs` (luồng: kiểm tham số → host trong danh bạ → Warpify bật → `stage` nền → policy/giới hạn →
+  duyệt → audit `started` → mở tab → chờ Ready) và `handlers/close_session.rs`; `bridge.rs` thêm hai arm; `hosts.rs`/`remote.rs` chỉ mở visibility (`resolve_connection`, `resolve_agent_id`). **2.4** 37 test
+  (`open_session_tests.rs`: 25 test thuần + 12 test e2e qua `mock_workspace`, GD40). **3.1–3.3** `mcp/tools.rs` (`open_session`, `close_session`, `INSTRUCTIONS`, `OPEN_CLIENT_MARGIN`), `format.rs::render_open/render_close`,
+  `specs/agent-bridge/claude/SKILL.md`, test `tools_tests`/`format_tests`. **4.1–4.3** `TerminalView::execute_subshell_command_and_warpify` (patch duy nhất vào `terminal/view.rs`), luồng `Elevating` trong
+  `follow_open`, test thuần + 2 test e2e. Đã tìm và sửa lúc test: focus (GD38), `HostDirectoryModel` bị làm mới từ `$HOME` tạm ghi đè danh bạ giả (test dựng `~/.ssh/config`), `retain_live`
+  bỏ luôn `open_waiters`, `follow_open` gọi `expire` trước khi khớp TTL. Lệnh: `cargo nextest run --no-fail-fast -p warp --lib --features warp/agent_ops_policy,warp/agent_bridge,warp/agent_ops_hosts,warp/agent_ops_open_session
+  -E 'test(/open_session|close_session|agent_bridge::/)'` → 356/356; `cargo nextest run --no-fail-fast -p warp_cli -p local_control -p warp --lib --features warp/warp_sync,warp/warp_control_cli,warp/agent_bridge,
+  warp/agent_ops_policy,warp/agent_ops_hosts,warp/agent_ops_open_session -E 'package(warp_cli) | package(local_control) | test(/open_session|close_session/)'` → 489/489 (lần đầu 1766/1767, sửa
+  `every_tool_has_a_schema_and_the_list_matches_the_dispatch`); cùng lệnh rộng hơn (`warp_sync::|local_control::|host_directory::|agent_bridge::|agent_session_tab|settings_view::|command_palette`) 1767 test trước sửa
+  đó; `cargo clippy -p warp -p local_control -p warp_cli --features warp/warp_control_cli,warp/warp_sync,warp/agent_bridge,warp/agent_ops_policy,warp/agent_ops_hosts,warp/agent_ops_open_session --all-targets --tests
+  -- -D warnings` sạch; `cargo check -p warp` (không feature) sạch; `./script/format` một lần ở cuối. Chưa chạy GUI/ssh thật, không commit, không tick G2 trong `ROADMAP.md`.
+  Điều chưa kiểm chứng (dành cho H2A): tab nền có bootstrap ssh không (H2A.3), Warpify có hỏi trước khi cài extension không (H2A.10), đóng pane cuối của tab có hỏi xác nhận không (H2A.7), `sudo -i` gõ bằng
+  wrapper có tự Warpify không (H2A.16). Dừng ở ⛔ CHECKPOINT H2A.

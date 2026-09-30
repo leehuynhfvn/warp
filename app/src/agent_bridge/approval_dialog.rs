@@ -20,7 +20,9 @@ use warpui::{
 };
 
 use super::approval::{AgentLabel, ApprovalDecision, ApprovalRequest, ApprovalSubject};
+use super::attachments::Access;
 use super::model::AgentBridgeModel;
+use super::opened::{ElevationPlan, SUDO_COMMAND};
 use crate::appearance::Appearance;
 use crate::ui_components::dialog::{Dialog, dialog_styles};
 use crate::view_components::action_button::{
@@ -53,6 +55,9 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
         ApprovalSubject::Command { .. } => format!("Run on {}?", request.session_label),
         ApprovalSubject::Write { .. } => format!("Write a file on {}?", request.session_label),
         ApprovalSubject::Pairing { .. } => "Pair an agent with Warp?".to_owned(),
+        ApprovalSubject::OpenSession { alias, .. } => {
+            format!("Open a session to {}?", printable(alias))
+        }
     };
 
     let mut lines = Vec::new();
@@ -100,6 +105,28 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
             }
             lines.push(preview_block);
         }
+        ApprovalSubject::OpenSession {
+            access,
+            purpose,
+            tags,
+            connection,
+            elevation,
+            ..
+        } => {
+            lines.push(agent_line(&request.agent));
+            lines.push(access_line(*access).to_owned());
+            lines.push(format!("Purpose: {}", printable(purpose)));
+            if let Some(connection) = connection {
+                lines.push(format!("Connects as: {}", printable(connection)));
+            }
+            if !tags.is_empty() {
+                let tags: Vec<String> = tags.iter().map(|tag| printable(tag)).collect();
+                lines.push(format!("Tags: {}", tags.join(", ")));
+            }
+            if let Some(line) = elevation_line(elevation) {
+                lines.push(line);
+            }
+        }
         ApprovalSubject::Pairing { name } => {
             lines.push(format!("Agent: {}", printable(name)));
             lines.push(
@@ -114,6 +141,30 @@ pub(crate) fn content(request: &ApprovalRequest) -> (String, String) {
         format_deadline(request.deadline)
     ));
     (title, lines.join("\n\n"))
+}
+
+fn access_line(access: Access) -> &'static str {
+    match access {
+        Access::ReadOnly => "Access: read-only (it can read files and list sessions)",
+        Access::Full => {
+            "Access: full (it can run commands and write files; each still goes through your policy)"
+        }
+    }
+}
+
+/// What will happen about a root shell, or nothing when none was asked for.
+fn elevation_line(elevation: &ElevationPlan) -> Option<String> {
+    match elevation {
+        ElevationPlan::NotRequested => None,
+        ElevationPlan::AlreadyRoot => Some("Root: the login is root already".to_owned()),
+        ElevationPlan::Run => Some(format!(
+            "Root: Warp types '{SUDO_COMMAND}' for you once signed in (sudo without a password)"
+        )),
+        ElevationPlan::Skipped(reason) => Some(format!(
+            "Root: not done, it stays as the login user: {}",
+            printable(reason)
+        )),
+    }
 }
 
 /// "Agent: claude-code (paired)" once pairing resolved a verified `agent_id` — that name is the

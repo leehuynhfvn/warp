@@ -484,3 +484,241 @@ fn load_propagates_a_parse_error_from_disk() {
         PolicyError::Parse(_)
     ));
 }
+
+// --- Opening sessions ([open]) --------------------------------------------
+
+fn tags(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+fn open_request<'a>(alias: &'a str, tags: &'a [String], access: Access) -> OpenRequest<'a> {
+    OpenRequest {
+        alias,
+        tags,
+        access,
+        root: false,
+    }
+}
+
+fn policy_with_open(open: &str) -> Policy {
+    parse(&format!("{MINIMAL_APPROVE}\n{open}"))
+}
+
+#[test]
+fn a_server_with_no_open_rule_is_asked_about() {
+    for text in [
+        MINIMAL_APPROVE.to_owned(),
+        format!("{MINIMAL_APPROVE}\n[open]\n"),
+    ] {
+        let policy = parse(&text);
+        assert_eq!(
+            policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+            Decision::Ask
+        );
+    }
+}
+
+#[test]
+fn a_missing_policy_file_asks_about_opening_too() {
+    assert_eq!(
+        Policy::default().evaluate_open(open_request("lab-1", &[], Access::Full)),
+        Decision::Ask
+    );
+}
+
+#[test]
+fn defaults_mode_does_not_decide_opening() {
+    let policy = parse("[defaults]\nmode = \"allowlist\"\nallow = [\"id\"]\n");
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+        Decision::Ask
+    );
+}
+
+#[test]
+fn an_allow_rule_opens_without_asking_up_to_its_max_access() {
+    let policy = policy_with_open(
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\nmax_access = \"full\"\n",
+    );
+    for access in [Access::ReadOnly, Access::Full] {
+        assert_eq!(
+            policy.evaluate_open(open_request("lab-1", &[], access)),
+            Decision::Allow
+        );
+    }
+    assert_eq!(
+        policy.evaluate_open(open_request("prod-1", &[], Access::ReadOnly)),
+        Decision::Ask
+    );
+}
+
+#[test]
+fn max_access_defaults_to_read_only_and_more_is_asked_not_lowered() {
+    let policy = policy_with_open("[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\n");
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+        Decision::Allow
+    );
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::Full)),
+        Decision::Ask
+    );
+}
+
+#[test]
+fn root_is_asked_about_unless_the_rule_allows_it() {
+    let without = policy_with_open(
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\nmax_access = \"full\"\n",
+    );
+    let with = policy_with_open(
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\nmax_access = \"full\"\n\
+         allow_root = true\n",
+    );
+    let request = OpenRequest {
+        root: true,
+        ..open_request("lab-1", &[], Access::Full)
+    };
+    assert_eq!(without.evaluate_open(request), Decision::Ask);
+    assert_eq!(with.evaluate_open(request), Decision::Allow);
+}
+
+#[test]
+fn a_deny_rule_refuses_and_names_the_server() {
+    let policy = policy_with_open("[[open.hosts]]\nmatch = \"prod-*\"\nmode = \"deny\"\n");
+    let decision = policy.evaluate_open(open_request("prod-1", &[], Access::ReadOnly));
+    assert!(deny_message(&decision).contains("prod-1"));
+}
+
+#[test]
+fn an_ask_rule_asks_even_when_a_later_rule_would_allow() {
+    let policy = policy_with_open(
+        "[[open.hosts]]\nmatch = \"lab-1\"\nmode = \"ask\"\n\
+         [[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\n",
+    );
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+        Decision::Ask
+    );
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-2", &[], Access::ReadOnly)),
+        Decision::Allow
+    );
+}
+
+#[test]
+fn the_first_matching_open_rule_wins() {
+    let policy = policy_with_open(
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"deny\"\n\
+         [[open.hosts]]\nmatch = \"lab-1\"\nmode = \"allow\"\n",
+    );
+    assert!(matches!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+        Decision::Deny(_)
+    ));
+}
+
+#[test]
+fn an_open_rule_with_a_tag_only_covers_servers_that_have_it() {
+    let policy =
+        policy_with_open("[[open.hosts]]\nmatch = \"*\"\ntag = \"lab\"\nmode = \"allow\"\n");
+    assert_eq!(
+        policy.evaluate_open(open_request(
+            "web-1",
+            &tags(&["lab", "web"]),
+            Access::ReadOnly
+        )),
+        Decision::Allow
+    );
+    assert_eq!(
+        policy.evaluate_open(open_request("web-2", &tags(&["prod"]), Access::ReadOnly)),
+        Decision::Ask
+    );
+    assert_eq!(
+        policy.evaluate_open(open_request("web-3", &[], Access::ReadOnly)),
+        Decision::Ask
+    );
+}
+
+#[test]
+fn open_rules_match_aliases_without_regard_to_case() {
+    let policy = policy_with_open("[[open.hosts]]\nmatch = \"LAB-*\"\nmode = \"allow\"\n");
+    assert_eq!(
+        policy.evaluate_open(open_request("lab-1", &[], Access::ReadOnly)),
+        Decision::Allow
+    );
+}
+
+#[test]
+fn open_limits_default_and_can_be_lowered_or_raised_within_the_caps() {
+    assert_eq!(
+        parse(MINIMAL_APPROVE).open_limits(),
+        OpenLimits {
+            per_host: OPEN_DEFAULT_MAX_PER_HOST,
+            per_agent: OPEN_DEFAULT_MAX_PER_AGENT,
+        }
+    );
+    let policy =
+        policy_with_open("[open]\nmax_sessions_per_host = 1\nmax_sessions_per_agent = 16\n");
+    assert_eq!(
+        policy.open_limits(),
+        OpenLimits {
+            per_host: 1,
+            per_agent: OPEN_MAX_PER_AGENT,
+        }
+    );
+}
+
+#[test]
+fn open_limits_outside_the_caps_are_rejected() {
+    for open in [
+        "[open]\nmax_sessions_per_host = 0\n".to_owned(),
+        format!(
+            "[open]\nmax_sessions_per_host = {}\n",
+            OPEN_MAX_PER_HOST + 1
+        ),
+        "[open]\nmax_sessions_per_agent = 0\n".to_owned(),
+        format!(
+            "[open]\nmax_sessions_per_agent = {}\n",
+            OPEN_MAX_PER_AGENT + 1
+        ),
+    ] {
+        assert!(matches!(
+            parse_err(&format!("{MINIMAL_APPROVE}\n{open}")),
+            PolicyError::Invalid(_)
+        ));
+    }
+}
+
+#[test]
+fn malformed_open_tables_are_rejected() {
+    for open in [
+        "[open]\ntypo = 1\n",
+        "[[open.hosts]]\nmatch = \"lab-*\"\n",
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"maybe\"\n",
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\nmax_access = \"root\"\n",
+        "[[open.hosts]]\nmatch = \"lab-*\"\nmode = \"allow\"\nsurprise = true\n",
+    ] {
+        assert!(matches!(
+            parse_err(&format!("{MINIMAL_APPROVE}\n{open}")),
+            PolicyError::Parse(_)
+        ));
+    }
+    for open in [
+        "[[open.hosts]]\nmatch = \" \"\nmode = \"allow\"\n",
+        "[[open.hosts]]\nmatch = \"lab-*\"\ntag = \"\"\nmode = \"allow\"\n",
+    ] {
+        assert!(matches!(
+            parse_err(&format!("{MINIMAL_APPROVE}\n{open}")),
+            PolicyError::Invalid(_)
+        ));
+    }
+}
+
+#[test]
+fn open_rules_do_not_change_how_writes_are_decided() {
+    let policy = policy_with_open("[[open.hosts]]\nmatch = \"*\"\nmode = \"allow\"\n");
+    assert_eq!(
+        decide(&policy, "lab-1", PolicyRequest::Exec("id")),
+        Decision::Ask
+    );
+}

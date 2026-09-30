@@ -285,3 +285,55 @@ fn render_hosts_shows_a_mirror_with_nothing_synced_and_a_cut_path_list() {
         "{text}"
     );
 }
+
+fn open_result(
+    status: RemoteOpenStatus,
+    elevation: RemoteOpenElevation,
+) -> RemoteSessionOpenResult {
+    let ready = status == RemoteOpenStatus::Ready;
+    RemoteSessionOpenResult {
+        status,
+        session_id: "7".to_owned(),
+        host_alias: "lab-1".to_owned(),
+        host: ready.then(|| "lab-1.internal".to_owned()),
+        user: ready.then(|| "root".to_owned()),
+        access: RemoteAccess::Full,
+        elevation,
+        note: None,
+    }
+}
+
+#[test]
+fn a_ready_session_is_named_with_who_it_is_signed_in_as() {
+    let text = render_open(&open_result(
+        RemoteOpenStatus::Ready,
+        RemoteOpenElevation::Elevated,
+    ));
+    assert_eq!(
+        text,
+        "Opened session_id \"7\" on lab-1: root@lab-1.internal, full access. Root: yes, through \
+         sudo -i."
+    );
+}
+
+#[test]
+fn a_session_that_is_not_ready_says_what_the_agent_is_waiting_for() {
+    let mut result = open_result(
+        RemoteOpenStatus::Connecting,
+        RemoteOpenElevation::NotRequested,
+    );
+    result.note = Some("Wait for the user.".to_owned());
+    let text = render_open(&result);
+    assert!(text.starts_with("The session_id \"7\" on lab-1 is not ready yet"));
+    assert!(text.ends_with("Wait for the user."));
+    assert!(!text.contains("Root:"));
+}
+
+#[test]
+fn closing_a_session_is_confirmed_by_id() {
+    let closed = render_close(&RemoteSessionCloseResult {
+        session_id: "7".to_owned(),
+        closed: true,
+    });
+    assert_eq!(closed, "Closed session_id \"7\".");
+}

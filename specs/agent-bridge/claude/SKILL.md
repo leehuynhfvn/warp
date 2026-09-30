@@ -95,3 +95,24 @@ Confirm with the user in plain words, even if they approved the overall task:
   If the result says "Denied by Warp's agent policy", do not retry the same command or rephrase
   it to get around the rule — tell the user why it was denied. Keep commands short and
   single-purpose so the user can review them.
+
+## Opening a session yourself (`open_session`, `close_session`)
+
+When no session of the server you need is attached, do not ask the user to set one up by hand if
+`list_hosts` shows the server: call `open_session` with its alias.
+
+- `purpose` is read by the person who approves it. Say the real reason in a few words.
+- Ask for `access: "read_only"` unless you must change something. `full` still does not run a
+  command by itself: every `exec` and write goes through the user's policy one by one.
+- Ask for `root: true` only when the task needs root. It works where the server's entry says the
+  user has `sudo` without a password; otherwise the result says it was not reached.
+- The user may be asked to approve, and the call waits for it. If it is denied, do not open the
+  session again or find another way in; tell the user.
+- A result that says the session is not ready means the user may have to answer something in
+  its tab (a password, a passphrase, a host key). Do not open another one; check `list_sessions`
+  after a while.
+- Open only as many sessions as you need (each server has a limit) and call `close_session` on
+  each when you are done. You can close only sessions you opened yourself; the ones the user
+  opened stay open.
+- Opening needs this agent to be paired with Warp. If the result says it is not paired, tell the
+  user; do not retry.

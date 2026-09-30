@@ -53,6 +53,8 @@ pub enum ActionParameterSpec {
     RemoteFileWrite,
     RemoteHostList,
     RemoteOutputRecent,
+    RemoteSessionClose,
+    RemoteSessionOpen,
     Rename,
     Resize,
     SyncPath,
@@ -85,7 +87,9 @@ pub enum ActionResultSpec {
     RemoteFileWriteResult,
     RemoteHostList,
     RemoteOutputRecent,
+    RemoteSessionClose,
     RemoteSessionList,
+    RemoteSessionOpen,
     SettingList,
     SettingValue,
     SurfaceList,
@@ -320,6 +324,8 @@ define_action_catalog! {
 
     remote {
         RemoteSessionList => { name: "remote.session.list", status: Implemented, target: Instance, params: None, result: RemoteSessionList },
+        RemoteSessionOpen => { name: "remote.session.open", status: Implemented, target: Instance, params: RemoteSessionOpen, result: RemoteSessionOpen },
+        RemoteSessionClose => { name: "remote.session.close", status: Implemented, target: Session, params: RemoteSessionClose, result: RemoteSessionClose },
         RemoteHostList => { name: "remote.host.list", status: Implemented, target: Instance, params: RemoteHostList, result: RemoteHostList },
         RemoteExec => { name: "remote.exec", status: Implemented, target: Session, params: RemoteExec, result: RemoteExecResult },
         RemoteExecVisible => { name: "remote.exec.visible", status: Implemented, target: Session, params: RemoteExecVisible, result: RemoteExecVisibleResult },

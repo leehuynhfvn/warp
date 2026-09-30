@@ -18,6 +18,8 @@ fn record(command: &str) -> AuditRecord {
         policy_decision: None,
         policy_reason: None,
         agent_id: None,
+        purpose: None,
+        access: None,
         duration_ms: 42,
         bytes: None,
         still_running: false,

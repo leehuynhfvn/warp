@@ -755,9 +755,10 @@ pub enum RemoteSessionKind {
 }
 
 /// What an attached session may be used for.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteAccess {
+    #[default]
     ReadOnly,
     Full,
 }
@@ -894,6 +895,92 @@ pub struct RemoteHostListResult {
     pub hosts: Vec<RemoteHostSummary>,
     /// How many hosts matched, before `limit` cut the list.
     pub total: u32,
+}
+
+/// How long `remote.session.open` waits for the new session to finish Warpifying when the request
+/// does not say.
+pub const OPEN_WAIT_DEFAULT_SECS: u32 = 60;
+pub const OPEN_WAIT_MAX_SECS: u32 = 180;
+/// Longest `purpose` of `remote.session.open`, in bytes.
+pub const MAX_OPEN_PURPOSE_BYTES: usize = 200;
+
+/// Parameters for `remote.session.open`: open an SSH session to a server of the user's directory
+/// in a new tab and attach it. The request must carry the `agent_token` of a paired agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSessionOpenParams {
+    /// Alias of a server in the directory (`remote.host.list`).
+    pub host: String,
+    /// The most the agent may do in the session once it is attached.
+    #[serde(default)]
+    pub access: RemoteAccess,
+    /// Why the agent needs the session; shown to the person who approves it and kept in the audit.
+    pub purpose: String,
+    /// Become root with `sudo -i` once signed in, where the server's entry allows it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub root: bool,
+    /// How long to wait for the session to be ready, from 1 to [`OPEN_WAIT_MAX_SECS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_secs: Option<u32>,
+    /// Name of the calling client. Recorded in the audit log only; it never grants access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Whether the session finished Warpifying and was attached.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteOpenStatus {
+    Ready,
+    /// The tab is open but the session is not usable yet, often because the person has to answer a
+    /// question in it. It attaches by itself if it becomes ready later.
+    Connecting,
+}
+
+/// What became of the request to become root.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteOpenElevation {
+    NotRequested,
+    AlreadyRoot,
+    Elevated,
+    /// `sudo -i` was sent and its shell is not ready yet.
+    Pending,
+    /// Not done; the `note` says why. The session stays as the login user.
+    Skipped,
+}
+
+/// Result of `remote.session.open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionOpenResult {
+    pub status: RemoteOpenStatus,
+    /// The `session` selector value that addresses the new session.
+    pub session_id: String,
+    pub host_alias: String,
+    /// The `hostname` and login user the server reported, once the session is ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    pub access: RemoteAccess,
+    pub elevation: RemoteOpenElevation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Parameters for `remote.session.close`; the session is named by the request's target.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSessionCloseParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Result of `remote.session.close`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionCloseResult {
+    pub session_id: String,
+    pub closed: bool,
 }
 
 /// Typed success payloads for catalog actions that need stable structured data.
